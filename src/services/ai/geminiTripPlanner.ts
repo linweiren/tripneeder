@@ -10,6 +10,7 @@ import type {
   PlanType,
   Stop,
   StopType,
+  TransportSegment,
   TransportMode,
   TripInput,
   TripPlan,
@@ -126,6 +127,18 @@ function buildTripPrompt(input: TripInput) {
     .join('；')
 
   return `
+每個 plan 必須包含 transportSegments 與 rainTransportSegments。
+transportSegments 是 stops 之間的交通段，長度必須是 stops.length - 1。
+rainTransportSegments 是 rainBackup 之間的交通段，長度必須是 rainBackup.length - 1。
+每個 stops 與 rainBackup 的 stop 都必須包含穩定 id 欄位。id 必須是英文、數字、底線或連字號組成，同一個 plan 內不可重複。
+每個交通段必須包含 fromStopId、toStopId、mode、duration、label。
+fromStopId 與 toStopId 必須對應相鄰 stop 的 id，例如第 1 段 fromStopId 必須等於第 1 個 stop.id，toStopId 必須等於第 2 個 stop.id。
+duration 單位為分鐘，mode 只能是 "scooter"、"car"、"public_transit"。
+label 必須是 4-16 個繁體中文字的交通狀態摘要，不可包含數字、分鐘、小時、公里或任何交通時間。機車 / 汽車可描述路線狀態，例如「騎車沿海行駛」、「開車走主要幹道」；大眾運輸可描述搭乘摘要，例如「美麗島站到西子灣站」、「公車直達商圈」、「捷運轉步行抵達」。
+當 mode 是 "public_transit" 時，請盡量回傳 publicTransitType，值只能是 "bus"、"metro"、"train"、"walk"、"mixed"。若同段包含多種大眾運輸，請用 "mixed"。
+
+每個 stops 與 rainBackup 的 stop 都必須包含 description 欄位，請用 20-50 字繁體中文介紹景點特色與適合停留的理由。
+
 你是台灣在地行程規劃 AI。請根據使用者輸入，產生 3 個單日行程方案。
 
 使用者輸入：
@@ -143,7 +156,7 @@ function buildTripPrompt(input: TripInput) {
 3. 三個方案主題相同，但風格不同：safe 保守型、balanced 平衡型、explore 探索型。
 4. 先判斷一種最適合本次行程的預設交通方式，三個方案都必須使用同一種 transportMode。
 5. transportMode 只能是 "scooter"、"car"、"public_transit"。
-6. 每個 stop 的 transport 描述都要符合同一種 transportMode，不可混用不同交通方式。
+6. 交通資訊必須放在 transportSegments / rainTransportSegments，不要依賴 stop 內的 transport 字串。
 7. 若人數大於或等於 5，避開精緻小巧、座位有限、不適合團體的店家或活動。
 8. 每個方案都要有主方案 stops 與 rainBackup，rainBackup 不可覆蓋主方案。
 9. Google Maps 只提供外部搜尋連結，不可假裝使用 Google Maps API。
@@ -169,22 +182,42 @@ function buildTripPrompt(input: TripInput) {
       "transportMode": "scooter",
       "stops": [
         {
+          "id": "safe-main-1",
           "name": "地點名稱",
           "type": "main_activity",
+          "description": "20-50 字繁中景點簡介，說明特色與停留理由",
           "address": "完整地址或可搜尋地址",
           "duration": 90,
-          "transport": "使用統一交通方式的交通描述",
           "googleMapsUrl": "https://www.google.com/maps/search/?api=1&query=..."
+        }
+      ],
+      "transportSegments": [
+        {
+          "fromStopId": "safe-main-1",
+          "toStopId": "safe-main-2",
+          "mode": "scooter",
+          "duration": 18,
+          "label": "騎車沿海行駛"
         }
       ],
       "rainBackup": [
         {
+          "id": "safe-rain-1",
           "name": "雨天備案地點",
           "type": "main_activity",
+          "description": "20-50 字繁中景點簡介，說明特色與停留理由",
           "address": "完整地址或可搜尋地址",
           "duration": 90,
-          "transport": "使用統一交通方式的交通描述",
           "googleMapsUrl": "https://www.google.com/maps/search/?api=1&query=..."
+        }
+      ],
+      "rainTransportSegments": [
+        {
+          "fromStopId": "safe-rain-1",
+          "toStopId": "safe-rain-2",
+          "mode": "scooter",
+          "duration": 12,
+          "label": "騎車走主要幹道"
         }
       ]
     }
@@ -240,6 +273,29 @@ function isTripPlan(value: unknown): value is TripPlan {
     return false
   }
 
+  const stops = value.stops
+  const rainBackup = value.rainBackup
+
+  if (
+    !Array.isArray(stops) ||
+    stops.length < 2 ||
+    stops.length > 6 ||
+    !stops.every(isStop) ||
+    !hasUniqueStopIds(stops)
+  ) {
+    return false
+  }
+
+  if (
+    !Array.isArray(rainBackup) ||
+    rainBackup.length < 2 ||
+    rainBackup.length > 6 ||
+    !rainBackup.every(isStop) ||
+    !hasUniqueStopIds(rainBackup)
+  ) {
+    return false
+  }
+
   return (
     isPlanType(value.type) &&
     typeof value.id === 'string' &&
@@ -249,12 +305,16 @@ function isTripPlan(value: unknown): value is TripPlan {
     typeof value.totalTime === 'number' &&
     typeof value.budget === 'number' &&
     isTransportMode(value.transportMode) &&
-    Array.isArray(value.stops) &&
-    value.stops.length >= 2 &&
-    value.stops.length <= 6 &&
-    value.stops.every(isStop) &&
-    Array.isArray(value.rainBackup) &&
-    value.rainBackup.every(isStop)
+    Array.isArray(value.transportSegments) &&
+    value.transportSegments.length === stops.length - 1 &&
+    value.transportSegments.every((segment, index) =>
+      isTransportSegment(segment, stops, index),
+    ) &&
+    Array.isArray(value.rainTransportSegments) &&
+    value.rainTransportSegments.length === rainBackup.length - 1 &&
+    value.rainTransportSegments.every((segment, index) =>
+      isTransportSegment(segment, rainBackup, index),
+    )
   )
 }
 
@@ -264,14 +324,48 @@ function isStop(value: unknown): value is Stop {
   }
 
   return (
+    typeof value.id === 'string' &&
+    /^[A-Za-z0-9_-]+$/.test(value.id) &&
     typeof value.name === 'string' &&
     isStopType(value.type) &&
+    typeof value.description === 'string' &&
     typeof value.address === 'string' &&
     typeof value.duration === 'number' &&
-    typeof value.transport === 'string' &&
+    (typeof value.transport === 'undefined' ||
+      typeof value.transport === 'string') &&
     (typeof value.googleMapsUrl === 'undefined' ||
       typeof value.googleMapsUrl === 'string')
   )
+}
+
+function isTransportSegment(
+  value: unknown,
+  stops: Stop[],
+  expectedFromStopIndex: number,
+): value is TransportSegment {
+  if (!isRecord(value)) {
+    return false
+  }
+
+  return (
+    value.fromStopId === stops[expectedFromStopIndex]?.id &&
+    value.toStopId === stops[expectedFromStopIndex + 1]?.id &&
+    isTransportMode(value.mode) &&
+    (typeof value.publicTransitType === 'undefined' ||
+      isPublicTransitType(value.publicTransitType)) &&
+    typeof value.duration === 'number' &&
+    value.duration >= 0 &&
+    typeof value.label === 'string' &&
+    !hasTransportTimeText(value.label)
+  )
+}
+
+function hasUniqueStopIds(stops: Stop[]) {
+  return new Set(stops.map((stop) => stop.id)).size === stops.length
+}
+
+function hasTransportTimeText(value: string) {
+  return /[0-9０-９]|分鐘|小時|公里|km|KM/.test(value)
 }
 
 function isPlanType(value: unknown): value is PlanType {
@@ -280,6 +374,16 @@ function isPlanType(value: unknown): value is PlanType {
 
 function isTransportMode(value: unknown): value is TransportMode {
   return value === 'scooter' || value === 'car' || value === 'public_transit'
+}
+
+function isPublicTransitType(value: unknown) {
+  return (
+    value === 'bus' ||
+    value === 'metro' ||
+    value === 'train' ||
+    value === 'walk' ||
+    value === 'mixed'
+  )
 }
 
 function isStopType(value: unknown): value is StopType {

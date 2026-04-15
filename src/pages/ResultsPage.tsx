@@ -80,7 +80,7 @@ function PlanCard({ plan }: { plan: TripPlan }) {
         <strong>前幾站</strong>
         <ol>
           {previewStops.map((stop) => (
-            <li key={`${plan.id}-${stop.name}`}>{stop.name}</li>
+            <li key={`${plan.id}-${stop.id || stop.name}`}>{stop.name}</li>
           ))}
         </ol>
       </div>

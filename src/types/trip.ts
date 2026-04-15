@@ -20,6 +20,8 @@ export type TripTag =
 
 export type TransportMode = 'scooter' | 'car' | 'public_transit'
 
+export type PublicTransitType = 'bus' | 'metro' | 'train' | 'walk' | 'mixed'
+
 export type PlanType = 'safe' | 'balanced' | 'explore'
 
 export type StopType = 'main_activity' | 'food' | 'ending_or_transition'
@@ -42,12 +44,23 @@ export type TripInput = {
 }
 
 export type Stop = {
+  id: string
   name: string
   type: StopType
+  description: string
   address: string
   duration: number
-  transport: string
+  transport?: string
   googleMapsUrl?: string
+}
+
+export type TransportSegment = {
+  fromStopId: string
+  toStopId: string
+  mode: TransportMode
+  publicTransitType?: PublicTransitType
+  duration: number
+  label: string
 }
 
 export type TripPlan = {
@@ -60,5 +73,7 @@ export type TripPlan = {
   budget: number
   transportMode: TransportMode
   stops: Stop[]
+  transportSegments: TransportSegment[]
   rainBackup: Stop[]
+  rainTransportSegments: TransportSegment[]
 }

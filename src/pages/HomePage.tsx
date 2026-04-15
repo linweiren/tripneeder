@@ -158,7 +158,7 @@ export function HomePage() {
         return
       }
 
-      saveGeneratedPlans(response.plans)
+      saveGeneratedPlans(response.plans, input)
       navigate('/results')
     } catch (error) {
       if (requestId !== requestIdRef.current) {
