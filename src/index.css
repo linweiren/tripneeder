@@ -1,0 +1,33 @@
+:root {
+  color: #2d2b26;
+  background: #f6f2ea;
+  font-family:
+    'Noto Serif TC', 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei',
+    system-ui, sans-serif;
+  font-synthesis: none;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}

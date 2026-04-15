@@ -1,0 +1,64 @@
+export type TripCategory =
+  | 'date'
+  | 'relax'
+  | 'explore'
+  | 'food'
+  | 'outdoor'
+  | 'indoor'
+  | 'solo'
+  | 'other'
+
+export type BudgetLevel = 'budget' | 'standard' | 'premium' | 'luxury'
+
+export type TripTag =
+  | 'not_too_tired'
+  | 'indoor_first'
+  | 'hidden_gems'
+  | 'short_distance'
+  | 'food_first'
+  | 'photo_first'
+
+export type TransportMode = 'scooter' | 'car' | 'public_transit'
+
+export type PlanType = 'safe' | 'balanced' | 'explore'
+
+export type StopType = 'main_activity' | 'food' | 'ending_or_transition'
+
+export type TripLocation = {
+  name: string
+  lat?: number
+  lng?: number
+}
+
+export type TripInput = {
+  category: TripCategory
+  customCategory?: string
+  startTime: string
+  endTime: string
+  budget: BudgetLevel
+  people: number
+  tags: TripTag[]
+  location: TripLocation
+}
+
+export type Stop = {
+  name: string
+  type: StopType
+  address: string
+  duration: number
+  transport: string
+  googleMapsUrl?: string
+}
+
+export type TripPlan = {
+  id: string
+  type: PlanType
+  title: string
+  subtitle: string
+  summary: string
+  totalTime: number
+  budget: number
+  transportMode: TransportMode
+  stops: Stop[]
+  rainBackup: Stop[]
+}
