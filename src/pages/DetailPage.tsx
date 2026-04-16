@@ -21,17 +21,24 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import type {
   PublicTransitType,
   Stop,
   StopType,
   TransportMode,
   TransportSegment,
+  TripPlan,
 } from '../types/trip'
-import { loadGeneratedPlans, loadLastTripInput } from '../utils/tripPlanStorage'
+import {
+  loadGeneratedPlans,
+  loadLastTripInput,
+  isFavoriteTripPlan,
+  saveFavoriteTrip,
+} from '../utils/tripPlanStorage'
 
 type OrderMode = 'main' | 'rain'
+type SegmentModeOverrides = Partial<Record<OrderMode, Record<string, TransportMode>>>
 
 const stopTypeLabels: Record<StopType, string> = {
   main_activity: '主要景點',
@@ -48,7 +55,14 @@ const transportLabels: Record<TransportMode, string> = {
 const transportIcons: Record<TransportMode, string> = {
   scooter: '機車',
   car: '汽車',
-  public_transit: '公車',
+  public_transit: '大眾',
+}
+
+const transportOptions: TransportMode[] = ['scooter', 'car', 'public_transit']
+const transportSpeed: Record<TransportMode, number> = {
+  scooter: 40,
+  car: 60,
+  public_transit: 28,
 }
 
 const publicTransitLabels: Record<PublicTransitType, string> = {
@@ -61,13 +75,29 @@ const publicTransitLabels: Record<PublicTransitType, string> = {
 
 export function DetailPage() {
   const { planId } = useParams()
+  const navigate = useNavigate()
+  const location = useLocation()
   const plans = loadGeneratedPlans()
   const lastInput = loadLastTripInput()
   const selectedPlan = plans.find((plan) => plan.id === planId)
+  const sourcePage = getDetailSource(location.state)
+  const isStoredSource = sourcePage === 'favorites' || sourcePage === 'recent'
   const [isRainMode, setIsRainMode] = useState(false)
   const [keptStops, setKeptStops] = useState<Set<string>>(() => new Set())
   const [stopOrders, setStopOrders] = useState<Partial<Record<OrderMode, string[]>>>(
     {},
+  )
+  const [transportModeOverrides, setTransportModeOverrides] = useState<
+    Partial<Record<OrderMode, TransportMode>>
+  >({})
+  const [segmentModeOverrides, setSegmentModeOverrides] =
+    useState<SegmentModeOverrides>({})
+  const [isGlobalTransportMenuOpen, setIsGlobalTransportMenuOpen] =
+    useState(false)
+  const [openSegmentMenuKey, setOpenSegmentMenuKey] = useState<string | null>(null)
+  const [favoriteStatus, setFavoriteStatus] = useState('')
+  const [hasSavedFavorite, setHasSavedFavorite] = useState(() =>
+    selectedPlan ? isFavoriteTripPlan(selectedPlan) : false,
   )
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -99,6 +129,11 @@ export function DetailPage() {
       ? selectedPlan.rainTransportSegments
       : selectedPlan.transportSegments
   }, [isRainMode, selectedPlan])
+  const activeTransportMode =
+    transportModeOverrides[orderMode] ??
+    getFirstSegmentMode(rawTransportSegments) ??
+    selectedPlan?.transportMode ??
+    'scooter'
 
   const visibleStops = useMemo(
     () => applyStopOrder(baseStops, stopOrders[orderMode]),
@@ -114,29 +149,53 @@ export function DetailPage() {
       rawTransportSegments,
       visibleStops,
       baseStops,
-      selectedPlan.transportMode,
+      activeTransportMode,
     )
-  }, [baseStops, rawTransportSegments, selectedPlan, visibleStops])
+  }, [activeTransportMode, baseStops, rawTransportSegments, selectedPlan, visibleStops])
+
+  const visibleTransportSegmentsWithOverrides = useMemo(
+    () =>
+      applySegmentModeOverrides(
+        getGloballyAppliedTransportSegments(
+          visibleTransportSegments,
+          activeTransportMode,
+          transportModeOverrides[orderMode],
+        ),
+        segmentModeOverrides[orderMode],
+      ),
+    [
+      activeTransportMode,
+      orderMode,
+      segmentModeOverrides,
+      transportModeOverrides,
+      visibleTransportSegments,
+    ],
+  )
 
   const shouldShowLegacyNotice = useMemo(
     () =>
       visibleStops.some((stop) => !stop.id) ||
-      visibleTransportSegments.some((segment) => !segment.label),
-    [visibleStops, visibleTransportSegments],
+      visibleTransportSegmentsWithOverrides.some((segment) => !segment.label),
+    [visibleStops, visibleTransportSegmentsWithOverrides],
   )
 
   const stopRows = useMemo(
     () =>
-      buildStopRows(visibleStops, visibleTransportSegments, lastInput?.startTime),
-    [lastInput?.startTime, visibleStops, visibleTransportSegments],
+      buildStopRows(
+        visibleStops,
+        visibleTransportSegmentsWithOverrides,
+        lastInput?.startTime,
+      ),
+    [lastInput?.startTime, visibleStops, visibleTransportSegmentsWithOverrides],
   )
 
   const visibleDuration =
     visibleStops.reduce((total, stop) => total + stop.duration, 0) +
-    visibleTransportSegments.reduce(
+    visibleTransportSegmentsWithOverrides.reduce(
       (total, segment) => total + segment.duration,
       0,
     )
+  const allowedTripMinutes = getAllowedTripMinutes(lastInput?.startTime, lastInput?.endTime)
 
   function toggleKeptStop(stop: Stop, index: number) {
     const key = getStopKey(stop, index, isRainMode)
@@ -175,11 +234,15 @@ export function DetailPage() {
       rawTransportSegments,
       nextStops,
       baseStops,
-      selectedPlan.transportMode,
+      activeTransportMode,
+    )
+    const nextSegmentsWithOverrides = applySegmentModeOverrides(
+      nextTransportSegments,
+      segmentModeOverrides[orderMode],
     )
     const overDoubleSegment = getOverDoubleTransportSegment(
-      nextTransportSegments,
-      visibleTransportSegments,
+      nextSegmentsWithOverrides,
+      visibleTransportSegmentsWithOverrides,
     )
 
     if (
@@ -197,12 +260,81 @@ export function DetailPage() {
     }))
   }
 
+  function applyGlobalTransportMode(nextMode: TransportMode) {
+    if (!selectedPlan || nextMode === activeTransportMode) {
+      setIsGlobalTransportMenuOpen(false)
+      return
+    }
+
+    const nextSegments = visibleTransportSegmentsWithOverrides.map((segment) =>
+      applyTransportMode(segment, nextMode),
+    )
+    const nextDuration = getTotalVisibleDuration(visibleStops, nextSegments)
+
+    if (!confirmTransportChange(nextDuration, allowedTripMinutes)) {
+      setIsGlobalTransportMenuOpen(false)
+      return
+    }
+
+    setTransportModeOverrides((current) => ({
+      ...current,
+      [orderMode]: nextMode,
+    }))
+    setSegmentModeOverrides((current) => ({
+      ...current,
+      [orderMode]: {},
+    }))
+    setIsGlobalTransportMenuOpen(false)
+  }
+
+  function handleSaveFavorite() {
+    if (!selectedPlan || hasSavedFavorite) {
+      return
+    }
+
+    const snapshotPlan = buildSnapshotPlan({
+      plan: selectedPlan,
+      stopOrders,
+      transportModeOverrides,
+      segmentModeOverrides,
+    })
+
+    saveFavoriteTrip(snapshotPlan, lastInput)
+    setHasSavedFavorite(true)
+    setFavoriteStatus('已收藏這個行程。')
+  }
+
+  function applySingleSegmentTransportMode(
+    segment: TransportSegment,
+    nextMode: TransportMode,
+  ) {
+    const segmentKey = getSegmentKey(segment)
+    const nextSegments = visibleTransportSegmentsWithOverrides.map((currentSegment) =>
+      getSegmentKey(currentSegment) === segmentKey
+        ? applyTransportMode(currentSegment, nextMode)
+        : currentSegment,
+    )
+    const nextDuration = getTotalVisibleDuration(visibleStops, nextSegments)
+
+    if (!confirmTransportChange(nextDuration, allowedTripMinutes)) {
+      setOpenSegmentMenuKey(null)
+      return
+    }
+
+    setSegmentModeOverrides((current) => ({
+      ...current,
+      [orderMode]: {
+        ...(current[orderMode] ?? {}),
+        [segmentKey]: nextMode,
+      },
+    }))
+    setOpenSegmentMenuKey(null)
+  }
+
   if (!selectedPlan) {
     return (
       <section className="page">
-        <Link className="back-link" to="/results">
-          重新選擇
-        </Link>
+        <DetailBackControl isStoredSource={isStoredSource} onBack={() => navigate(-1)} />
         <p className="page-kicker">找不到方案</p>
         <h1 className="page-title">這趟行程暫時讀不到</h1>
         <p className="page-copy">
@@ -214,9 +346,7 @@ export function DetailPage() {
 
   return (
     <section className="page detail-page">
-      <Link className="back-link" to="/results">
-        重新選擇
-      </Link>
+      <DetailBackControl isStoredSource={isStoredSource} onBack={() => navigate(-1)} />
 
       <div className="detail-hero">
         <p className="page-kicker">{isRainMode ? '雨天備案' : '一般行程'}</p>
@@ -234,10 +364,28 @@ export function DetailPage() {
           <dt>預估預算</dt>
           <dd>約 NT$ {selectedPlan.budget.toLocaleString('zh-TW')}</dd>
         </div>
-        <button className="metric-button" type="button">
+        <div className="metric-transport-card">
           <dt>交通方式</dt>
-          <dd>{transportLabels[selectedPlan.transportMode]}</dd>
-        </button>
+          <dd>{transportLabels[activeTransportMode]}</dd>
+          <div className="transport-switch-area">
+            <button
+              className="transport-switch-button"
+              type="button"
+              onClick={() => setIsGlobalTransportMenuOpen((current) => !current)}
+            >
+              切換
+            </button>
+            {isGlobalTransportMenuOpen ? (
+              <TransportModeMenu
+                activeMode={activeTransportMode}
+                label="整趟行程交通"
+                compact
+                alignRight
+                onSelect={applyGlobalTransportMode}
+              />
+            ) : null}
+          </div>
+        </div>
       </dl>
 
       {shouldShowLegacyNotice ? (
@@ -259,7 +407,7 @@ export function DetailPage() {
             {stopRows.map(({ stop, startTime, endTime }, index) => {
           const stopKey = getStopKey(stop, index, isRainMode)
           const isKept = keptStops.has(stopKey)
-          const nextSegment = visibleTransportSegments[index]
+          const nextSegment = visibleTransportSegmentsWithOverrides[index]
 
           return (
             <SortableTimelineGroup id={getStopId(stop, index)} key={stopKey}>
@@ -331,7 +479,7 @@ export function DetailPage() {
                     ) : null}
                     <a
                       className="maps-link"
-                      href={buildDirectionsUrl(stop, selectedPlan.transportMode)}
+                    href={buildDirectionsUrl(stop, activeTransportMode)}
                       target="_blank"
                       rel="noreferrer"
                     >
@@ -343,13 +491,33 @@ export function DetailPage() {
 
               {nextSegment ? (
                 <div className="transport-quick-view">
-                  <button className="transport-icon" type="button">
+                  <button
+                    className="transport-icon"
+                    type="button"
+                    onClick={() =>
+                      setOpenSegmentMenuKey((current) =>
+                        current === getSegmentKey(nextSegment)
+                          ? null
+                          : getSegmentKey(nextSegment),
+                      )
+                    }
+                  >
                     {getTransportButtonLabel(nextSegment)}
                   </button>
                   <div>
                     <p>{getTransportSegmentLabel(nextSegment)}</p>
                     <strong>{formatTransportDuration(nextSegment.duration)}</strong>
                   </div>
+                  {openSegmentMenuKey === getSegmentKey(nextSegment) ? (
+                    <TransportModeMenu
+                      activeMode={nextSegment.mode}
+                      label="單段交通"
+                      compact
+                      onSelect={(nextMode) =>
+                        applySingleSegmentTransportMode(nextSegment, nextMode)
+                      }
+                    />
+                  ) : null}
                 </div>
               ) : null}
                 </>
@@ -378,8 +546,100 @@ export function DetailPage() {
           {isRainMode ? '查看一般行程' : '切換雨天備案'}
         </button>
       </div>
+
+      <div className="favorite-action-panel">
+        <div>
+          <h2>想把這趟留下來嗎？</h2>
+          <p>會保存目前排序與交通切換後的狀態，之後可以從收藏頁再打開編輯。</p>
+          {favoriteStatus ? <strong>{favoriteStatus}</strong> : null}
+        </div>
+        <button
+          className="submit-button"
+          type="button"
+          onClick={handleSaveFavorite}
+          disabled={hasSavedFavorite}
+        >
+          {hasSavedFavorite ? '已收藏' : '收藏此方案'}
+        </button>
+      </div>
     </section>
   )
+}
+
+function DetailBackControl({
+  isStoredSource,
+  onBack,
+}: {
+  isStoredSource: boolean
+  onBack: () => void
+}) {
+  if (isStoredSource) {
+    return (
+      <button
+        className="back-link back-icon-button"
+        type="button"
+        aria-label="回上一頁"
+        onClick={onBack}
+      >
+        ←
+      </button>
+    )
+  }
+
+  return (
+    <Link className="back-link" to="/results">
+      重新選擇
+    </Link>
+  )
+}
+
+function buildSnapshotPlan({
+  plan,
+  stopOrders,
+  transportModeOverrides,
+  segmentModeOverrides,
+}: {
+  plan: TripPlan
+  stopOrders: Partial<Record<OrderMode, string[]>>
+  transportModeOverrides: Partial<Record<OrderMode, TransportMode>>
+  segmentModeOverrides: SegmentModeOverrides
+}): TripPlan {
+  const mainMode = transportModeOverrides.main ?? plan.transportMode
+  const mainStops = applyStopOrder(plan.stops, stopOrders.main)
+  const mainSegments = applySegmentModeOverrides(
+    getGloballyAppliedTransportSegments(
+      getTransportSegments(plan.transportSegments, mainStops, plan.stops, mainMode),
+      mainMode,
+      transportModeOverrides.main,
+    ),
+    segmentModeOverrides.main,
+  )
+
+  const rainMode = transportModeOverrides.rain ?? plan.transportMode
+  const rainStops = applyStopOrder(plan.rainBackup, stopOrders.rain)
+  const rainSegments = applySegmentModeOverrides(
+    getGloballyAppliedTransportSegments(
+      getTransportSegments(
+        plan.rainTransportSegments,
+        rainStops,
+        plan.rainBackup,
+        rainMode,
+      ),
+      rainMode,
+      transportModeOverrides.rain,
+    ),
+    segmentModeOverrides.rain,
+  )
+
+  return {
+    ...plan,
+    transportMode: mainMode,
+    totalTime: getTotalVisibleDuration(mainStops, mainSegments),
+    stops: mainStops,
+    transportSegments: mainSegments,
+    rainBackup: rainStops,
+    rainTransportSegments: rainSegments,
+  }
 }
 
 function buildStopRows(
@@ -440,6 +700,40 @@ function SortableTimelineGroup({
   )
 }
 
+function TransportModeMenu({
+  activeMode,
+  label,
+  compact = false,
+  alignRight = false,
+  onSelect,
+}: {
+  activeMode: TransportMode
+  label: string
+  compact?: boolean
+  alignRight?: boolean
+  onSelect: (mode: TransportMode) => void
+}) {
+  return (
+    <div
+      className={`transport-mode-menu${compact ? ' transport-mode-menu-compact' : ''}${alignRight ? ' transport-mode-menu-right' : ''}`}
+    >
+      <p>{label}</p>
+      <div>
+        {transportOptions.map((mode) => (
+          <button
+            className={mode === activeMode ? 'transport-mode-active' : ''}
+            type="button"
+            key={mode}
+            onClick={() => onSelect(mode)}
+          >
+            {transportLabels[mode]}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function applyStopOrder(stops: Stop[], orderIds?: string[]) {
   if (!orderIds || orderIds.length !== stops.length) {
     return stops
@@ -475,6 +769,102 @@ function getOverDoubleTransportSegment(
   }
 
   return null
+}
+
+function applySegmentModeOverrides(
+  segments: TransportSegment[],
+  overrides?: Record<string, TransportMode>,
+) {
+  if (!overrides) {
+    return segments
+  }
+
+  return segments.map((segment) => {
+    const overrideMode = overrides[getSegmentKey(segment)]
+
+    return overrideMode ? applyTransportMode(segment, overrideMode) : segment
+  })
+}
+
+function getGloballyAppliedTransportSegments(
+  segments: TransportSegment[],
+  activeTransportMode: TransportMode,
+  globalTransportOverride?: TransportMode,
+) {
+  if (!globalTransportOverride) {
+    return segments
+  }
+
+  return segments.map((segment) => applyTransportMode(segment, activeTransportMode))
+}
+
+function applyTransportMode(
+  segment: TransportSegment,
+  nextMode: TransportMode,
+): TransportSegment {
+  if (segment.mode === nextMode) {
+    return segment
+  }
+
+  const duration = estimateTransportModeDuration(segment, nextMode)
+  const publicTransitType =
+    nextMode === 'public_transit' ? segment.publicTransitType : undefined
+
+  return {
+    ...segment,
+    mode: nextMode,
+    publicTransitType,
+    duration,
+    label: buildTransportFallbackLabel(nextMode, publicTransitType),
+  }
+}
+
+function estimateTransportModeDuration(
+  segment: TransportSegment,
+  nextMode: TransportMode,
+) {
+  const currentSpeed = transportSpeed[segment.mode]
+  const nextSpeed = transportSpeed[nextMode]
+
+  return Math.max(5, Math.round(segment.duration * (currentSpeed / nextSpeed)))
+}
+
+function getTotalVisibleDuration(stops: Stop[], transportSegments: TransportSegment[]) {
+  return (
+    stops.reduce((total, stop) => total + stop.duration, 0) +
+    transportSegments.reduce((total, segment) => total + segment.duration, 0)
+  )
+}
+
+function confirmTransportChange(
+  nextDuration: number,
+  allowedMinutes: number | null,
+) {
+  if (!allowedMinutes) {
+    return true
+  }
+
+  const isOverTime =
+    nextDuration > allowedMinutes * 1.2 || nextDuration > allowedMinutes + 30
+
+  if (!isOverTime) {
+    return true
+  }
+
+  return window.confirm(
+    `切換後行程預估會變成 ${formatMinutes(nextDuration)}，可能超出你設定的時間。確定要套用這個交通方式嗎？`,
+  )
+}
+
+function getAllowedTripMinutes(startTime?: string, endTime?: string) {
+  const start = parseTimeToMinutes(startTime)
+  const end = parseTimeToMinutes(endTime)
+
+  if (typeof start !== 'number' || typeof end !== 'number') {
+    return null
+  }
+
+  return end >= start ? end - start : end + 24 * 60 - start
 }
 
 function getTransportSegments(
@@ -740,6 +1130,10 @@ function getStopKey(stop: Stop, index: number, isRainMode: boolean) {
   return `${isRainMode ? 'rain' : 'main'}-${getStopId(stop, index)}`
 }
 
+function getSegmentKey(segment: TransportSegment) {
+  return `${segment.fromStopId}->${segment.toStopId}`
+}
+
 function buildDirectionsUrl(stop: Stop, mode: TransportMode) {
   const destination = encodeURIComponent(stop.address || stop.name)
   const travelMode = mode === 'public_transit' ? 'transit' : 'driving'
@@ -793,6 +1187,20 @@ function isTransportMode(value: unknown): value is TransportMode {
   return value === 'scooter' || value === 'car' || value === 'public_transit'
 }
 
+function getFirstSegmentMode(segments: unknown): TransportMode | null {
+  if (!Array.isArray(segments)) {
+    return null
+  }
+
+  const firstSegment = segments[0]
+
+  if (!isRecord(firstSegment) || !isTransportMode(firstSegment.mode)) {
+    return null
+  }
+
+  return firstSegment.mode
+}
+
 function isPublicTransitType(value: unknown): value is PublicTransitType {
   return (
     value === 'bus' ||
@@ -805,6 +1213,14 @@ function isPublicTransitType(value: unknown): value is PublicTransitType {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function getDetailSource(value: unknown) {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  return value.from === 'favorites' || value.from === 'recent' ? value.from : null
 }
 
 function isTransportSegmentValue(

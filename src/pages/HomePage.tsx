@@ -38,6 +38,7 @@ const tagOptions: Array<{ value: TripTag; label: string }> = [
   { value: 'short_distance', label: '短距離' },
   { value: 'food_first', label: '美食優先' },
   { value: 'photo_first', label: '拍照優先' },
+  { value: 'no_full_meals', label: '不吃正餐' },
 ]
 
 const initialInput: TripInput = {

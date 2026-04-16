@@ -1,0 +1,19 @@
+{
+  "name": "Tripneeder",
+  "short_name": "Tripneeder",
+  "description": "快速整理臨時出門的三種行程方案。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f2ea",
+  "theme_color": "#5f6f51",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/tripneeder-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

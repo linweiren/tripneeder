@@ -17,6 +17,7 @@ export type TripTag =
   | 'short_distance'
   | 'food_first'
   | 'photo_first'
+  | 'no_full_meals'
 
 export type TransportMode = 'scooter' | 'car' | 'public_transit'
 
