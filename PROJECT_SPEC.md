@@ -4377,3 +4377,44 @@ Phase 狀態：
 * Phase 8A：已正式站驗收通過。
 * 可進入 Phase 8B：`正式試用前資料與營運收尾`。
 * 但不可由 agent 自行跳入 Phase 8B；必須等待使用者明確指示開始 Phase 8B。
+
+## 2026-04-18 任務暫停交接：準備切換新聊天框
+
+使用者準備切換到新聊天框，目前任務暫停。
+
+最新狀態：
+
+* Git 工作區在本段交接前為乾淨狀態。
+* Phase 1 到 Phase 7G 已驗收通過。
+* Phase 8A 已正式站驗收通過。
+* 可提供組員測試的穩定版本：
+  * Git commit：`bd11d8b`。
+  * commit message：`Handle legacy trip record fingerprints`。
+  * Vercel production deployment 狀態：`READY`。
+* 最新紀錄提交：
+  * `4a43ce4`：`Record Phase 8A production acceptance`。
+
+下一階段規劃：
+
+* 下一階段可進入 Phase 8B：`正式試用前資料與營運收尾`。
+* Phase 8B 建議範圍：
+  * 組員試用說明：登入、點數、扣點、收藏 / 最近生成、問題回報方式。
+  * 點數管理器使用 SOP：補點、扣點、防呆、service role key 不外流。
+  * Supabase 資料檢查 SOP：`profiles`、`point_transactions`、`trip_records`。
+  * Vercel domain / Supabase redirect 設定變更注意事項。
+  * 試用回饋清單模板：登入問題、AI 結果品質、扣點問題、收藏同步問題。
+* 不可由 agent 自行跳入 Phase 8B；必須等待使用者在新聊天框明確指示開始 Phase 8B。
+
+新聊天框接手提醒：
+
+* 必須先用 UTF-8 讀取 `PROJECT_SPEC.md`，避免繁體中文企畫書與交接紀錄亂碼。
+* 必須以 `PROJECT_SPEC.md` 最末端最新交接紀錄為準。
+* 若前文與最新交接紀錄衝突，以最新交接紀錄為準。
+* 全程使用繁體中文回覆。
+* 每個 phase / 子階段完成後必須先讓使用者驗收，驗收通過後才可以進下一階段。
+* 任何新增或修改後確認下來的規格，都要同步寫進 `PROJECT_SPEC.md`。
+* 不要擅自跳 phase。
+* UI 細節不清楚時要先問使用者，尤其是資訊顯示位置、卡片內容、詳情頁內容、按鈕文案等。
+* Figma MCP 先不介入早期功能開發，除非使用者後續明確確認要用。
+* 本機驗收網址優先使用 `http://localhost:5173/`，不要優先給 `127.0.0.1`。
+* 避免用 `cmd /c start` 啟動 dev server；若需要啟動 dev server，使用 PowerShell / Start-Process 或一般 `npm run dev`，並確認 `localhost:5173` 回應。
