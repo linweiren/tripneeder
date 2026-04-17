@@ -2,9 +2,11 @@ import type { TripInput, TripPlan } from '../types/trip'
 
 const TRIP_PLANS_STORAGE_KEY = 'tripneeder.generatedPlans'
 const TRIP_INPUT_STORAGE_KEY = 'tripneeder.lastInput'
+const DETAIL_PLAN_STORAGE_KEY = 'tripneeder.detailPlan'
+const DETAIL_INPUT_STORAGE_KEY = 'tripneeder.detailInput'
 const RECENT_PLANS_STORAGE_KEY = 'tripneeder.recentPlans'
 const FAVORITE_PLANS_STORAGE_KEY = 'tripneeder.favoritePlans'
-const MAX_RECENT_RECORDS = 12
+export const MAX_RECENT_RECORDS = 12
 
 export type StoredTripRecord = {
   id: string
@@ -60,13 +62,47 @@ export function loadLastTripInput() {
 export function clearGeneratedTripFlow() {
   sessionStorage.removeItem(TRIP_PLANS_STORAGE_KEY)
   sessionStorage.removeItem(TRIP_INPUT_STORAGE_KEY)
+  sessionStorage.removeItem(DETAIL_PLAN_STORAGE_KEY)
+  sessionStorage.removeItem(DETAIL_INPUT_STORAGE_KEY)
 }
 
 export function savePlanForDetail(plan: TripPlan, input: TripInput | null) {
-  sessionStorage.setItem(TRIP_PLANS_STORAGE_KEY, JSON.stringify([plan]))
+  sessionStorage.setItem(DETAIL_PLAN_STORAGE_KEY, JSON.stringify(plan))
 
   if (input) {
-    sessionStorage.setItem(TRIP_INPUT_STORAGE_KEY, JSON.stringify(input))
+    sessionStorage.setItem(DETAIL_INPUT_STORAGE_KEY, JSON.stringify(input))
+  } else {
+    sessionStorage.removeItem(DETAIL_INPUT_STORAGE_KEY)
+  }
+}
+
+export function loadPlanForDetail(planId?: string) {
+  const rawPlan = sessionStorage.getItem(DETAIL_PLAN_STORAGE_KEY)
+
+  if (!rawPlan) {
+    return null
+  }
+
+  try {
+    const plan = JSON.parse(rawPlan) as TripPlan
+
+    return !planId || plan.id === planId ? plan : null
+  } catch {
+    return null
+  }
+}
+
+export function loadInputForDetail() {
+  const rawInput = sessionStorage.getItem(DETAIL_INPUT_STORAGE_KEY)
+
+  if (!rawInput) {
+    return null
+  }
+
+  try {
+    return JSON.parse(rawInput) as TripInput
+  } catch {
+    return null
   }
 }
 
@@ -121,7 +157,7 @@ export function removeFavoriteTrip(recordId: string, ownerId?: string) {
   localStorage.setItem(storageKey, JSON.stringify(records))
 }
 
-function createPlanFingerprint(plan: TripPlan) {
+export function createPlanFingerprint(plan: TripPlan) {
   return JSON.stringify({
     title: plan.title,
     subtitle: plan.subtitle,

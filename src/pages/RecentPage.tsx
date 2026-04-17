@@ -1,9 +1,16 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TripRecordList } from '../components/TripRecordList'
 import { useAuth } from '../contexts/auth'
 import { useDialog } from '../contexts/dialog'
-import { loadRecentTripRecords } from '../utils/tripPlanStorage'
+import {
+  loadRecentRecords,
+  prepareTripRecordsForUser,
+} from '../services/tripRecords/tripRecordService'
+import {
+  loadRecentTripRecords,
+  type StoredTripRecord,
+} from '../utils/tripPlanStorage'
 import {
   loginPromptMessage,
   loginPromptTitle,
@@ -13,8 +20,55 @@ export function RecentPage() {
   const navigate = useNavigate()
   const dialog = useDialog()
   const { user, isAuthLoading } = useAuth()
-  const records = loadRecentTripRecords(user?.id)
+  const [recordSnapshot, setRecordSnapshot] = useState<{
+    userId: string
+    records: StoredTripRecord[]
+  } | null>(null)
   const hasPromptedLoginRef = useRef(false)
+  const visibleRecords =
+    user && recordSnapshot?.userId === user.id ? recordSnapshot.records : []
+  const isRecordsLoading = Boolean(user && recordSnapshot?.userId !== user.id)
+
+  useEffect(() => {
+    if (!user) {
+      return
+    }
+
+    let isMounted = true
+    const userId = user.id
+
+    async function loadRecords() {
+      try {
+        await prepareTripRecordsForUser(userId)
+        const nextRecords = await loadRecentRecords(userId)
+
+        if (isMounted) {
+          setRecordSnapshot({
+            userId,
+            records: nextRecords,
+          })
+        }
+      } catch {
+        if (isMounted) {
+          setRecordSnapshot({
+            userId,
+            records: loadRecentTripRecords(userId),
+          })
+        }
+
+        void dialog.alert({
+          title: '同步失敗',
+          message: '最近生成同步失敗，請稍後再試。',
+        })
+      }
+    }
+
+    void loadRecords()
+
+    return () => {
+      isMounted = false
+    }
+  }, [dialog, user])
 
   useEffect(() => {
     if (isAuthLoading || user || hasPromptedLoginRef.current) {
@@ -38,9 +92,15 @@ export function RecentPage() {
     <section className="page">
       <p className="page-kicker">最近生成</p>
       <h1 className="page-title">最近生成</h1>
-      {user ? (
+      {user && isRecordsLoading ? (
+        <div className="empty-record-panel" role="status" aria-live="polite">
+          <h2>正在讀取最近生成...</h2>
+          <p>我們正在同步你的行程紀錄。</p>
+        </div>
+      ) : null}
+      {user && !isRecordsLoading ? (
         <TripRecordList
-          records={records}
+          records={visibleRecords}
           emptyTitle="還沒有最近生成"
           emptyCopy="送出行程偏好並成功產生三方案後，最近生成會保存在這裡。"
           source="recent"

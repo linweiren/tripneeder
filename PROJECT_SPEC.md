@@ -3469,6 +3469,105 @@ https://jaxlqqctnnbfritxkkpy.supabase.co/auth/v1/callback
 * `npm run lint` 通過。
 * `npm run build` 通過。
 
+## 2026-04-18 Phase 8A 驗收中修正（四）：移除收藏後詳情頁按鈕同步
+
+使用者回報：
+
+* 在收藏頁移除收藏後，回到該行程詳情頁，按鈕仍顯示 `已收藏` 且不能點擊。
+* 收藏按鈕應參照收藏頁的變動，同一個行程移除收藏後應可再次收藏。
+
+判斷原因：
+
+* 移除收藏時只刪遠端 record id，但本機 localStorage fallback 可能仍保留同方案舊資料。
+* 詳情頁收藏狀態沒有收到收藏資料變動通知，因此會保留舊的 `已收藏` 狀態。
+
+本機修正：
+
+* 移除收藏時，除了刪除 Supabase record，也會依 plan fingerprint 清掉 localStorage 中同一方案的舊收藏。
+* 收藏新增 / 移除後會發出 `tripneeder:favoritesChanged` 事件。
+* 詳情頁會監聽收藏變動事件、視窗 focus 與 pageshow，並重新判斷收藏狀態。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+## 2026-04-18 Phase 8A 驗收中修正（五）：移除收藏狀態與三方案保留
+
+使用者回報：
+
+* 移除收藏後，回到同一個行程詳情頁，按鈕仍維持 `已收藏`，狀態沒有改變。
+* 新增 bug：從三方案結果選擇其中一個方案後收藏，再到收藏頁移除收藏，回行程規劃時，其他兩個未被選的方案消失。
+
+判斷原因：
+
+* 收藏狀態檢查原本 localStorage 優先；若本機 fallback 仍有舊收藏資料，即使 Supabase 已移除，詳情頁仍會判斷為已收藏。
+* 移除收藏原本主要依 record id 刪除；若本機 / 遠端有不同 id 的同方案資料，可能沒有完全清乾淨。
+* 從收藏 / 最近生成卡片進詳情時，`savePlanForDetail` 會覆蓋 `tripneeder.generatedPlans`，導致三方案結果被單一方案取代。
+
+本機修正：
+
+* `isFavoriteRecord` 改為 Supabase 優先；只有 Supabase 查詢失敗或未設定時才 fallback localStorage。
+* 移除收藏時，若有 plan，會依 `plan_fingerprint` 再刪一次 Supabase 同方案收藏。
+* 移除收藏時也會依 `plan_fingerprint` 清掉 localStorage 同方案舊收藏。
+* `savePlanForDetail` 改用獨立的 `tripneeder.detailPlan` / `tripneeder.detailInput` 暫存，不再覆蓋三方案結果。
+* 詳情頁從收藏 / 最近生成進入時使用 detail 暫存；從三方案結果進入時仍使用原本 generated plans。
+* `clearGeneratedTripFlow` 會同步清掉 detail 暫存。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+## 2026-04-18 Phase 8A 驗收中修正（六）：收藏狀態閃爍與扣點提示
+
+使用者確認：
+
+* 移除收藏後，詳情頁已可正確解除 `已收藏` 狀態。
+* 三方案保留修正通過。
+* 剩餘問題：
+  * 點擊 `收藏此方案` 後，按鈕會先變 `已收藏`，又短暫跳回可點擊的 `收藏此方案`，再回到 `已收藏`。
+  * 首頁偏好選擇送出按鈕需提示使用者本次分析會扣 20 點。
+
+判斷原因：
+
+* 詳情頁收藏狀態有背景查詢。
+* 使用者點擊收藏時，若先前的背景查詢較晚回來，可能用舊結果短暫覆蓋 optimistic `已收藏` 狀態。
+
+本機修正：
+
+* 詳情頁收藏狀態查詢新增 request id。
+* 點擊收藏時會讓舊查詢失效，避免過期查詢回來覆蓋按鈕狀態。
+* 儲存中不重新查詢收藏狀態，儲存完成後才允許最新查詢校正。
+* 首頁送出按鈕文案改為 `出發！GO！（扣除20點數）`。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+## 2026-04-18 Phase 8A 本機驗收通過與正式站重新部署
+
+使用者確認 Phase 8A 本機驗收全部通過。
+
+驗收通過項目：
+
+* Supabase `trip_records` SQL 已套用。
+* 最近生成可同步到 Supabase。
+* 收藏可同步到 Supabase。
+* 收藏頁 / 最近生成頁讀取時會顯示載入狀態，不再先閃空狀態。
+* 點擊 `收藏此方案` 後，按鈕會穩定改成 `已收藏` 並 disabled。
+* 移除收藏後，詳情頁收藏按鈕會正確恢復為 `收藏此方案`。
+* 從收藏 / 最近生成進詳情不再覆蓋三方案結果，回行程規劃時三方案仍保留。
+* 首頁送出按鈕已改為 `出發！GO！（扣除20點數）`。
+
+下一步：
+
+* 提交並推送 Phase 8A 變更到 GitHub `main`。
+* 等待 Vercel production deployment 更新。
+* 使用正式站快速複驗登入、最近生成、收藏、移除收藏、三方案保留與扣點提示。
+* 正式站複驗通過後，可將新版網址給組員試用。
+
 仍待完成：
 
 * 需經使用者確認後，將登入修正提交並推送到 GitHub `main`，讓 Vercel 重新部署。
@@ -3476,4 +3575,192 @@ https://jaxlqqctnnbfritxkkpy.supabase.co/auth/v1/callback
   * 登入後右上角需顯示 `登出`。
   * `/points` 需顯示該登入帳號的點數。
   * AI 分析成功後需扣 20 點並新增 `分析扣點` 紀錄。
+
+## 2026-04-18 Phase 7G 驗收通過與 Phase 8 開始確認
+
+使用者確認正式站登入修正後，Google 登入已成功接回 session，右上角已可顯示 `登出`，Phase 7G 完整驗收通過。
+
+Phase 7G 結論：
+
+* 正式網址 `https://tripneeder.vercel.app` 可作為組員試用網址。
+* Vercel production deployment 已可正常載入首頁、登入頁與點數頁。
+* Google 登入可成功回到正式站並維持登入狀態。
+* `/api/generate-trip` 未登入阻擋維持 HTTP 401。
+* OpenAI key 仍只走 Vercel Function server-side env，不放前端 bundle。
+* `SUPABASE_SERVICE_ROLE_KEY` 仍只供本機點數管理器使用，不放到 Vercel。
+
+使用者確認可進入 Phase 8。
+
+Phase 8 目標更新：
+
+* 將目前依登入 user id 分隔的 localStorage 收藏 / 最近生成，改為同步到 Supabase。
+* 收藏與最近生成資料需跟著 Supabase 登入帳號走，避免換裝置或換瀏覽器後資料遺失。
+* Phase 8 初期先維持現有收藏頁、最近生成頁、詳情頁 UI 與卡片內容，不主動改版。
+* 開始實作前需先確認資料表設計、localStorage 遷移策略、離線 / 同步失敗 fallback 行為。
+
+Phase 8A 預計先做「資料模型與同步策略確認」，不直接跳到 UI 改版。
+
+## 2026-04-18 Phase 8A 規格確認：收藏 / 最近生成同步策略
+
+使用者確認 Phase 8A 採用以下建議：
+
+* 舊 localStorage 資料需要自動搬到 Supabase。
+  * 登入後第一次進收藏 / 最近生成頁時，自動把該 user id 底下的本機資料上傳到 Supabase。
+  * 目標是避免使用者之前存的收藏 / 最近生成資料突然消失。
+* 最近生成維持最多 12 筆。
+  * 每次 AI 成功產生三方案後新增三筆最近生成。
+  * 超過 12 筆時刪除最舊紀錄。
+* 同步失敗時採用 fallback。
+  * 前台顯示簡短錯誤，例如 `同步失敗，請稍後再試`。
+  * 不改現有 UI 架構。
+  * 最近生成若 Supabase 寫入失敗，可以暫存在 localStorage，避免資料直接不見。
+
+Phase 8A 實作原則：
+
+* 先新增 Supabase 資料表與前端同步層。
+* 保留現有收藏頁、最近生成頁、詳情頁 UI 與卡片內容。
+* 不新增 UI 改版、不新增 Figma。
+
+## 2026-04-18 Phase 8A 本機實作進度：trip_records 同步層
+
+本機已完成 Phase 8A 第一版實作。
+
+新增 Supabase migration：
+
+* `supabase/migrations/003_trip_records.sql`
+* 新增 `public.trip_records`：
+  * `id`
+  * `user_id`
+  * `kind`：`favorite` / `recent`
+  * `plan`：完整 `TripPlan` JSON
+  * `input`：產生該方案時的 `TripInput` JSON
+  * `plan_fingerprint`
+  * `created_at`
+  * `updated_at`
+* 新增 RLS：
+  * 使用者只能讀取自己的 trip records。
+  * 使用者只能新增自己的 trip records。
+  * 使用者只能更新自己的 trip records。
+  * 使用者只能刪除自己的 trip records。
+* 收藏以 `user_id + plan_fingerprint` 建立 partial unique index，避免同一使用者重複收藏同一方案。
+
+前端同步層：
+
+* 新增 `src/services/tripRecords/tripRecordService.ts`。
+* 收藏頁與最近生成頁會在登入使用者進入頁面時：
+  * 先嘗試將該 user id 底下的 localStorage 舊資料遷移到 Supabase。
+  * 再從 Supabase 讀取收藏 / 最近生成。
+  * 若同步失敗，退回讀取 localStorage 並顯示 `同步失敗` 提示。
+* AI 成功產生三方案後：
+  * 仍會先保存到 localStorage，避免資料消失。
+  * 若使用者已登入，會同步新增三筆 `recent` 到 Supabase。
+  * Supabase recent 超過 12 筆時刪除最舊紀錄。
+* 詳情頁收藏按鈕：
+  * 改為透過同步層儲存收藏。
+  * Supabase 失敗時仍保留 localStorage fallback，並顯示同步失敗文字。
+* Phase 8A 不改收藏頁 / 最近生成頁 / 詳情頁 UI 結構與卡片內容。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+仍待完成：
+
+* 需先在 Supabase SQL Editor 套用 `supabase/migrations/003_trip_records.sql`。
+* 資料表套用後，才能進行 Phase 8A 正式驗收。
+* 目前尚未提交 / 推送本次 Phase 8A 程式變更。
+
+## 2026-04-18 Phase 8A 驗收中修正：生成後直接收藏同步
+
+使用者回報：
+
+* SQL 套用後，生成完成後的其他收藏 / 最近生成測試皆成功。
+* 但在生成後直接點擊詳情頁 `收藏此方案` 時，曾出現同步失敗。
+* 同步失敗後會看到原本 localStorage 收藏過的資料。
+
+判斷原因：
+
+* 收藏頁 / 最近生成頁進入時會先跑 localStorage 舊資料遷移。
+* 但詳情頁直接收藏的路徑原本沒有先跑同一個準備流程。
+* 因此若使用者剛生成完就直接收藏，可能還沒完成舊 localStorage 資料遷移與遠端狀態準備。
+
+本機修正：
+
+* `saveFavoriteRecord` 開始時先呼叫 `prepareTripRecordsForUser(userId)`。
+* 將遠端收藏寫入抽成內部 helper，避免遷移流程呼叫公開收藏函式造成遞迴。
+* 遷移舊收藏資料時直接使用低階遠端寫入 helper。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+待使用者重測：
+
+* 重新生成一組方案後，直接進詳情頁點擊 `收藏此方案`。
+* 預期不再出現同步失敗。
+* 收藏頁應顯示剛收藏的方案，重新整理後仍存在。
+
+## 2026-04-18 Phase 8A 驗收中修正（二）：收藏按鈕狀態與列表載入狀態
+
+使用者確認：
+
+* 生成後測試收藏 / 最近生成同步皆正常。
+* 剩餘調整：
+  * `收藏此方案` 點下去後應立即反灰、不能再點擊，文字改為 `已收藏`。
+  * 收藏頁 / 最近生成頁讀取 Supabase 時會短暫延遲，不應先顯示空狀態再跳出資料。
+
+本機修正：
+
+* 詳情頁收藏按鈕：
+  * 點擊後立即設定為已收藏狀態。
+  * 按鈕文字立即改為 `已收藏`。
+  * 按鈕立即 disabled，避免重複收藏。
+* 收藏頁 / 最近生成頁：
+  * 遠端資料讀取完成前，顯示載入狀態。
+  * 收藏頁載入文案為 `正在讀取收藏...`。
+  * 最近生成頁載入文案為 `正在讀取最近生成...`。
+  * 不再先顯示「還沒有收藏任何方案」或「還沒有最近生成」後再跳出資料。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+發布判斷：
+
+* Phase 8A 本機驗收通過後，仍需提交並推送到 GitHub `main`，等待 Vercel production 更新。
+* Vercel production 更新後，需用正式站快速複驗登入、最近生成、收藏、重新整理保留資料。
+* 正式站複驗通過後，才適合把 Phase 8A 版本貼給組員試用。
+
+## 2026-04-18 Phase 8A 驗收中修正（三）：收藏按鈕不可重複收藏
+
+使用者確認：
+
+* 收藏頁載入狀態通過。
+* 最近生成頁載入狀態通過。
+* 詳情頁收藏按鈕仍需修正：
+  * 移除右側 `已收藏這個行程。` 狀態文字。
+  * 點擊收藏後只讓按鈕反灰、文字改為 `已收藏`。
+  * 不可再次點擊。
+  * 同一個行程只能收藏一次。
+
+發現問題：
+
+* 點擊收藏後按鈕會短暫反灰，但很快又亮起來。
+* 原因是收藏時保存的是包含目前排序 / 交通切換狀態的 snapshot plan，但收藏狀態檢查原本拿原始 selected plan 比對。
+* 兩者 fingerprint 不一定相同，因此成功收藏後可能又被重算為未收藏。
+
+本機修正：
+
+* 詳情頁收藏成功後不再顯示右側狀態文字。
+* 收藏狀態檢查改用實際會保存的 snapshot plan。
+* 收藏成功後按鈕維持 `已收藏` 並 disabled。
+* 收藏失敗時才用 App dialog 顯示錯誤，並恢復按鈕可點狀態。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
 

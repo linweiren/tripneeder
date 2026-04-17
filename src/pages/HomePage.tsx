@@ -417,7 +417,7 @@ export function HomePage() {
         {formError ? <p className="form-error">{formError}</p> : null}
 
         <button className="submit-button" type="submit">
-          出發！GO！
+          出發！GO！（扣除20點數）
         </button>
       </form>
     </section>

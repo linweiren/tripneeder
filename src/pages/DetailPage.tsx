@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ButtonHTMLAttributes,
   type ReactNode,
@@ -32,11 +33,15 @@ import type {
   TripPlan,
 } from '../types/trip'
 import {
+  loadInputForDetail,
   loadGeneratedPlans,
   loadLastTripInput,
-  isFavoriteTripPlan,
-  saveFavoriteTrip,
+  loadPlanForDetail,
 } from '../utils/tripPlanStorage'
+import {
+  isFavoriteRecord,
+  saveFavoriteRecord,
+} from '../services/tripRecords/tripRecordService'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import { useAuth } from '../contexts/auth'
 import { useDialog, type DialogContextValue } from '../contexts/dialog'
@@ -85,10 +90,15 @@ export function DetailPage() {
   const { user } = useAuth()
   const dialog = useDialog()
   const plans = loadGeneratedPlans()
-  const lastInput = loadLastTripInput()
-  const selectedPlan = plans.find((plan) => plan.id === planId)
   const sourcePage = getDetailSource(location.state)
   const isStoredSource = sourcePage === 'favorites' || sourcePage === 'recent'
+  const storedDetailPlan = loadPlanForDetail(planId)
+  const generatedPlan = plans.find((plan) => plan.id === planId)
+  const selectedPlan = isStoredSource
+    ? storedDetailPlan ?? generatedPlan
+    : generatedPlan ?? storedDetailPlan
+  const lastInput =
+    selectedPlan === storedDetailPlan ? loadInputForDetail() : loadLastTripInput()
   const [isRainMode, setIsRainMode] = useState(false)
   const [stopOrders, setStopOrders] = useState<Partial<Record<OrderMode, string[]>>>(
     {},
@@ -101,12 +111,10 @@ export function DetailPage() {
   const [isGlobalTransportMenuOpen, setIsGlobalTransportMenuOpen] =
     useState(false)
   const [openSegmentMenuKey, setOpenSegmentMenuKey] = useState<string | null>(null)
-  const [favoriteStatus, setFavoriteStatus] = useState('')
   const [favoriteRevision, setFavoriteRevision] = useState(0)
-  const hasSavedFavorite = useMemo(() => {
-    void favoriteRevision
-    return selectedPlan ? isFavoriteTripPlan(selectedPlan, user?.id) : false
-  }, [favoriteRevision, selectedPlan, user?.id])
+  const [hasSavedFavorite, setHasSavedFavorite] = useState(false)
+  const [isSavingFavorite, setIsSavingFavorite] = useState(false)
+  const favoriteStatusRequestIdRef = useRef(0)
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -209,6 +217,61 @@ export function DetailPage() {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [planId])
 
+  useEffect(() => {
+    function refreshFavoriteStatus() {
+      setFavoriteRevision((current) => current + 1)
+    }
+
+    window.addEventListener('focus', refreshFavoriteStatus)
+    window.addEventListener('pageshow', refreshFavoriteStatus)
+    window.addEventListener('tripneeder:favoritesChanged', refreshFavoriteStatus)
+
+    return () => {
+      window.removeEventListener('focus', refreshFavoriteStatus)
+      window.removeEventListener('pageshow', refreshFavoriteStatus)
+      window.removeEventListener('tripneeder:favoritesChanged', refreshFavoriteStatus)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!selectedPlan || !user || isSavingFavorite) {
+      return
+    }
+
+    let isMounted = true
+    const requestId = favoriteStatusRequestIdRef.current + 1
+    favoriteStatusRequestIdRef.current = requestId
+    const plan = buildSnapshotPlan({
+      plan: selectedPlan,
+      stopOrders,
+      transportModeOverrides,
+      segmentModeOverrides,
+    })
+    const userId = user.id
+
+    async function loadFavoriteStatus() {
+      const isFavorite = await isFavoriteRecord(plan, userId)
+
+      if (isMounted && requestId === favoriteStatusRequestIdRef.current) {
+        setHasSavedFavorite(isFavorite)
+      }
+    }
+
+    void loadFavoriteStatus()
+
+    return () => {
+      isMounted = false
+    }
+  }, [
+    favoriteRevision,
+    isSavingFavorite,
+    segmentModeOverrides,
+    selectedPlan,
+    stopOrders,
+    transportModeOverrides,
+    user,
+  ])
+
   async function handleDragEnd(event: DragEndEvent) {
     if (!selectedPlan || !event.over || event.active.id === event.over.id) {
       return
@@ -285,8 +348,8 @@ export function DetailPage() {
     setIsGlobalTransportMenuOpen(false)
   }
 
-  function handleSaveFavorite() {
-    if (!selectedPlan || hasSavedFavorite) {
+  async function handleSaveFavorite() {
+    if (!selectedPlan || !user || hasSavedFavorite || isSavingFavorite) {
       return
     }
 
@@ -297,9 +360,23 @@ export function DetailPage() {
       segmentModeOverrides,
     })
 
-    saveFavoriteTrip(snapshotPlan, lastInput, user?.id)
-    setFavoriteRevision((current) => current + 1)
-    setFavoriteStatus('已收藏這個行程。')
+    try {
+      favoriteStatusRequestIdRef.current += 1
+      setIsSavingFavorite(true)
+      setHasSavedFavorite(true)
+      await saveFavoriteRecord(snapshotPlan, lastInput, user.id)
+      setFavoriteRevision((current) => current + 1)
+    } catch (error) {
+      setHasSavedFavorite(false)
+      setFavoriteRevision((current) => current + 1)
+      void dialog.alert({
+        title: '收藏同步失敗',
+        message:
+          error instanceof Error ? error.message : '收藏同步失敗，請稍後再試。',
+      })
+    } finally {
+      setIsSavingFavorite(false)
+    }
   }
 
   async function applySingleSegmentTransportMode(
@@ -535,12 +612,11 @@ export function DetailPage() {
           <button
             className="submit-button"
             type="button"
-            onClick={handleSaveFavorite}
-            disabled={hasSavedFavorite}
+            onClick={() => void handleSaveFavorite()}
+            disabled={hasSavedFavorite || isSavingFavorite}
           >
             {hasSavedFavorite ? '已收藏' : '收藏此方案'}
           </button>
-          {favoriteStatus ? <strong>{favoriteStatus}</strong> : null}
         </div>
       </div>
     </section>

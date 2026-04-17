@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useLocation, useNavigate } from 'react-router-dom'
 import { tripPlanner } from '../services/ai'
 import { supabase } from '../services/auth/supabaseClient'
+import { saveRecentGeneratedRecords } from '../services/tripRecords/tripRecordService'
 import type { TripInput } from '../types/trip'
 import {
   clearGeneratedTripFlow,
@@ -59,7 +60,15 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      saveGeneratedPlans(response.plans, input, userId)
+      if (userId) {
+        try {
+          await saveRecentGeneratedRecords(response.plans, input, userId)
+        } catch {
+          // Recent records are already kept in localStorage as a fallback.
+        }
+      } else {
+        saveGeneratedPlans(response.plans, input, userId)
+      }
 
       const successSession: AnalysisSession = {
         status: 'success',
