@@ -4111,6 +4111,173 @@ Phase 8A 實作原則：
 * Phase 8A 仍未正式驗收通過。
 * 不可進入 Phase 8B。
 
+## 2026-04-18 Phase 8A 最終確認：正式站驗收通過，可提供組員試用
+
+使用者最終確認：
+
+* 部署 `bd11d8b`：`Handle legacy trip record fingerprints` 後，正式站收藏 / 最近生成流程完全正常。
+* 使用者明確回報：「這次完全正常了」。
+* 使用者確認正式站先前問題已消失：
+  * 從 `最近生成` 收藏方案後，進 `收藏` 可以正確看到剛收藏的方案。
+  * 回到 `最近生成` 再進同一方案，詳情頁按鈕會維持 `已收藏` 且不可再點。
+  * 從 `收藏` 既有項目點進詳情頁，按鈕也會正確顯示 `已收藏`。
+  * 舊版收藏內容已能和同一帳號資料對上。
+
+最終結論：
+
+* Phase 8A：收藏 / 最近生成同步到 Supabase，正式站驗收通過。
+* 目前已有可以提供組員測試的版本。
+* 建議給組員測試的版本：
+  * Git commit：`bd11d8b`。
+  * commit message：`Handle legacy trip record fingerprints`。
+  * Vercel production deployment 狀態：`READY`。
+
+這次問題為何產生：
+
+* 表面症狀是「本機可行、正式站不行」。
+* 根因不是單一 bug，而是正式站保留了跨版本資料：
+  * 最舊版未分帳號 localStorage：`tripneeder.favoritePlans` / `tripneeder.recentPlans`。
+  * 後來依 Supabase user id 分隔的 localStorage：`tripneeder.favoritePlans.<userId>` / `tripneeder.recentPlans.<userId>`。
+  * Phase 8A 新增的 Supabase `trip_records`。
+* Phase 8A 初版只遷移 user-scoped localStorage，沒有遷移最舊版未分帳號 localStorage，導致正式站舊收藏沒有搬到同一帳號的 Supabase records。
+* 原本 `createPlanFingerprint` 又把交通段 `label` 這類顯示文字納入 fingerprint；詳情頁會重新整理 / 清洗交通 label，造成同一方案在列表與詳情頁被判斷成不同方案。
+* 因此正式站會出現：
+  * 收藏頁既有項目點進詳情，卻顯示 `收藏此方案`。
+  * 最近生成收藏後，收藏頁與詳情頁狀態不同步。
+  * 本機新資料可行，但正式站舊資料不可行。
+
+最後有效修正：
+
+* 加入穩定 fingerprint：
+  * 停靠點只比對 id、名稱、類型、描述、地址、停留時間與 Google Maps URL。
+  * 交通段只比對起訖 stop id、交通方式、大眾運輸類型與時間。
+  * 不再把交通段 `label` 等顯示文字納入 fingerprint。
+* 加入向後相容：
+  * 若用目前 DB `plan_fingerprint` 查不到收藏，會讀取遠端收藏清單，用新版穩定 fingerprint 比對每筆 `plan`。
+  * 新增收藏前也會掃遠端既有收藏，避免因舊 DB fingerprint 不同而新增假重複。
+* 加入 legacy localStorage migration：
+  * 一次性旗標：`tripneeder.legacyTripRecordsMigrated.<userId>`。
+  * 登入後會嘗試搬移最舊版 `tripneeder.favoritePlans` / `tripneeder.recentPlans` 到目前登入者的 Supabase `trip_records`。
+  * recent 遷移仍維持最多 12 筆。
+* 加強快取一致性：
+  * 收藏後立即更新 localStorage fallback、module-level memory cache、sessionStorage cache。
+  * 使用 `tripneeder:favoritesChanged` 通知詳情頁刷新。
+  * Supabase 成功後用 remote record 取代本機暫存 record。
+
+日後開發學習規則：
+
+* 只要從 localStorage 遷移到雲端，必須列出所有歷史 key，不可只看最新版 key。
+* 正式站 bug 若本機無法重現，要優先檢查正式站瀏覽器既有 localStorage / sessionStorage，以及 Supabase 既有資料與目前 schema / fingerprint 是否相容。
+* fingerprint 不應包含顯示用、可被格式化、可被清洗或排序後重建的文字欄位。
+* 對正式站既有資料做修正時，必須同時處理：
+  * 新資料正常寫入。
+  * 舊資料可被讀到。
+  * 舊資料不會造成假重複。
+  * 舊資料遷移完成後不會重複遷移。
+* 若使用者回報「本機可行但正式站不行」，不要只微調前端流程；應立刻檢查正式站資料形態、歷史版本資料、環境變數與 user id。
+
+Phase 狀態：
+
+* Phase 1 到 Phase 7G：已驗收通過。
+* Phase 8A：已正式站驗收通過。
+* 可進入下一階段 Phase 8B：`正式試用前資料與營運收尾`。
+* 但不可由 agent 自行跳入 Phase 8B；必須等待使用者明確指示開始 Phase 8B。
+
+## 2026-04-18 Phase 8A 正式站驗收通過：收藏 / 最近生成同步根因總結
+
+使用者正式站複驗結果：
+
+* 部署 `bd11d8b`：`Handle legacy trip record fingerprints` 後，正式站收藏 / 最近生成流程完全正常。
+* 使用者確認：
+  * 從 `最近生成` 收藏方案後，進 `收藏` 可以正確看到剛收藏的方案。
+  * 回到 `最近生成` 再進同一方案，詳情頁按鈕會維持 `已收藏` 且不可再點。
+  * 從 `收藏` 既有項目點進詳情頁，按鈕也會正確顯示 `已收藏`。
+  * 正式站舊版收藏內容已能對上同一帳號資料。
+* 使用者表示「這次完全正常」。
+
+Phase 8A 驗收結論：
+
+* Phase 8A：收藏 / 最近生成同步到 Supabase，正式站驗收通過。
+* 目前已有可提供組員試用的版本。
+* 建議給組員測試的版本：
+  * Git commit：`bd11d8b`。
+  * commit message：`Handle legacy trip record fingerprints`。
+  * Vercel production deployment 狀態：`READY`。
+* 仍需維持既有階段規則：Phase 8A 已完成不代表可自動進入 Phase 8B；若要開始 Phase 8B，需使用者明確確認。
+
+這次問題的完整根因：
+
+* 表面症狀是「本機可行、正式站不行」。
+* 真正原因不是單一 bug，而是三種資料時代混在一起：
+  * 最舊版未登入 / 未分帳號 localStorage：
+    * `tripneeder.favoritePlans`
+    * `tripneeder.recentPlans`
+  * 後來 Phase 7F-1 為了避免多帳號互看，改成依 Supabase user id 分隔的 localStorage：
+    * `tripneeder.favoritePlans.<userId>`
+    * `tripneeder.recentPlans.<userId>`
+  * Phase 8A 再把收藏 / 最近生成同步到 Supabase `trip_records`。
+* Phase 8A 初版主要遷移 user-scoped localStorage，沒有把最舊版未分帳號 localStorage 一起搬入目前登入帳號。
+* 因此本機用新資料測試時會正常，但正式站瀏覽器仍保留最舊版 localStorage，造成「同一帳號但正式站收藏內容和舊版收藏內容對不上」。
+* 同時，原本 `createPlanFingerprint` 過度依賴完整 `TripPlan` JSON，包含交通段 `label` 這種顯示用文字。
+* 詳情頁會整理交通段顯示內容，例如清掉交通 label 中的時間字樣；這會讓「列表裡同一筆收藏」與「詳情頁重新整理後的同一方案」產生不同 fingerprint。
+* 因此正式站出現：
+  * 從 `收藏` 點既有項目進詳情，仍顯示 `收藏此方案`。
+  * 從 `最近生成` 收藏後，回收藏頁 / 回詳情頁狀態不一致。
+  * 剛收藏的資料可能被遠端舊狀態或舊快取覆蓋。
+
+這次最後有效的修正：
+
+* 收藏狀態與列表資料的快取一致性：
+  * 收藏後立即寫入 local fallback。
+  * 同步更新 module-level memory cache。
+  * 同步更新 sessionStorage trip record cache。
+  * 使用 `tripneeder:favoritesChanged` 通知詳情頁刷新。
+  * Supabase 寫入成功後，用 remote record 取代同 fingerprint 本機暫存 record。
+  * 若遠端讀取較慢或回傳舊資料，仍保留同一 session 內待同步的本機收藏。
+* 穩定 fingerprint：
+  * 停靠點只比對 id、名稱、類型、描述、地址、停留時間與 Google Maps URL。
+  * 交通段只比對起訖 stop id、交通方式、大眾運輸類型與時間。
+  * 不再把交通段 `label` 等顯示文字納入 fingerprint。
+* 舊資料向後相容：
+  * 若用目前 DB `plan_fingerprint` 查不到收藏，會讀取遠端收藏清單，改用新版穩定 fingerprint 比對每筆 `plan`。
+  * 新增收藏前也會用新版穩定 fingerprint 掃遠端既有收藏，避免因 DB 內舊 fingerprint 不同而新增假重複。
+* legacy localStorage migration：
+  * 新增 `tripneeder.legacyTripRecordsMigrated.<userId>` 作為一次性遷移旗標。
+  * 登入後準備 trip records 時，同時嘗試搬移：
+    * `tripneeder.favoritePlans`
+    * `tripneeder.recentPlans`
+  * 舊版資料會寫入目前登入者的 Supabase `trip_records`。
+  * recent 遷移仍維持最多 12 筆。
+
+日後開發學習與效率規則：
+
+* 只要資料從 localStorage 遷到雲端，必須列出所有歷史 key，而不是只看最新版 key。
+* 遷移規格需明確分成：
+  * legacy global key。
+  * user-scoped key。
+  * remote canonical table。
+  * session / memory cache。
+* 正式站 bug 若本機無法重現，要優先懷疑：
+  * 正式站瀏覽器保存的舊 localStorage / sessionStorage。
+  * Supabase 既有資料與目前程式 fingerprint / schema 不相容。
+  * Vercel 環境變數或 Supabase project 是否和本機一致。
+  * 同 email 是否在不同 auth project 產生不同 user id。
+* 收藏 / 最近生成這類跨頁狀態，不可只依賴單次遠端查詢；需要明確定義 canonical source 與同步優先序。
+* fingerprint 不應包含顯示用、可被格式化、可被清洗或排序後重建的文字欄位。
+* 對既有正式站資料做修正時，要同時處理：
+  * 新資料正常寫入。
+  * 舊資料可被讀到。
+  * 舊資料不會造成假重複。
+  * 舊資料遷移完成後不會重複遷移。
+* 若使用者回報「本機可行但正式站不行」，不要只再次微調前端流程；應立刻檢查正式站資料形態與歷史版本資料。
+
+Phase 狀態：
+
+* Phase 1 到 Phase 7G：已驗收通過。
+* Phase 8A：已正式站驗收通過。
+* 下一階段可進入 Phase 8B：`正式試用前資料與營運收尾`。
+* 但不可由 agent 自行跳入 Phase 8B；需等待使用者明確指示開始 Phase 8B。
+
 ## 2026-04-18 Phase 8A 正式站回報（二）：舊版 localStorage 收藏未遷移
 
 使用者補充：
@@ -4164,3 +4331,49 @@ Phase 8A 實作原則：
 
 * Phase 8A 仍未正式驗收通過。
 * 不可進入 Phase 8B。
+## 2026-04-18 最新交接：Phase 8A 已正式站驗收通過
+
+此段為目前 `PROJECT_SPEC.md` 最末端最新交接紀錄；新聊天框請以此段為準。若前文仍有「Phase 8A 未驗收通過」等歷史紀錄，均已被本段最新確認取代。
+
+最新使用者確認：
+
+* 使用者回報正式站「這次完全正常了」。
+* Phase 8A：收藏 / 最近生成同步到 Supabase，已正式站驗收通過。
+* 目前已有可提供組員測試的版本。
+* 建議提供組員測試的版本：
+  * Git commit：`bd11d8b`。
+  * commit message：`Handle legacy trip record fingerprints`。
+  * Vercel production deployment 狀態：`READY`。
+
+這次事故的核心學習：
+
+* 本機可行但正式站不行時，不能只看最新程式流程，必須檢查正式站瀏覽器與 Supabase 中的歷史資料形態。
+* 這次真正問題是多個資料時期混在一起：
+  * 舊版未分帳號 localStorage：`tripneeder.favoritePlans` / `tripneeder.recentPlans`。
+  * user-scoped localStorage：`tripneeder.favoritePlans.<userId>` / `tripneeder.recentPlans.<userId>`。
+  * Supabase `trip_records`。
+* 初版 Phase 8A 只處理 user-scoped localStorage 遷移，漏掉最舊版未分帳號 localStorage，因此正式站舊收藏沒有對上同一帳號。
+* 原 fingerprint 又包含交通段 `label` 等顯示文字；詳情頁會重新整理 / 清洗 label，導致同一方案在列表與詳情頁被判斷成不同方案。
+* 最後有效修正是：
+  * 穩定 fingerprint，不納入顯示文字。
+  * 用新版 fingerprint 向後相容掃遠端既有收藏，避免舊 DB fingerprint 造成假重複或判斷不到。
+  * 補上 legacy localStorage migration，將 `tripneeder.favoritePlans` / `tripneeder.recentPlans` 一次性搬到目前登入者的 Supabase `trip_records`。
+  * 收藏後同步更新 localStorage fallback、memory cache、sessionStorage cache，並用 `tripneeder:favoritesChanged` 通知詳情頁刷新。
+
+日後效率規則：
+
+* localStorage 遷雲端前，必須列出所有歷史 key，包含 legacy global key 與 user-scoped key。
+* fingerprint 不可包含會被格式化、清洗、重建或只用於顯示的欄位。
+* 正式站 bug 若本機無法重現，優先檢查：
+  * 正式站 localStorage / sessionStorage。
+  * Supabase 既有資料是否與目前 schema / fingerprint 相容。
+  * Vercel 環境變數與本機是否指向同一 Supabase project。
+  * 同 email 是否在不同 auth project 產生不同 user id。
+* 對正式站既有資料修正時，要同時保證新資料可寫、舊資料可讀、舊資料不假重複、遷移不重複執行。
+
+下一階段狀態：
+
+* Phase 1 到 Phase 7G：已驗收通過。
+* Phase 8A：已正式站驗收通過。
+* 可進入 Phase 8B：`正式試用前資料與營運收尾`。
+* 但不可由 agent 自行跳入 Phase 8B；必須等待使用者明確指示開始 Phase 8B。
