@@ -2,6 +2,7 @@ import type { TripInput, TripPlan, TransportMode } from '../../types/trip'
 
 export type GenerateTripPlansRequest = {
   input: TripInput
+  accessToken?: string
 }
 
 export type GenerateTripPlansResponse = {

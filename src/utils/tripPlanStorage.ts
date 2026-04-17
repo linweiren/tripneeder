@@ -13,7 +13,11 @@ export type StoredTripRecord = {
   createdAt: string
 }
 
-export function saveGeneratedPlans(plans: TripPlan[], input?: TripInput) {
+export function saveGeneratedPlans(
+  plans: TripPlan[],
+  input?: TripInput,
+  ownerId?: string,
+) {
   sessionStorage.setItem(TRIP_PLANS_STORAGE_KEY, JSON.stringify(plans))
 
   if (input) {
@@ -21,7 +25,7 @@ export function saveGeneratedPlans(plans: TripPlan[], input?: TripInput) {
   }
 
   if (input) {
-    saveRecentGeneratedPlans(plans, input)
+    saveRecentGeneratedPlans(plans, input, ownerId)
   }
 }
 
@@ -53,6 +57,11 @@ export function loadLastTripInput() {
   }
 }
 
+export function clearGeneratedTripFlow() {
+  sessionStorage.removeItem(TRIP_PLANS_STORAGE_KEY)
+  sessionStorage.removeItem(TRIP_INPUT_STORAGE_KEY)
+}
+
 export function savePlanForDetail(plan: TripPlan, input: TripInput | null) {
   sessionStorage.setItem(TRIP_PLANS_STORAGE_KEY, JSON.stringify([plan]))
 
@@ -61,16 +70,23 @@ export function savePlanForDetail(plan: TripPlan, input: TripInput | null) {
   }
 }
 
-export function loadRecentTripRecords() {
-  return loadStoredTripRecords(RECENT_PLANS_STORAGE_KEY)
+export function loadRecentTripRecords(ownerId?: string) {
+  return loadStoredTripRecords(getOwnerStorageKey(RECENT_PLANS_STORAGE_KEY, ownerId))
 }
 
-export function loadFavoriteTripRecords() {
-  return loadStoredTripRecords(FAVORITE_PLANS_STORAGE_KEY)
+export function loadFavoriteTripRecords(ownerId?: string) {
+  return loadStoredTripRecords(
+    getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId),
+  )
 }
 
-export function saveFavoriteTrip(plan: TripPlan, input: TripInput | null) {
-  const records = loadFavoriteTripRecords()
+export function saveFavoriteTrip(
+  plan: TripPlan,
+  input: TripInput | null,
+  ownerId?: string,
+) {
+  const storageKey = getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId)
+  const records = loadFavoriteTripRecords(ownerId)
   const planFingerprint = createPlanFingerprint(plan)
 
   if (
@@ -83,28 +99,26 @@ export function saveFavoriteTrip(plan: TripPlan, input: TripInput | null) {
 
   const nextRecord = createStoredTripRecord(plan, input)
 
-  localStorage.setItem(
-    FAVORITE_PLANS_STORAGE_KEY,
-    JSON.stringify([nextRecord, ...records]),
-  )
+  localStorage.setItem(storageKey, JSON.stringify([nextRecord, ...records]))
 
   return nextRecord
 }
 
-export function isFavoriteTripPlan(plan: TripPlan) {
+export function isFavoriteTripPlan(plan: TripPlan, ownerId?: string) {
   const planFingerprint = createPlanFingerprint(plan)
 
-  return loadFavoriteTripRecords().some(
+  return loadFavoriteTripRecords(ownerId).some(
     (record) => createPlanFingerprint(record.plan) === planFingerprint,
   )
 }
 
-export function removeFavoriteTrip(recordId: string) {
-  const records = loadFavoriteTripRecords().filter(
+export function removeFavoriteTrip(recordId: string, ownerId?: string) {
+  const storageKey = getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId)
+  const records = loadFavoriteTripRecords(ownerId).filter(
     (record) => record.id !== recordId,
   )
 
-  localStorage.setItem(FAVORITE_PLANS_STORAGE_KEY, JSON.stringify(records))
+  localStorage.setItem(storageKey, JSON.stringify(records))
 }
 
 function createPlanFingerprint(plan: TripPlan) {
@@ -121,14 +135,23 @@ function createPlanFingerprint(plan: TripPlan) {
   })
 }
 
-function saveRecentGeneratedPlans(plans: TripPlan[], input: TripInput) {
-  const records = loadRecentTripRecords()
+function saveRecentGeneratedPlans(
+  plans: TripPlan[],
+  input: TripInput,
+  ownerId?: string,
+) {
+  const storageKey = getOwnerStorageKey(RECENT_PLANS_STORAGE_KEY, ownerId)
+  const records = loadRecentTripRecords(ownerId)
   const nextRecords = plans.map((plan) => createStoredTripRecord(plan, input))
 
   localStorage.setItem(
-    RECENT_PLANS_STORAGE_KEY,
+    storageKey,
     JSON.stringify([...nextRecords, ...records].slice(0, MAX_RECENT_RECORDS)),
   )
+}
+
+function getOwnerStorageKey(storageKey: string, ownerId?: string) {
+  return ownerId ? `${storageKey}.${ownerId}` : storageKey
 }
 
 function loadStoredTripRecords(storageKey: string) {

@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom'
+import { useAnalysisSession } from '../contexts/analysisSession'
 import type { PlanType, TransportMode, TripPlan } from '../types/trip'
 import { loadGeneratedPlans } from '../utils/tripPlanStorage'
+import { getPlanActualDuration } from '../utils/tripTiming'
 
 const planLabels: Record<PlanType, string> = {
   safe: '保守型',
@@ -15,6 +17,7 @@ const transportLabels: Record<TransportMode, string> = {
 }
 
 export function ResultsPage() {
+  const { resetAnalysisFlow, setFlowRoute } = useAnalysisSession()
   const plans = loadGeneratedPlans()
 
   if (plans.length === 0) {
@@ -34,33 +37,46 @@ export function ResultsPage() {
 
   return (
     <section className="page">
+      <button className="back-link" type="button" onClick={resetAnalysisFlow}>
+        重新選擇偏好
+      </button>
       <p className="page-kicker">AI 已整理三種走法</p>
-      <h1 className="page-title">三種風格，一眼比較。</h1>
+      <h1 className="page-title">選擇行程方案</h1>
       <div className="result-grid">
         {plans.map((plan) => (
-          <PlanCard key={plan.id} plan={plan} />
+          <PlanCard
+            key={plan.id}
+            plan={plan}
+            onSelect={setFlowRoute}
+          />
         ))}
       </div>
     </section>
   )
 }
 
-function PlanCard({ plan }: { plan: TripPlan }) {
+function PlanCard({
+  plan,
+  onSelect,
+}: {
+  plan: TripPlan
+  onSelect: (route: string) => void
+}) {
   const previewStops = plan.stops.slice(0, 3)
+  const actualDuration = getPlanActualDuration(plan)
 
   return (
     <article className="plan-card">
       <div>
         <p className="plan-type">{planLabels[plan.type]}</p>
         <h2>{plan.title}</h2>
-        <p className="plan-subtitle">{plan.subtitle}</p>
         <p>{plan.summary}</p>
       </div>
 
       <dl className="plan-metrics">
         <div>
           <dt>總時間</dt>
-          <dd>{formatMinutes(plan.totalTime)}</dd>
+          <dd>{formatMinutes(actualDuration)}</dd>
         </div>
         <div>
           <dt>預算</dt>
@@ -77,7 +93,7 @@ function PlanCard({ plan }: { plan: TripPlan }) {
       </dl>
 
       <div className="stop-preview">
-        <strong>前幾站</strong>
+        <strong>行程</strong>
         <ol>
           {previewStops.map((stop) => (
             <li key={`${plan.id}-${stop.id || stop.name}`}>{stop.name}</li>
@@ -85,7 +101,11 @@ function PlanCard({ plan }: { plan: TripPlan }) {
         </ol>
       </div>
 
-      <Link className="secondary-button result-link" to={`/plans/${plan.id}`}>
+      <Link
+        className="secondary-button result-link"
+        to={`/plans/${plan.id}`}
+        onClick={() => onSelect(`/plans/${plan.id}`)}
+      >
         選擇此方案
       </Link>
     </article>

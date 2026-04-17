@@ -1,15 +1,42 @@
 import { useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import {
+  AnalysisSessionProvider,
+} from './contexts/AnalysisSessionContext'
+import { AuthProvider } from './contexts/AuthContext'
+import { DialogProvider } from './contexts/DialogContext'
+import { useAnalysisSession } from './contexts/analysisSession'
+import { useAuth } from './contexts/auth'
 import './App.css'
 
 const navItems = [
-  { to: '/', label: '行程規劃' },
   { to: '/favorites', label: '收藏' },
   { to: '/recent', label: '最近生成' },
+  { to: '/points', label: '點數管理' },
 ]
 
 function App() {
+  return (
+    <AuthProvider>
+      <AnalysisSessionProvider>
+        <DialogProvider>
+          <AppLayout />
+        </DialogProvider>
+      </AnalysisSessionProvider>
+    </AuthProvider>
+  )
+}
+
+function AppLayout() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const { plannerPath } = useAnalysisSession()
+  const { user, isAuthLoading, signOut } = useAuth()
+  const navigate = useNavigate()
+
+  async function handleSignOut() {
+    await signOut()
+    navigate('/')
+  }
 
   return (
     <div className="app-shell">
@@ -30,6 +57,15 @@ function App() {
 
           {isMenuOpen ? (
             <nav id="main-menu" className="app-nav" aria-label="主要導覽">
+              <NavLink
+                to={plannerPath}
+                className={({ isActive }) =>
+                  isActive ? 'nav-link nav-link-active' : 'nav-link'
+                }
+                onClick={() => setIsMenuOpen(false)}
+              >
+                行程規劃
+              </NavLink>
               {navItems.map((item) => (
                 <NavLink
                   key={item.to}
@@ -46,9 +82,29 @@ function App() {
           ) : null}
         </div>
 
-        <NavLink to="/" className="brand" aria-label="回到行程規劃">
+        <NavLink to={plannerPath} className="brand" aria-label="回到行程規劃">
           Tripneeder
         </NavLink>
+
+        <div className="auth-actions">
+          {user ? (
+            <button
+              className="auth-button"
+              type="button"
+              onClick={() => void handleSignOut()}
+            >
+              登出
+            </button>
+          ) : (
+            <NavLink
+              className="auth-button auth-link"
+              to="/login"
+              aria-disabled={isAuthLoading}
+            >
+              登入
+            </NavLink>
+          )}
+        </div>
       </header>
 
       <main className="app-main">

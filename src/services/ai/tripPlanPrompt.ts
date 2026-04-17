@@ -12,6 +12,8 @@ import type {
 } from '../../types/trip'
 
 const PLAN_ORDER: PlanType[] = ['safe', 'balanced', 'explore']
+const TRIP_RESPONSE_ERROR =
+  '這次 AI 產生的行程資料不夠完整，請重新分析一次。'
 
 const categoryLabels: Record<TripInput['category'], string> = {
   date: '約會',
@@ -115,6 +117,8 @@ label 必須是 4-16 個繁體中文字的交通狀態摘要，不可包含數�
 30. 不要為了填滿時間而無限制增加 stop 數量，也不要把單一景點停留時間拉得不自然；請依景點性質自行分配合理停留時間。
 31. 若需安排午餐，午餐 food stop 的實際停留時段必須與 11:00-13:00 有重疊，不可把午餐排在上午 9 點或過早時段。
 32. 若需安排晚餐，晚餐 food stop 的實際停留時段必須與 17:00-19:00 有重疊。
+33. 若時間較長但 stop 數量已達合理上限，請優先用較完整的主要活動、慢節奏停留、自然用餐、收尾散步或休息點來貼近時間，不要把行程壓縮成過短路線。
+34. 不要在 summary 或 description 裡要求使用者自行新增停靠站；本產品主打快速決策，回傳結果需是可直接執行的完整建議。
 
 請嚴格回傳以下 JSON shape：
 {
@@ -178,13 +182,15 @@ export function parseTripPlanResponse(text: string): GenerateTripPlansResponse {
   let parsed: unknown
 
   try {
-    parsed = JSON.parse(text)
+    parsed = parseJsonObject(text)
   } catch {
-    throw new Error('AI 回傳格式異常，請重新分析。')
+    throw new Error(TRIP_RESPONSE_ERROR)
   }
 
+  parsed = normalizeTripPlanResponse(parsed)
+
   if (!isTripPlanResponse(parsed)) {
-    throw new Error('AI 回傳格式異常，請重新分析。')
+    throw new Error(TRIP_RESPONSE_ERROR)
   }
 
   const transportMode = parsed.plans[0]?.transportMode
@@ -193,7 +199,7 @@ export function parseTripPlanResponse(text: string): GenerateTripPlansResponse {
   )
 
   if (!hasUnifiedTransport) {
-    throw new Error('AI 回傳的交通方式不一致，請重新分析。')
+    throw new Error('這次 AI 產生的交通安排不夠一致，請重新分析一次。')
   }
 
   const response = {
@@ -203,6 +209,224 @@ export function parseTripPlanResponse(text: string): GenerateTripPlansResponse {
   }
 
   return response
+}
+
+function parseJsonObject(text: string) {
+  const trimmed = text.trim()
+
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    const withoutFence = trimmed
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim()
+    const firstBrace = withoutFence.indexOf('{')
+    const lastBrace = withoutFence.lastIndexOf('}')
+
+    if (firstBrace < 0 || lastBrace <= firstBrace) {
+      throw new Error('No JSON object found')
+    }
+
+    return JSON.parse(withoutFence.slice(firstBrace, lastBrace + 1))
+  }
+}
+
+function normalizeTripPlanResponse(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.plans)) {
+    return value
+  }
+
+  return {
+    ...value,
+    plans: value.plans.map((plan) => normalizeTripPlan(plan)),
+  }
+}
+
+function normalizeTripPlan(value: unknown) {
+  if (!isRecord(value)) {
+    return value
+  }
+
+  const planType = isPlanType(value.type) ? value.type : 'balanced'
+  const transportMode = isTransportMode(value.transportMode)
+    ? value.transportMode
+    : 'scooter'
+  const stops = normalizeStops(value.stops, planType, 'main')
+  const rainBackup = normalizeStops(value.rainBackup, planType, 'rain')
+
+  return {
+    ...value,
+    type: planType,
+    id: typeof value.id === 'string' && value.id.trim() ? value.id : planType,
+    transportMode,
+    stops,
+    rainBackup,
+    transportSegments: normalizeTransportSegments(
+      value.transportSegments,
+      stops,
+      transportMode,
+    ),
+    rainTransportSegments: normalizeTransportSegments(
+      value.rainTransportSegments,
+      rainBackup,
+      transportMode,
+    ),
+  }
+}
+
+function normalizeStops(
+  value: unknown,
+  planType: PlanType,
+  mode: 'main' | 'rain',
+) {
+  if (!Array.isArray(value)) {
+    return value
+  }
+
+  const usedIds = new Set<string>()
+
+  return value.map((stop, index) => {
+    if (!isRecord(stop)) {
+      return stop
+    }
+
+    const fallbackId = `${planType}-${mode}-${index + 1}`
+    const rawId = typeof stop.id === 'string' ? stop.id.trim() : ''
+    const safeId = /^[A-Za-z0-9_-]+$/.test(rawId) ? rawId : fallbackId
+    const id = usedIds.has(safeId) ? `${safeId}-${index + 1}` : safeId
+    usedIds.add(id)
+
+    return {
+      ...stop,
+      id,
+      type: normalizeStopType(stop.type),
+    }
+  })
+}
+
+function normalizeStopType(value: unknown): StopType {
+  if (isStopType(value)) {
+    return value
+  }
+
+  if (typeof value !== 'string') {
+    return 'main_activity'
+  }
+
+  const normalized = value.toLowerCase()
+
+  if (
+    normalized.includes('food') ||
+    normalized.includes('meal') ||
+    normalized.includes('restaurant') ||
+    normalized.includes('cafe') ||
+    normalized.includes('餐') ||
+    normalized.includes('咖啡')
+  ) {
+    return 'food'
+  }
+
+  if (
+    normalized.includes('ending') ||
+    normalized.includes('transition') ||
+    normalized.includes('收尾') ||
+    normalized.includes('轉場')
+  ) {
+    return 'ending_or_transition'
+  }
+
+  return 'main_activity'
+}
+
+function normalizeTransportSegments(
+  value: unknown,
+  stops: unknown,
+  fallbackMode: TransportMode,
+) {
+  if (!Array.isArray(stops) || !stops.every(isStop)) {
+    return value
+  }
+
+  const expectedLength = Math.max(stops.length - 1, 0)
+  const segments = Array.isArray(value) ? value : []
+
+  return Array.from({ length: expectedLength }, (_, index) => {
+    const segment = segments[index]
+
+    if (!isRecord(segment)) {
+      return buildFallbackTransportSegment(stops, index, fallbackMode)
+    }
+
+    const mode = isTransportMode(segment.mode) ? segment.mode : fallbackMode
+    const publicTransitType = isPublicTransitType(segment.publicTransitType)
+      ? segment.publicTransitType
+      : undefined
+
+    return {
+      ...segment,
+      fromStopId: stops[index].id,
+      toStopId: stops[index + 1].id,
+      mode,
+      publicTransitType,
+      duration:
+        typeof segment.duration === 'number' && segment.duration >= 0
+          ? segment.duration
+          : 20,
+      label:
+        typeof segment.label === 'string' && segment.label.trim()
+          ? cleanTransportSummary(segment.label, mode, publicTransitType)
+          : buildTransportFallbackLabel(mode, publicTransitType),
+    }
+  })
+}
+
+function buildFallbackTransportSegment(
+  stops: Stop[],
+  index: number,
+  mode: TransportMode,
+): TransportSegment {
+  return {
+    fromStopId: stops[index].id,
+    toStopId: stops[index + 1].id,
+    mode,
+    duration: 20,
+    label: buildTransportFallbackLabel(mode),
+  }
+}
+
+function buildTransportFallbackLabel(
+  mode: TransportMode,
+  publicTransitType?: TransportSegment['publicTransitType'],
+) {
+  if (mode === 'public_transit' && publicTransitType) {
+    return '大眾運輸前往'
+  }
+
+  if (mode === 'public_transit') {
+    return '大眾運輸前往'
+  }
+
+  if (mode === 'car') {
+    return '開車順路前往'
+  }
+
+  return '騎車順路前往'
+}
+
+function cleanTransportSummary(
+  value: string,
+  mode: TransportMode,
+  publicTransitType?: TransportSegment['publicTransitType'],
+) {
+  const cleaned = value
+    .replace(/[0-9０-９]+\s*(?:小時|分鐘|分|公里|km|KM)/g, '')
+    .replace(/約\s*(?:小時|分鐘|分|公里)?/g, '')
+    .replace(/\s+/g, '')
+    .replace(/[，,、。．.]+$/g, '')
+    .trim()
+
+  return cleaned || buildTransportFallbackLabel(mode, publicTransitType)
 }
 
 function isTripPlanResponse(value: unknown): value is GenerateTripPlansResponse {

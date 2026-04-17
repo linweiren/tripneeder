@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useState,
   type ButtonHTMLAttributes,
@@ -36,6 +37,9 @@ import {
   isFavoriteTripPlan,
   saveFavoriteTrip,
 } from '../utils/tripPlanStorage'
+import { useAnalysisSession } from '../contexts/analysisSession'
+import { useAuth } from '../contexts/auth'
+import { useDialog, type DialogContextValue } from '../contexts/dialog'
 
 type OrderMode = 'main' | 'rain'
 type SegmentModeOverrides = Partial<Record<OrderMode, Record<string, TransportMode>>>
@@ -77,13 +81,15 @@ export function DetailPage() {
   const { planId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
+  const { setFlowRoute } = useAnalysisSession()
+  const { user } = useAuth()
+  const dialog = useDialog()
   const plans = loadGeneratedPlans()
   const lastInput = loadLastTripInput()
   const selectedPlan = plans.find((plan) => plan.id === planId)
   const sourcePage = getDetailSource(location.state)
   const isStoredSource = sourcePage === 'favorites' || sourcePage === 'recent'
   const [isRainMode, setIsRainMode] = useState(false)
-  const [keptStops, setKeptStops] = useState<Set<string>>(() => new Set())
   const [stopOrders, setStopOrders] = useState<Partial<Record<OrderMode, string[]>>>(
     {},
   )
@@ -96,9 +102,11 @@ export function DetailPage() {
     useState(false)
   const [openSegmentMenuKey, setOpenSegmentMenuKey] = useState<string | null>(null)
   const [favoriteStatus, setFavoriteStatus] = useState('')
-  const [hasSavedFavorite, setHasSavedFavorite] = useState(() =>
-    selectedPlan ? isFavoriteTripPlan(selectedPlan) : false,
-  )
+  const [favoriteRevision, setFavoriteRevision] = useState(0)
+  const hasSavedFavorite = useMemo(() => {
+    void favoriteRevision
+    return selectedPlan ? isFavoriteTripPlan(selectedPlan, user?.id) : false
+  }, [favoriteRevision, selectedPlan, user?.id])
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -197,23 +205,11 @@ export function DetailPage() {
     )
   const allowedTripMinutes = getAllowedTripMinutes(lastInput?.startTime, lastInput?.endTime)
 
-  function toggleKeptStop(stop: Stop, index: number) {
-    const key = getStopKey(stop, index, isRainMode)
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [planId])
 
-    setKeptStops((current) => {
-      const next = new Set(current)
-
-      if (next.has(key)) {
-        next.delete(key)
-      } else {
-        next.add(key)
-      }
-
-      return next
-    })
-  }
-
-  function handleDragEnd(event: DragEndEvent) {
+  async function handleDragEnd(event: DragEndEvent) {
     if (!selectedPlan || !event.over || event.active.id === event.over.id) {
       return
     }
@@ -247,9 +243,11 @@ export function DetailPage() {
 
     if (
       overDoubleSegment &&
-      !window.confirm(
-        `這次排序會讓「${getTransportSegmentLabel(overDoubleSegment.nextSegment)}」交通時間從 ${formatTransportDuration(overDoubleSegment.previousDuration)} 變成 ${formatTransportDuration(overDoubleSegment.nextSegment.duration)}，超過原本 2 倍。確定要保留這次排序嗎？`,
-      )
+      !(await dialog.confirm({
+        title: '交通時間變長',
+        message: `這次排序會讓「${getTransportSegmentLabel(overDoubleSegment.nextSegment)}」交通時間從 ${formatTransportDuration(overDoubleSegment.previousDuration)} 變成 ${formatTransportDuration(overDoubleSegment.nextSegment.duration)}，超過原本 2 倍。確定要保留這次排序嗎？`,
+        confirmLabel: '保留排序',
+      }))
     ) {
       return
     }
@@ -260,7 +258,7 @@ export function DetailPage() {
     }))
   }
 
-  function applyGlobalTransportMode(nextMode: TransportMode) {
+  async function applyGlobalTransportMode(nextMode: TransportMode) {
     if (!selectedPlan || nextMode === activeTransportMode) {
       setIsGlobalTransportMenuOpen(false)
       return
@@ -271,7 +269,7 @@ export function DetailPage() {
     )
     const nextDuration = getTotalVisibleDuration(visibleStops, nextSegments)
 
-    if (!confirmTransportChange(nextDuration, allowedTripMinutes)) {
+    if (!(await confirmTransportChange(nextDuration, allowedTripMinutes, dialog))) {
       setIsGlobalTransportMenuOpen(false)
       return
     }
@@ -299,12 +297,12 @@ export function DetailPage() {
       segmentModeOverrides,
     })
 
-    saveFavoriteTrip(snapshotPlan, lastInput)
-    setHasSavedFavorite(true)
+    saveFavoriteTrip(snapshotPlan, lastInput, user?.id)
+    setFavoriteRevision((current) => current + 1)
     setFavoriteStatus('已收藏這個行程。')
   }
 
-  function applySingleSegmentTransportMode(
+  async function applySingleSegmentTransportMode(
     segment: TransportSegment,
     nextMode: TransportMode,
   ) {
@@ -316,7 +314,7 @@ export function DetailPage() {
     )
     const nextDuration = getTotalVisibleDuration(visibleStops, nextSegments)
 
-    if (!confirmTransportChange(nextDuration, allowedTripMinutes)) {
+    if (!(await confirmTransportChange(nextDuration, allowedTripMinutes, dialog))) {
       setOpenSegmentMenuKey(null)
       return
     }
@@ -346,12 +344,15 @@ export function DetailPage() {
 
   return (
     <section className="page detail-page">
-      <DetailBackControl isStoredSource={isStoredSource} onBack={() => navigate(-1)} />
+      <DetailBackControl
+        isStoredSource={isStoredSource}
+        onBack={() => navigate(-1)}
+        onReturnToResults={() => setFlowRoute('/results')}
+      />
 
       <div className="detail-hero">
         <p className="page-kicker">{isRainMode ? '雨天備案' : '一般行程'}</p>
         <h1 className="page-title">{selectedPlan.title}</h1>
-        <p className="detail-subtitle">{selectedPlan.subtitle}</p>
         <p className="page-copy">{selectedPlan.summary}</p>
       </div>
 
@@ -381,7 +382,7 @@ export function DetailPage() {
                 label="整趟行程交通"
                 compact
                 alignRight
-                onSelect={applyGlobalTransportMode}
+                onSelect={(nextMode) => void applyGlobalTransportMode(nextMode)}
               />
             ) : null}
           </div>
@@ -406,7 +407,6 @@ export function DetailPage() {
           <div className="timeline">
             {stopRows.map(({ stop, startTime, endTime }, index) => {
           const stopKey = getStopKey(stop, index, isRainMode)
-          const isKept = keptStops.has(stopKey)
           const nextSegment = visibleTransportSegmentsWithOverrides[index]
 
           return (
@@ -427,15 +427,6 @@ export function DetailPage() {
                   >
                     ↑↓
                   </button>
-
-                  <label className="keep-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={isKept}
-                      onChange={() => toggleKeptStop(stop, index)}
-                    />
-                    <span>保留</span>
-                  </label>
 
                   <div className="stop-time-grid">
                     <div className="stop-time">
@@ -514,7 +505,7 @@ export function DetailPage() {
                       label="單段交通"
                       compact
                       onSelect={(nextMode) =>
-                        applySingleSegmentTransportMode(nextSegment, nextMode)
+                        void applySingleSegmentTransportMode(nextSegment, nextMode)
                       }
                     />
                   ) : null}
@@ -529,38 +520,28 @@ export function DetailPage() {
         </SortableContext>
       </DndContext>
 
-      <div className="rain-toggle-panel">
-        <div>
-          <h2>{isRainMode ? '切回一般行程' : '需要雨天備案嗎？'}</h2>
-          <p>
-            {isRainMode
-              ? '切回原本安排，繼續查看一般天氣下的完整時間軸。'
-              : '如果天氣不穩，可以把上方詳情整組切換成室內或雨天友善安排。'}
-          </p>
+      <div className="detail-action-row">
+        <div className="rain-toggle-panel action-strip">
+          <button
+            className="submit-button"
+            type="button"
+            onClick={() => setIsRainMode((current) => !current)}
+          >
+            {isRainMode ? '查看一般行程' : '切換雨天備案'}
+          </button>
         </div>
-        <button
-          className="submit-button"
-          type="button"
-          onClick={() => setIsRainMode((current) => !current)}
-        >
-          {isRainMode ? '查看一般行程' : '切換雨天備案'}
-        </button>
-      </div>
 
-      <div className="favorite-action-panel">
-        <div>
-          <h2>想把這趟留下來嗎？</h2>
-          <p>會保存目前排序與交通切換後的狀態，之後可以從收藏頁再打開編輯。</p>
+        <div className="favorite-action-panel action-strip">
+          <button
+            className="submit-button"
+            type="button"
+            onClick={handleSaveFavorite}
+            disabled={hasSavedFavorite}
+          >
+            {hasSavedFavorite ? '已收藏' : '收藏此方案'}
+          </button>
           {favoriteStatus ? <strong>{favoriteStatus}</strong> : null}
         </div>
-        <button
-          className="submit-button"
-          type="button"
-          onClick={handleSaveFavorite}
-          disabled={hasSavedFavorite}
-        >
-          {hasSavedFavorite ? '已收藏' : '收藏此方案'}
-        </button>
       </div>
     </section>
   )
@@ -569,9 +550,11 @@ export function DetailPage() {
 function DetailBackControl({
   isStoredSource,
   onBack,
+  onReturnToResults,
 }: {
   isStoredSource: boolean
   onBack: () => void
+  onReturnToResults?: () => void
 }) {
   if (isStoredSource) {
     return (
@@ -587,7 +570,7 @@ function DetailBackControl({
   }
 
   return (
-    <Link className="back-link" to="/results">
+    <Link className="back-link" to="/results" onClick={onReturnToResults}>
       重新選擇
     </Link>
   )
@@ -839,21 +822,24 @@ function getTotalVisibleDuration(stops: Stop[], transportSegments: TransportSegm
 function confirmTransportChange(
   nextDuration: number,
   allowedMinutes: number | null,
+  dialog: DialogContextValue,
 ) {
   if (!allowedMinutes) {
-    return true
+    return Promise.resolve(true)
   }
 
   const isOverTime =
     nextDuration > allowedMinutes * 1.2 || nextDuration > allowedMinutes + 30
 
   if (!isOverTime) {
-    return true
+    return Promise.resolve(true)
   }
 
-  return window.confirm(
-    `切換後行程預估會變成 ${formatMinutes(nextDuration)}，可能超出你設定的時間。確定要套用這個交通方式嗎？`,
-  )
+  return dialog.confirm({
+    title: '行程可能超時',
+    message: `切換後行程預估會變成 ${formatMinutes(nextDuration)}，可能超出你設定的時間。確定要套用這個交通方式嗎？`,
+    confirmLabel: '套用交通',
+  })
 }
 
 function getAllowedTripMinutes(startTime?: string, endTime?: string) {

@@ -5,6 +5,8 @@ import App from './App.tsx'
 import { DetailPage } from './pages/DetailPage.tsx'
 import { FavoritesPage } from './pages/FavoritesPage.tsx'
 import { HomePage } from './pages/HomePage.tsx'
+import { LoginPage } from './pages/LoginPage.tsx'
+import { PointsPage } from './pages/PointsPage.tsx'
 import { RecentPage } from './pages/RecentPage.tsx'
 import { ResultsPage } from './pages/ResultsPage.tsx'
 import './index.css'
@@ -19,6 +21,8 @@ const router = createBrowserRouter([
       { path: 'plans/:planId', element: <DetailPage /> },
       { path: 'favorites', element: <FavoritesPage /> },
       { path: 'recent', element: <RecentPage /> },
+      { path: 'login', element: <LoginPage /> },
+      { path: 'points', element: <PointsPage /> },
     ],
   },
 ])

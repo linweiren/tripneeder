@@ -1,13 +1,18 @@
-import { useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { tripPlanner } from '../services/ai'
+import { useMemo, useState } from 'react'
+import { Navigate, useNavigate } from 'react-router-dom'
+import { useAuth } from '../contexts/auth'
+import { useAnalysisSession } from '../contexts/analysisSession'
+import { useDialog } from '../contexts/dialog'
 import type {
   BudgetLevel,
   TripCategory,
   TripInput,
   TripTag,
 } from '../types/trip'
-import { saveGeneratedPlans } from '../utils/tripPlanStorage'
+import {
+  loginPromptMessage,
+  loginPromptTitle,
+} from '../utils/loginPrompt'
 
 const categoryOptions: Array<{ value: TripCategory; label: string }> = [
   { value: 'date', label: '約會' },
@@ -68,15 +73,26 @@ const minuteOptions = ['00', '15', '30', '45']
 
 export function HomePage() {
   const navigate = useNavigate()
+  const {
+    session,
+    startAnalysis: startSessionAnalysis,
+    retryAnalysis,
+    resetAnalysisFlow,
+  } = useAnalysisSession()
+  const { user } = useAuth()
+  const dialog = useDialog()
   const [input, setInput] = useState<TripInput>(initialInput)
   const [isLocating, setIsLocating] = useState(false)
   const [locationStatus, setLocationStatus] = useState('')
   const [formError, setFormError] = useState('')
-  const [isLoadingPreview, setIsLoadingPreview] = useState(false)
-  const [analysisError, setAnalysisError] = useState('')
-  const requestIdRef = useRef(0)
 
   const isOtherCategory = input.category === 'other'
+  const isAnalysisInProgress = session?.status === 'analyzing'
+  const analysisError = session?.status === 'error' ? session.error : ''
+  const shouldShowOtherCategoryError =
+    Boolean(formError) &&
+    input.category === 'other' &&
+    !input.customCategory?.trim()
 
   const selectedLocationText = useMemo(() => {
     if (input.location.lat && input.location.lng) {
@@ -105,7 +121,10 @@ export function HomePage() {
 
   function handleLocate() {
     if (!navigator.geolocation) {
-      window.alert('無法取得您的定位！請檢查權限設定。')
+      void dialog.alert({
+        title: '無法取得定位',
+        message: '無法取得您的定位！請檢查權限設定。',
+      })
       return
     }
 
@@ -130,7 +149,10 @@ export function HomePage() {
       },
       () => {
         setIsLocating(false)
-        window.alert('無法取得您的定位！請檢查權限設定。')
+        void dialog.alert({
+          title: '無法取得定位',
+          message: '無法取得您的定位！請檢查權限設定。',
+        })
       },
       {
         enableHighAccuracy: true,
@@ -141,37 +163,26 @@ export function HomePage() {
 
   async function startAnalysis() {
     setFormError('')
-    setAnalysisError('')
+
+    if (!user) {
+      const confirmed = await dialog.confirm({
+        title: loginPromptTitle,
+        message: loginPromptMessage,
+      })
+
+      if (confirmed) {
+        navigate('/login', { state: { from: '/' } })
+      }
+
+      return
+    }
 
     if (!isValidInput(input)) {
       setFormError('請確認必填欄位都已完成，再開始分析行程。')
       return
     }
 
-    const requestId = requestIdRef.current + 1
-    requestIdRef.current = requestId
-    setIsLoadingPreview(true)
-
-    try {
-      const response = await tripPlanner.generateTripPlans({ input })
-
-      if (requestId !== requestIdRef.current) {
-        return
-      }
-
-      saveGeneratedPlans(response.plans, input)
-      navigate('/results')
-    } catch (error) {
-      if (requestId !== requestIdRef.current) {
-        return
-      }
-
-      setAnalysisError(
-        error instanceof Error
-          ? error.message
-          : 'AI 分析失敗，請稍後再試。',
-      )
-    }
+    await startSessionAnalysis(input)
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -179,13 +190,11 @@ export function HomePage() {
     void startAnalysis()
   }
 
-  function cancelAnalysis() {
-    requestIdRef.current += 1
-    setAnalysisError('')
-    setIsLoadingPreview(false)
+  if (session?.status === 'success') {
+    return <Navigate to={session.lastRoute} replace />
   }
 
-  if (isLoadingPreview) {
+  if (isAnalysisInProgress || analysisError) {
     return (
       <section className="page trip-loading">
         <p className="page-kicker">正在準備分析</p>
@@ -205,6 +214,9 @@ export function HomePage() {
                 'AI 正在規劃三種行程風格，請稍等一下。'}
             </p>
           </div>
+          {analysisError ? (
+            <p className="analysis-no-charge-note">分析失敗不扣除點數</p>
+          ) : null}
           {!analysisError ? (
             <ul className="loading-steps">
               {loadingSteps.map((step) => (
@@ -217,27 +229,18 @@ export function HomePage() {
               <button
                 className="submit-button"
                 type="button"
-                onClick={() => void startAnalysis()}
+                onClick={() => void retryAnalysis()}
               >
                 重新分析
               </button>
               <button
                 className="secondary-button"
                 type="button"
-                onClick={cancelAnalysis}
+                onClick={resetAnalysisFlow}
               >
                 回到表單
               </button>
             </div>
-          ) : null}
-          {!analysisError ? (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={cancelAnalysis}
-            >
-              取消
-            </button>
           ) : null}
         </div>
       </section>
@@ -245,12 +248,11 @@ export function HomePage() {
   }
 
   return (
-    <section className="page">
-      <p className="page-kicker">行程規劃</p>
-      <h1 className="page-title">想來點什麼樣的旅行？</h1>
-      <p className="page-copy">
-        告訴我今天的時間、預算和起點，我們先把偏好整理好。
-      </p>
+    <section className="page home-page">
+      <div className="home-hero">
+        <p className="page-kicker">行程規劃</p>
+        <h1 className="page-title">想來點什麼樣的旅行？</h1>
+      </div>
 
       <form className="trip-form" onSubmit={handleSubmit}>
         <fieldset className="form-section">
@@ -274,11 +276,21 @@ export function HomePage() {
               其他類型
               <input
                 value={input.customCategory}
+                required
+                aria-invalid={shouldShowOtherCategoryError}
+                aria-describedby={
+                  shouldShowOtherCategoryError ? 'custom-category-error' : undefined
+                }
                 onChange={(event) =>
                   updateInput('customCategory', event.target.value)
                 }
                 placeholder="例如：想找安靜、有海風、能慢慢走的地方"
               />
+              {shouldShowOtherCategoryError ? (
+                <p className="field-error" id="custom-category-error">
+                  請簡單描述你想要的旅行類型。
+                </p>
+              ) : null}
             </label>
           ) : null}
         </fieldset>

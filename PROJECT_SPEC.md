@@ -1856,8 +1856,1456 @@ Phase 6A 已完成實作，等待使用者驗收。
 
 * `npm run lint` 通過。
 * `npm run build` 通過。
+
+## 2026-04-17 最新交接總結
+
+此段為目前最新交接狀態。若前文順序或早期規格有衝突，以本段與「溝通確認紀錄」較新的確認為準。
+
+目前進度：
+
+* Phase 1 已驗收通過：Vite + React + TypeScript + React Router 專案骨架。
+* Phase 2 已驗收通過：首頁一頁式行程偏好表單。
+* Phase 3 已驗收通過：OpenAI 三方案生成、嚴格 JSON schema、loading/error flow、sessionStorage 暫存、結果頁三方案卡片。
+* Phase 4A 已驗收通過：詳情頁閱讀版、時間軸、雨天整頁切換、景點簡介、保留勾選框、Google Maps / 開始導航按鈕。
+* Phase 4A-1 已驗收通過：交通段模型、卡片間交通快速瀏覽、交通時間納入時間軸計算、大眾運輸細分欄位、交通框縮小與交通按鈕語意。
+* Phase 4B 已驗收通過：交通資料模型整理，`Stop.id`、`TransportSegment.fromStopId/toStopId/label`、舊 sessionStorage fallback。
+* Phase 4C 已驗收通過：`@dnd-kit` 拖曳排序，一般 / 雨天各自排序，拖曳後時間軸與交通段重算，超時 confirm rollback，圓形 `↑↓` 排序按鈕。
+* Phase 4D 已驗收通過：全域 / 單段交通切換、本地估算、超時確認 rollback、全域切換選單右對齊、單段選單左對齊。
+* Phase 4E 已驗收通過：首頁新增 `不吃正餐` tag，午餐 / 晚餐任意重疊規則，早餐不列入本階段正餐判斷。
+* Phase 5 已驗收通過：收藏與最近生成，localStorage 最多 12 筆，收藏整個目前編輯後 TripPlan，收藏 / 最近橫向卡片，收藏移除確認。
+* Phase 6A 已驗收通過：Mobile polish / PWA 基礎、manifest、icon、service worker、手機版主要頁面微調。
+* Phase 6A-1 已驗收通過：分析流程狀態保留、行程規劃導覽回到目前流程位置、結果頁 `重新選擇偏好`、10 分鐘 session 有效期。
+* Phase 6A-2 已驗收通過：App 內 modal / dialog 系統，替換原生 `alert` / `confirm`。
+* Phase 6B 已驗收通過：prompt 微調、其他類型欄位必填提示、使用者可理解錯誤文案、時間偏鬆柔性提示。
+
+目前最新驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+目前 AI / OpenAI 狀態：
+
+* Gemini 已完全移除，不要再使用 Gemini 或 `VITE_GEMINI` 相關設定。
+* 目前只使用 OpenAI API。
+* OpenAI 使用 Responses API。
+* OpenAI 模型目前定為 `gpt-4.1-mini`。
+* MVP 仍前端直連 OpenAI，但正式發布或組員試用前必須改成 thin proxy / backend，OpenAI API key 不可留在前端 bundle。
+* `.env` 應使用：
+
+```txt
+VITE_OPENAI_BROWSER_CREDENTIAL="你的 OpenAI key"
+VITE_OPENAI_MODEL="gpt-4.1-mini"
+```
+
+目前後續階段切分：
+
+* Phase 6C：UI 視覺整理。
+* Phase 7：登入註冊、點數制與 OpenAI API key 移出前端。
+* Phase 8：資料庫與使用者資料同步。
+* Phase 9：發布給組員試用。
+
+Phase 6C 開始前需先確認：
+
+* UI 視覺整理的具體範圍與優先順序。
+* 是否在 Phase 6C 開始使用 Figma MCP。
+* 要調整到什麼深度：只統一間距 / 字級 / 卡片層級，或包含較完整的視覺重整。
+* 首頁、結果頁、詳情頁、收藏 / 最近頁的優先順序。
+* 卡片資訊、詳情頁內容與按鈕文案若不明確，必須先問使用者。
+
+不可直接開工 Phase 6C；必須先做開工前確認。
+
+本機驗收網址優先使用：
+
+```txt
+http://localhost:5173/
+```
+
+注意：
+
+* `127.0.0.1` 與 `localhost` 都是本機位址，但使用者習慣使用 `localhost`，後續回覆與驗收連結請優先提供 `http://localhost:5173/`。
+* 曾嘗試用 `cmd /c start` 啟動 dev server，但該命令在目前工具環境中未正常返回，造成回合卡住；後續避免使用此方式啟動長時間程序。
+* 新聊天接手後，必須用 UTF-8 讀取 `PROJECT_SPEC.md`，避免繁體中文內容亂碼。
+* 新聊天接手後，必須以「溝通確認紀錄」最新內容為準，若前文與後續確認衝突，以最新確認為準。
 * 已用 390px 手機寬度檢查首頁、結果頁、詳情頁與最近生成頁，未看到明顯橫向溢出或主要操作擠壓。
 
-Phase 6A 驗收通過前，不可進入 Phase 6B。
+## 2026-04-17 Phase 6A 驗收通過與後續補充想法
 
+使用者確認 Phase 6A 驗收通過，可以進入後續規格討論，但不可未確認就直接實作 Phase 6B。
+
+### 首頁「其他」輸入框必填確認
+
+使用者詢問：規劃頁面選擇「其他」時，彈出的輸入框是否已設置不可為空值。
+
+現況確認：
+
+* 目前 `HomePage.tsx` 的送出驗證已檢查 `category === 'other'` 時，`customCategory` 必須存在且 `trim()` 後不可為空。
+* 目前屬於送出時驗證，尚未針對輸入框本身加上更明確的 `required`、欄位旁錯誤文案或即時提示。
+* 若後續要改善使用者體感，可在 Phase 6B 或另行確認後補強「其他類型」欄位的即時錯誤提示。
+
+### 分析中 / 結果 / 詳情流程狀態保留想法
+
+使用者提出：AI 分析等待時間較長，希望保留使用者送出後正在分析或已完成分析後所在的流程狀態。
+
+期望行為：
+
+* 使用者送出分析後，即使切到收藏頁或最近生成頁，再點回「行程規劃」，也應回到剛剛離開的流程位置。
+* 若正在分析，回到行程規劃時應顯示正在分析狀態，而不是回到偏好選擇表單。
+* 若分析完成並在選擇方案頁，點選單中的「行程規劃」應回到選擇方案頁，而不是偏好選擇表單。
+* 若使用者已進入詳情頁，點選單中的「行程規劃」應回到剛剛的詳情頁，而不是偏好選擇表單。
+* 可回到偏好選擇頁的方式限定為：
+  * 使用者滑掉後台 / 關閉 App 流程後重新進入。
+  * 距離分析開始或流程建立超過 10 分鐘。
+  * 分析完成後，在選擇方案頁左上角點擊 `重新選擇偏好`。
+
+技術可行性初步判斷：
+
+* 在目前純前端架構下，可以透過全域 analysis session、sessionStorage / localStorage 與路由導向實作「切頁後保留分析中 / 結果 / 詳情狀態」。
+* 若只是使用者切到收藏頁、最近生成頁，或 PWA / 瀏覽器短暫切到背景但沒有被系統關閉，前端有機會保留正在分析的狀態。
+* 手機系統若真的將 PWA / 瀏覽器背景程序終止，前端無法可靠保證原本的 OpenAI request 繼續完成。
+* 未來 Phase 7 導入 thin proxy / backend 後，可進一步把 AI 生成改成 server-side job，才更可靠地支援關閉前端後仍可回來查看分析結果。
+
+後續若要實作，需另行確認：
+
+* 10 分鐘計算起點：送出分析當下，或最後一次流程互動時間。
+* 正在分析狀態若 API 失敗，使用者回來時要停在錯誤畫面或回偏好選擇。
+* `重新選擇偏好` 是否需 confirm，避免使用者誤觸清掉目前流程。
+* 詳情頁中的「重新選擇」是否要改文案或保留原本回三方案的用途。
+
+### 原生確認訊息與 App 內置中彈窗
+
+使用者詢問：目前部分確認訊息從瀏覽器上方跳出，未來手機網頁式 App 是否需要改成 App 內置中彈出視窗。
+
+初步結論：
+
+* 需要，正式手機 PWA 體驗建議逐步改成 App 內的置中 modal / dialog。
+* 原生 `alert` / `confirm` 在手機 PWA 或瀏覽器中外觀不一致，容易看起來不像 App，也較難控制文案層級、按鈕樣式與補充說明。
+* 目前使用原生視窗的地方包含但不限於：定位失敗提醒、拖曳排序交通超時確認、交通方式切換超時確認、移除收藏確認。
+* 此項適合排入 Phase 6C UI 視覺整理，或在使用者確認後拆成 Phase 6D：App 內 modal / dialog 系統。
+* 若要在 Phase 6B 前先處理，也需先確認 modal 視覺、按鈕文案、取消 / 確認行為與是否需要遮罩點擊關閉。
+
+Phase 6B 開工前，仍需先確認具體範圍與優先順序。
+
+## 2026-04-17 Phase 6A-1 開工確認：分析流程狀態保留
+
+使用者確認第 2 點插隊，優先於 Phase 6B 實作。
+
+本階段命名為 Phase 6A-1：分析流程狀態保留。
+
+執行範圍：
+
+* 建立分析流程 session，保留正在分析、分析完成、目前流程頁等狀態。
+* 使用者送出分析後，即使切到收藏頁或最近生成頁，再點回「行程規劃」，也應回到剛剛離開的流程位置。
+* 正在分析時回到行程規劃，需顯示分析中狀態，不回偏好表單。
+* 分析完成後若目前流程在三方案結果頁，點選單「行程規劃」需回到三方案結果頁。
+* 若使用者已進入詳情頁，點選單「行程規劃」需回到剛剛的詳情頁。
+* 三方案結果頁左上角新增 `重新選擇偏好` 按鈕，讓使用者可手動清掉目前流程並回偏好選擇。
+* 分析流程超過 10 分鐘後失效，回到偏好選擇頁。
+* 若手機系統真的關閉 / 終止 PWA 或瀏覽器背景程序，前端不保證原本 OpenAI request 繼續完成；未來需由 Phase 7 thin proxy / backend job 改善。
+
+本階段不處理：
+
+* App 內 modal / dialog 系統。
+* Phase 6B 結果品質提示。
+* Phase 6C UI 視覺重整。
+* 登入註冊、點數制、資料庫或發布。
+
+## 2026-04-17 Phase 6A-1 完成待驗收
+
+Phase 6A-1 已完成實作，等待使用者驗收。
+
+本次完成範圍：
+
+* 新增全域分析流程 session provider。
+* AI 分析請求改由 provider 管理，避免離開首頁後分析狀態立即消失。
+* 使用者正在分析時切到收藏 / 最近生成，再點「行程規劃」會回到分析中畫面。
+* 若分析完成時使用者仍停在首頁，會自動進入三方案結果頁。
+* 若分析完成時使用者已切到收藏 / 最近生成，不會強制打斷目前頁面；點「行程規劃」才回三方案結果頁。
+* 三方案結果頁新增左上角 `重新選擇偏好` 按鈕，可清掉目前分析流程並回到偏好選擇頁。
+* 從結果頁選擇方案進入詳情頁時，會把目前流程位置更新為該詳情頁。
+* 在詳情頁點選單的「行程規劃」會回到剛剛的詳情頁。
+* 詳情頁既有 `重新選擇` 仍維持回三方案結果頁的用途。
+* 分析流程 session 有 10 分鐘有效期，超過後「行程規劃」會回偏好選擇頁。
+* 若頁面重新載入時只剩「分析中」暫存，因前端 request 已不存在，會清掉該狀態並回偏好選擇頁。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+## 2026-04-17 Phase 6A-1 驗收通過與 Phase 6A-2 開工確認
+
+使用者確認 Phase 6A-1 通過，可以繼續推進。
+
+使用者決定插隊 Phase 6A-2，優先處理 App 內 modal / dialog 系統。
+
+Phase 6A-2 執行範圍：
+
+* 將目前原生 `alert` / `confirm` 改為 App 內置中彈窗。
+* 視覺維持目前低飽和、簡單直覺風格。
+* 彈窗置中顯示，背景加遮罩。
+* confirm 類型提供「取消」與「確認」兩個按鈕。
+* alert 類型提供單一確認按鈕。
+* 需支援手機 PWA 體驗，不使用瀏覽器上方原生確認訊息。
+* 需優先替換目前已知原生彈窗：
+  * 定位失敗提醒。
+  * 拖曳排序交通超時確認。
+  * 全域 / 單段交通切換超時確認。
+  * 移除收藏確認。
+
+本階段不處理：
+
+* Phase 6B 結果品質提示。
+* Phase 6C 整體 UI 視覺重整。
+* 登入註冊、點數制、資料庫或發布。
+
+## 2026-04-17 Phase 6A-2 完成待驗收
+
+Phase 6A-2 已完成實作，等待使用者驗收。
+
+本次完成範圍：
+
+* 新增共用 App 內 dialog provider / hook。
+* 新增 alert 類型彈窗，提供單一確認按鈕。
+* 新增 confirm 類型彈窗，提供取消與確認按鈕。
+* 彈窗使用 App 內遮罩與低飽和置中 / 手機底部彈出視覺，不再使用瀏覽器原生上方確認訊息。
+* 定位失敗提醒已改用 App 內 alert。
+* 拖曳排序交通超時確認已改用 App 內 confirm。
+* 全域 / 單段交通切換超時確認已改用 App 內 confirm。
+* 移除收藏確認已改用 App 內 confirm。
+
+驗證結果：
+
+* 已搜尋確認 `src` 內沒有剩餘 `window.alert` / `window.confirm`。
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+Phase 6A-2 驗收通過前，不可進入 Phase 6B。
+
+## 2026-04-17 Phase 6A-2 驗收通過與 Phase 6B 開工確認
+
+使用者確認 Phase 6A-2 通過，可以繼續推進。
+
+Phase 6B 範圍收斂如下：
+
+* OpenAI prompt 再微調，要求 AI 盡量貼近使用者時間，但仍不恢復前端時間硬驗證。
+* 首頁選擇「其他」時，輸入框補更明確的必填提示。
+* 錯誤訊息保留使用者可理解文案，不顯示內部 schema 細節。
+* 若行程時間較鬆，只顯示善解式提示，不提供「再加一站」或高度自訂行程的引導。
+
+產品定位確認：
+
+* Tripneeder 主打方便快速，不做深度自訂行程工具。
+* 不新增讓使用者自行決定是否加入多一個停靠站的功能。
+* 不使用「可再安排一個收尾點」這類鼓勵使用者自行改行程的提示。
+* 若需要提示時間較鬆，文案重點應是幫使用者理解結果，例如 `這趟安排保留較多空檔，適合慢慢走。`
+
+## 2026-04-17 Phase 6B 完成待驗收
+
+Phase 6B 已完成實作，等待使用者驗收。
+
+本次完成範圍：
+
+* OpenAI prompt 增加時間貼近規則，要求長時間行程不要壓縮成過短路線。
+* OpenAI prompt 明確要求不要在 summary 或 description 中要求使用者自行新增停靠站。
+* AI 回傳格式 / 結構錯誤改為使用者可理解文案：`這次 AI 產生的行程資料不夠完整，請重新分析一次。`
+* 交通方式不一致錯誤改為使用者可理解文案：`這次 AI 產生的交通安排不夠一致，請重新分析一次。`
+* 首頁選擇「其他」但未輸入描述時，補上欄位層級提示：`請簡單描述你想要的旅行類型。`
+* 結果頁若方案實際時間低於使用者可用時間約 80%，顯示柔性提示：`這趟安排保留較多空檔，適合慢慢走。`
+* 詳情頁若目前時間線低於使用者可用時間約 80%，顯示同樣柔性提示。
+* 時間偏鬆提示不阻擋結果頁，不要求使用者加站，也不提供額外自訂流程。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+Phase 6B 驗收通過前，不可進入 Phase 6C。
+
+## 2026-04-17 Phase 6B 驗收通過與任務暫停
+
+使用者確認 Phase 6B 驗收通過。
+
+Phase 6B 已完成並驗收的範圍：
+
+* OpenAI prompt 已微調，要求 AI 盡量貼近使用者時間，但不恢復前端時間硬驗證。
+* OpenAI prompt 已明確要求不要在 `summary` 或 `description` 中要求使用者自行新增停靠站。
+* AI 回傳格式 / 結構錯誤已改為使用者可理解文案：`這次 AI 產生的行程資料不夠完整，請重新分析一次。`
+* 交通方式不一致錯誤已改為使用者可理解文案：`這次 AI 產生的交通安排不夠一致，請重新分析一次。`
+* 首頁選擇「其他」但未輸入描述時，已補上欄位層級提示：`請簡單描述你想要的旅行類型。`
+* 結果頁若方案實際時間低於使用者可用時間約 80%，會顯示柔性提示：`這趟安排保留較多空檔，適合慢慢走。`
+* 詳情頁若目前時間線低於使用者可用時間約 80%，會顯示同樣柔性提示。
+* 時間偏鬆提示不阻擋結果頁，不要求使用者加站，也不提供額外自訂流程。
+* 已新增 `src/utils/tripTiming.ts` 作為時間計算工具。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+任務暫停，使用者準備開新聊天框交接。
+
+下一階段預計進入 Phase 6C：UI 視覺整理。
+
+Phase 6C 預計範圍：
+
+* 核心流程穩定後進行整體視覺整理。
+* 統一間距、字級、卡片層級與手機視覺。
+* 可開始評估 Figma MCP 介入，協助整理設計系統或頁面視覺。
+* 不得影響既有核心流程穩定度。
+* UI 顯示資訊、卡片內容、詳情頁內容、按鈕文案等若不明確，仍需先問使用者確認。
+
+開始 Phase 6C 前仍需先確認具體範圍、優先順序、是否使用 Figma MCP、視覺調整深度與驗收方式，不可直接開工。
+
+備註：
+
+* 本次本機驗收網址統一使用 `http://localhost:5173/`。
+* `127.0.0.1` 與 `localhost` 都是本機位址；後續依使用者習慣優先提供 `localhost`。
+* 曾嘗試用 `cmd /c start` 啟動 dev server，但該命令在目前工具環境中未正常返回，造成回合卡住；後續避免使用此方式啟動長時間程序。
+
+## 2026-04-17 Phase 6A-1 驗收中修正：AI 回傳格式異常
+
+使用者回報分析失敗，錯誤訊息為：
+
+```txt
+AI 回傳格式異常
+```
+
+現況判斷：
+
+* 此錯誤來自 `parseTripPlanResponse` 的 JSON / 結構驗證。
+* Phase 6A-1 的流程狀態保留不會改變 OpenAI prompt，但會保留分析失敗狀態，因此使用者較容易看到同一次失敗結果。
+* 目前前端驗證仍需保留必要 JSON / 結構驗證，但不應因 AI 回傳中可安全修正的小偏差整批失敗。
+
+本次修正：
+
+* JSON 解析增加容錯，可處理模型偶爾包入 code block 或前後多餘文字的情況。
+* AI 回傳在硬驗證前先進行 normalize。
+* 若 `TransportSegment.label` 含數字、分鐘、小時、公里等資訊，前端會先清理成交通摘要，不再直接整批失敗。
+* 若 stop id 缺失、重複或不是英文 / 數字 / 底線 / 連字號，前端會依 plan type 與順序產生穩定 id。
+* 若交通段 fromStopId / toStopId 因 id 修正而不一致，前端會依相鄰 stop 順序修正。
+* 若交通段 duration 缺失或不合理，前端以 20 分鐘 fallback。
+* 若 stop type 使用可推測的餐飲 / 收尾語意，前端會轉成既有 enum。
+
+仍保留硬驗證：
+
+* 必須有 3 個 plans。
+* 三方案 type 必須包含 safe、balanced、explore。
+* 每個方案仍需有 stops 與 rainBackup。
+* stop 數量仍需在 2 到 6 個。
+* 主要欄位仍需存在。
+* 交通方式仍需是合法值，且三方案預設交通方式需一致。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+## 2026-04-17 Phase 6C 開工確認：UI 視覺整理
+
+使用者確認 Phase 6C 可以進入 UI 視覺整理，但因需處理頁面較多，若一次做完會影響整體完善程度，應拆成較小階段逐步實作與驗收，不要求一次完成全部 UI 設計。
+
+Phase 6C 整體方向：
+
+* 暫時不使用 Figma MCP，但保留之後視覺大改時再導入。
+* 本階段可做較完整重整，允許明顯改善整體視覺風格，但不可改變核心功能流程。
+* 視覺方向維持目前已確認的「質感文青、低飽和、簡單直覺、快速」。
+* 頁面優先順序：
+  1. 首頁行程規劃。
+  2. 結果頁三方案比較。
+  3. 詳情頁。
+  4. 收藏 / 最近生成頁。
+* 不得影響既有核心流程穩定度。
+* UI 顯示資訊、卡片內容、詳情頁內容、按鈕文案等若不明確，仍需先問使用者確認。
+
+Phase 6C 拆分：
+
+### Phase 6C-1
+
+首頁行程規劃視覺整理：
+
+* 整理首頁整體視覺節奏、間距、字級與表單區塊層級。
+* 保留一頁式表單與既有欄位，不新增未確認功能。
+* 維持簡單直覺，避免變成行銷 landing page。
+* 手機版需優先確保輸入與點擊舒適。
+
+### Phase 6C-2
+
+結果頁三方案比較視覺整理：
+
+* 強化三方案一眼比較。
+* 整理方案卡片資訊層級、按鈕與提示文字。
+* 不改變三方案排序與選擇流程。
+
+### Phase 6C-3
+
+詳情頁視覺整理：
+
+* 整理時間軸、景點卡、交通快速瀏覽、雨天切換、交通切換與收藏區塊。
+* 不改變拖曳排序、交通切換、雨天切換、收藏等既有功能邏輯。
+* 詳情頁內容與按鈕文案若需大幅調整，需先詢問使用者。
+
+### Phase 6C-4
+
+收藏 / 最近生成頁視覺整理與全域一致性收尾：
+
+* 整理收藏與最近生成的橫向卡片視覺。
+* 統一全站按鈕、卡片、間距、字級與手機細節。
+* 檢查主要頁面在手機寬度下沒有明顯橫向溢出或主要操作擠壓。
+
+Phase 6C 驗收方式：
+
+* 每個 6C 子階段完成後，都需先讓使用者驗收，驗收通過後才可進入下一個子階段。
+* 每個子階段至少需執行 `npm run lint` 與 `npm run build`。
+* 本機驗收網址優先使用 `http://localhost:5173/`。
+* 驗收需檢查該階段涉及頁面的桌機與手機主要視覺與操作。
+
+## 2026-04-17 Phase 6C-1 完成待驗收
+
+Phase 6C-1 已完成實作，等待使用者驗收。
+
+本次完成範圍：
+
+* 首頁新增上方 `home-hero` 視覺區，保留原本標題、說明與一頁式表單流程。
+* 首頁新增簡短行程輪廓提示：`今天出發`、`3 種風格`、`保守、平衡、探索`。
+* 首頁表單區塊從多張同層級卡片改為較輕的分隔線節奏，降低視覺擁擠感。
+* 調整首頁欄位、chip、預算選項、定位按鈕、輸入框、焦點狀態與送出按鈕的低飽和灰綠視覺。
+* 調整首頁與 App 基礎背景色，從偏米色改為低飽和灰綠底，維持簡單直覺但降低單一米色感。
+* 補齊首頁在 900px、640px、420px 寬度下的 hero 與表單響應式細節。
+* 未改變欄位內容、AI 呼叫流程、表單驗證、分析流程狀態、收藏 / 最近生成或任何資料模型。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+* `http://localhost:5173/` 回應 HTTP 200。
+
+Phase 6C-1 驗收通過前，不可進入 Phase 6C-2。
+
+## 2026-04-17 Phase 6C-1 驗收中修正：視覺方向收斂
+
+使用者回饋 Phase 6C-1 第一版方向需調整：
+
+* 顏色不要更動，需恢復原本米色系。
+* Phase 6C 重點不是更換色系，而是讓整體 UI 更有質感、乾淨、整齊。
+* 去除多餘問候語、裝飾性問句與說明文字。
+* 首頁偏好表單本身的題目需保留。
+* 類似頁面左上角淡色小字（例如 `行程規劃`、`收藏`、`最近生成`、`AI 已整理三種走法`）不必要，應移除或隱藏。
+* 詳情頁底部的雨天備案與收藏區塊不需要前置問句與大段說明，應改成簡單乾淨、有質感的操作按鍵。
+* Agent 可用相同角度審視其他未點名的 UI 文案或區塊，但未明確提到的改動需先提出給使用者審核，不可自行擴大修改。
+
+本次修正：
+
+* 恢復 App 與首頁基礎背景為原本米色系。
+* 移除首頁第一版新增的 `今天出發 / 3 種風格 / 保守、平衡、探索` 提示卡。
+* 隱藏全站 `.page-kicker` 裝飾性小字。
+* 詳情頁雨天切換區塊移除 `需要雨天備案嗎？` 與說明文字，保留單一切換按鈕。
+* 詳情頁收藏區塊移除 `想把這趟留下來嗎？` 與說明文字，保留收藏按鈕與收藏成功狀態。
+* 保留首頁偏好表單中的欄位題目與必填提示。
+
+Phase 6C 後續 UI 原則補充：
+
+* 優先刪減非必要說明文字與裝飾性標籤。
+* 操作本身清楚時，避免再加問句或補充說明。
+* 仍需保留會影響理解與操作安全的必要提示，例如錯誤、超時、定位失敗、空狀態、交通資料相容提示。
+* 未被使用者明確點名的文案刪減，需先列出建議並讓使用者確認。
+
+## 2026-04-17 Phase 6C-1 驗收中修正（二）：頁面精簡與收藏 / 最近 bug
+
+使用者確認以下 UI 文案與資訊層級調整：
+
+* 結果頁標題改為 `選擇行程方案`。
+* 收藏頁標題改為 `收藏`，移除句點。
+* 最近生成頁標題改為 `最近生成`，移除句點。
+* 結果卡片 `前幾站` 改為 `行程`。
+* 詳情頁景點卡中的 `主要景點 / 餐飲補給 / 收尾轉場` 標籤保留不動。
+* 交通切換選單中的 `整趟行程交通`、`單段交通` 保留。
+
+使用者追加確認：
+
+* 首頁主標題下方的淡色說明 `告訴我今天的時間、預算和起點，我們先把偏好整理好。` 也屬於多餘文字，需移除。
+* 詳情頁主標題區原本三行標題太冗，刪除第二行副標，只保留簡潔標題與摘要。
+* 詳情頁雨天與收藏按鈕需做成小長方體，一左一右排列，不要兩條距離很開的大橫槓。
+* 收藏與最近生成卡片需回到快速總覽，不要顯示太詳細；應維持橫向長方形卡片。
+* 卡片與詳情頁殘留灰綠色系需修正回較一致的米色 / 米褐方向。
+
+本次 bug 修正：
+
+* 最近生成卡片外層顯示總時間與詳情頁不一致：卡片改用 stops + transportSegments 實際計算時長，不再使用可能與詳情頁不同的 `plan.totalTime`。
+* 從收藏 / 最近生成頁往下滑後點進詳情頁，詳情頁會承接前頁 scroll 位置：詳情頁依 `planId` 進入時自動回到頁面頂端。
+
+本次實作範圍：
+
+* 結果頁標題與結果卡片小標調整。
+* 收藏 / 最近生成頁標題調整。
+* 首頁主標下說明文字移除。
+* 詳情頁副標移除。
+* 詳情頁底部雨天 / 收藏操作改為同列小長方形按鈕。
+* 收藏 / 最近生成卡片移除副標與摘要，只保留方案類型、標題與日期 / 總時間 / 預算 / 交通快速摘要。
+* 詳情頁與卡片內灰綠視覺調整為米褐系。
+
+## 2026-04-17 Phase 6C-1 驗收中修正（三）：收藏 / 最近卡片摘要格
+
+使用者回饋收藏與最近生成卡片格式需調整：
+
+* 卡片顯示標題後，四個摘要資訊需以 2 欄 x 2 列呈現。
+* 不可變成一行四欄，也不可在手機版變成太長的單欄清單。
+
+本次修正：
+
+* 收藏 / 最近生成卡片摘要區固定為 2 欄 x 2 列。
+* 手機版同樣維持 2 欄摘要格，避免快速總覽變成冗長清單。
+
+## 2026-04-17 Phase 6C-1 驗收中修正（四）：詳情頁手機寬度切版
+
+使用者回饋：
+
+* 不是收藏頁或最近生成列表被切到，而是從收藏 / 最近生成卡片點進去後的詳情頁在手機大小會被切到。
+
+本次修正：
+
+* 詳情頁 `.detail-page` 改為垂直 flex 排版，避免繼承 `.page` 的 grid 後在手機寬度撐出橫向溢出。
+* 詳情頁 hero、資訊格、時間軸、時間軸群組、景點卡加上 `min-width: 0` 與 `max-width: 100%`。
+* 手機版縮小時間軸左側 marker 欄位與交通快覽寬度，避免右側被切。
+* 詳情頁底部雨天 / 收藏按鈕列改為真正的 2 欄 grid，在手機寬度內平均收合。
+
+驗證結果：
+
+* 使用 DevTools 以 390px 手機寬度檢查詳情頁。
+* `document.documentElement.scrollWidth` 等於 `clientWidth`，未再出現橫向溢出。
+* 未偵測到超出 viewport 的詳情頁元素。
+
+## 2026-04-17 Phase 6C-1 驗收通過與 Phase 6C-2 / 詳情頁收斂確認
+
+使用者確認 Phase 6C-1 驗收通過，可以推進進度。
+
+Phase 6C-2 與詳情頁同步收斂的本次確認：
+
+* 結果頁三方案卡片與詳情頁一致，刪除方案副標，只保留簡潔標題與摘要。
+* 結果頁三方案卡片外層總時間需與詳情頁一致，改用 stops + transportSegments 實際計算時長，不再直接使用可能不一致的 `plan.totalTime`。
+* 暫時移除 `這趟安排保留較多空檔，適合慢慢走。` 提示，因目前 AI 很容易每個方案都觸發，反而造成使用者困惑。
+* 刪除詳情頁景點卡的 `保留` 勾選功能。產品定位追求快速，不再保留此功能作為後續深度自訂入口。
+* 詳情頁景點卡的 `時段` 與 `停留` 資訊需更緊湊，不要大面積留白。
+* `時段` 顯示在左上角，`停留` 接在右側，同列呈現。
+* 詳情頁景點卡需往 Phase 6C 開始前較乾淨的卡片方向收斂，避免因 UI 調整造成卡片過度撐高或顯得零碎。
+
+本次實作：
+
+* 結果頁卡片移除 `plan.subtitle` 顯示。
+* 結果頁卡片 `總時間` 改用 `getPlanActualDuration(plan)`。
+* 結果頁移除時間偏鬆提示。
+* 詳情頁移除時間偏鬆提示。
+* 詳情頁移除 `keptStops` 狀態、`toggleKeptStop` 與 `保留` checkbox。
+* 詳情頁景點卡拖曳按鈕移回右上角，不再被保留按鈕影響位置。
+* 詳情頁景點卡 `時段` / `停留` 改為同列緊湊資訊格。
+
+## 2026-04-17 Phase 6C-2 驗收中修正：詳情頁資訊格壓縮
+
+使用者回饋：
+
+* 詳情頁上方三個資訊區塊應盡可能排在同一列。
+* 若字會擠到，可以縮小字級，並刪掉多餘留白。
+* 景點卡 `時段` / `停留` 同列後，時段文字不應換行。
+* `時段` 與 `停留` 兩個區塊的字體可縮小，讓它們合理並排。
+
+本次修正：
+
+* 手機版詳情頁上方三個資訊格維持三欄同列。
+* 手機版詳情頁資訊格縮小 gap、padding、標籤字級與內容字級。
+* 手機版交通方式格內的 `切換` 按鈕縮小，避免把三欄撐高或撐寬。
+* 手機版景點卡 `時段` / `停留` 資訊格縮小 padding 與字級。
+* `時段` / `停留` 的主要文字設為不換行，避免時間被切成兩行。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+* 以手機寬度檢查詳情頁，上方三個資訊格維持同列，景點卡 `時段` / `停留` 維持同列且未偵測到橫向溢出。
+
+## 2026-04-17 Phase 6C-2 驗收未完成與換聊天框交接
+
+目前任務暫停，使用者準備切換到新的聊天框。
+
+目前狀態：
+
+* Phase 6C-1 已由使用者驗收通過。
+* 目前正在 Phase 6C-2 驗收中，尚未完成驗收通過。
+* 不可直接進入 Phase 6C-3。
+* 新聊天框接手後，需先確認 Phase 6C-2 目前修改是否通過，若使用者回報還有 UI 問題，需先繼續修 Phase 6C-2。
+
+Phase 6C-2 目前已完成但待驗收的重點：
+
+* 結果頁三方案卡片移除副標，只保留方案標題與摘要。
+* 結果頁三方案卡片 `總時間` 改用實際 `stops + transportSegments` 計算，與詳情頁一致。
+* 結果頁與詳情頁暫時移除 `這趟安排保留較多空檔，適合慢慢走。` 提示。
+* 詳情頁移除景點卡 `保留` 勾選功能。
+* 詳情頁景點卡 `時段` / `停留` 改為同列緊湊顯示。
+* 詳情頁上方三個資訊格在手機版盡可能維持同列，必要時縮小字級與留白。
+* 手機版詳情頁已檢查沒有橫向溢出。
+
+Phase 6C 後續切分仍維持：
+
+* Phase 6C-2：結果頁三方案比較視覺整理，仍在驗收中。
+* Phase 6C-3：詳情頁視覺整理，需等 Phase 6C-2 驗收通過後，才能開工或確認是否已被前面修正部分涵蓋。
+* Phase 6C-4：收藏 / 最近生成頁視覺整理與全域一致性收尾。
+
+後續 UI 原則提醒：
+
+* 維持原本米色 / 米褐色系，不要再擅自改主色。
+* 方向是乾淨、有質感、少廢話，不是新增裝飾。
+* 刪減多餘問句、寒暄、裝飾性小字與非必要說明。
+* 首頁偏好表單題目要保留。
+* 操作本身清楚時，用簡潔按鈕即可。
+* UI 顯示資訊、卡片內容、詳情頁內容、按鈕文案若不明確，要先問使用者。
+* 每個 phase 或子階段完成後必須先讓使用者驗收，驗收通過後才可進下一階段。
+
+新聊天框接手時，必須先用 UTF-8 讀取 `PROJECT_SPEC.md`，並以「溝通確認紀錄」與本段最新內容為準。
+
+## 2026-04-17 Phase 6C-2 驗收中修正（二）：詳情頁與結果卡片緊湊化
+
+使用者回饋：
+
+* 詳情頁上方三個資訊區塊中的「交通方式」卡，`切換` 按鈕需放在右下角。
+* 詳情頁景點卡的 `時段` / `停留` 區塊仍有明顯右側留白，需縮到剛好不讓內容換行的寬度。
+* 行程間交通資訊區塊也不應拉成很長一條，需依內容寬度收合，避免多餘留白。
+* 景點卡的 `開啟 Google Maps` 與 `開始導航` 按鈕需一列並排，中間保留舒服間距，兩個按鈕共同填滿手機可用寬度，並調整字級與留白讓按鈕看起來剛好。
+* 結果頁三方案卡片的四個摘要資訊也需固定為 2 欄 x 2 列，手機版不可變成單欄造成留白過多。
+
+本次修正：
+
+* 詳情頁 `交通方式` 資訊格中的 `切換` 按鈕改為靠右下角。
+* 詳情頁景點卡 `時段` / `停留` 資訊格改用內容寬度，並保留最大寬度限制避免手機橫向溢出。
+* 詳情頁行程間交通資訊改用內容寬度，避免整條交通框拉滿造成留白。
+* 詳情頁 `開啟 Google Maps` 與 `開始導航` 改為雙欄並排，手機版調整字級、padding 與不換行。
+* 結果頁三方案卡片四個摘要資訊在手機版也維持 2 欄 x 2 列。
+
+## 2026-04-17 Phase 6C-2 驗收中修正（三）：結果頁摘要尺寸對齊
+
+使用者回饋：
+
+* 結果頁三方案卡片的四個摘要資訊，尺寸與留白需參考收藏 / 最近生成卡片的四摘要樣式。
+* 收藏 / 最近生成的摘要大小明顯較好看，結果頁應往同樣比例收斂。
+
+本次修正：
+
+* 結果頁 `.plan-metrics` 改為與收藏 / 最近生成 `.stored-trip-metrics` 相近的寬度、gap、padding 與背景透明度。
+* 結果頁四摘要維持 2 欄 x 2 列，但不再撐滿整張方案卡片寬度，降低留白與鬆散感。
+
+## 2026-04-17 Phase 6C-2 驗收中修正（四）：結果頁選擇按鈕位置
+
+使用者回饋：
+
+* 結果頁三方案卡片的 `選擇此方案` 按鈕需放在卡片右側，不要靠左。
+
+本次修正：
+
+* 結果頁方案卡片內的 `選擇此方案` 按鈕改為靠右對齊。
+* 此調整僅作用於方案卡片內按鈕，不影響空狀態或其他頁面的連結按鈕。
+
+## 2026-04-17 Phase 6C-2 驗收通過
+
+使用者確認 Phase 6C-2 驗收通過，可以推進進度。
+
+Phase 6C-2 已完成並驗收的範圍：
+
+* 結果頁標題維持 `選擇行程方案`。
+* 結果頁三方案卡片移除方案副標，只保留方案標題與摘要。
+* 結果頁三方案卡片 `總時間` 改用實際 `stops + transportSegments` 計算，與詳情頁一致。
+* 結果頁暫時移除 `這趟安排保留較多空檔，適合慢慢走。` 提示。
+* 結果頁三方案卡片四個摘要資訊維持 2 欄 x 2 列。
+* 結果頁三方案卡片四個摘要資訊尺寸、留白與視覺比例對齊收藏 / 最近生成卡片摘要。
+* 結果頁三方案卡片 `選擇此方案` 按鈕改為靠右對齊。
+* 詳情頁同步移除時間偏鬆提示。
+* 詳情頁移除景點卡 `保留` 勾選功能。
+* 詳情頁景點卡 `時段` / `停留` 改為同列緊湊顯示，並依內容寬度收合。
+* 詳情頁上方三個資訊格在手機版盡可能維持同列。
+* 詳情頁 `交通方式` 資訊格中的 `切換` 按鈕改為靠右下角。
+* 詳情頁行程間交通資訊改用內容寬度，避免過長留白。
+* 詳情頁 `開啟 Google Maps` 與 `開始導航` 改為一列並排，中間保留間距，並共同填滿手機可用寬度。
+* 手機版詳情頁已檢查沒有明顯橫向溢出。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+下一階段可進入 Phase 6C-3：詳情頁視覺整理。
+
+注意：
+
+* Phase 6C-3 不應重複改動已在 Phase 6C-2 驗收通過的結果頁三方案卡片。
+* Phase 6C-3 詳情頁部分已在 Phase 6C-2 修正中涵蓋局部內容，開工前需先確認剩餘整理範圍，避免重複或過度調整。
+
+## 2026-04-17 Phase 6C-3 範圍收斂與修正
+
+使用者確認：
+
+* 詳情頁目前內容整體可以接受，不需要再進行大幅視覺整理。
+* Phase 6C-3 唯一需調整的是底部 `切換雨天備案` 按鈕。
+* `切換雨天備案` 需改成咖啡色外框的空心按鈕，避免與實心的 `收藏此方案` 太相似。
+
+本次修正：
+
+* 詳情頁底部 `切換雨天備案` 按鈕改為咖啡色文字與外框、透明 / 米色底的空心樣式。
+* `收藏此方案` 維持原本咖啡色實心按鈕，形成主次區分。
+* 未調整詳情頁其他內容、資訊架構、文案或功能流程。
+
+## 2026-04-17 Phase 6C-3 驗收通過
+
+使用者確認 Phase 6C-3 可以推進下一個階段。
+
+Phase 6C-3 已完成並驗收的範圍：
+
+* 詳情頁內容整體維持 Phase 6C-2 驗收後狀態，不再進行大幅視覺整理。
+* 詳情頁底部 `切換雨天備案` 改為咖啡色外框空心按鈕。
+* 詳情頁底部 `收藏此方案` 維持咖啡色實心按鈕。
+* 未調整詳情頁其他資訊架構、文案或功能流程。
+
+下一階段可進入 Phase 6C-4：收藏 / 最近生成頁視覺整理與全域一致性收尾。
+
+## 2026-04-17 Phase 6C-4 實作中：收藏 / 最近生成卡片收尾
+
+Phase 6C-4 方向：
+
+* 收藏 / 最近生成頁維持目前快速總覽卡片，不新增功能、不改卡片資訊內容。
+* 保留 2 欄 x 2 列摘要格。
+* 優先處理全域一致性、手機版留白與操作按鈕不互相干擾。
+
+本次修正：
+
+* 收藏卡片因有 `移除收藏` 按鈕，標題區會預留右側空間，避免長標題靠近或壓到移除按鈕。
+* 最近生成卡片沒有移除按鈕，因此不再保留不必要的右側空間。
+* 收藏 / 最近生成卡片的四摘要區在桌機版靠右、手機版自然靠左並維持 2 欄 x 2 列。
+
+## 2026-04-17 Phase 6C-4 驗收通過與 Phase 6C 收束
+
+使用者確認 Phase 6C-4 驗收通過，可以推進進度。
+
+Phase 6C-4 已完成並驗收的範圍：
+
+* 收藏 / 最近生成頁維持快速總覽卡片，不新增功能、不改卡片資訊內容。
+* 收藏 / 最近生成卡片四摘要維持 2 欄 x 2 列。
+* 收藏卡片有 `移除收藏` 按鈕時，標題區會預留右側空間，避免長標題靠近或壓到移除按鈕。
+* 最近生成卡片沒有移除按鈕，因此不保留不必要的右側空間。
+* 收藏 / 最近生成卡片摘要區在桌機版靠右、手機版自然靠左。
+
+Phase 6C 整體已完成並驗收：
+
+* Phase 6C-1 首頁行程規劃視覺整理已驗收通過。
+* Phase 6C-2 結果頁三方案比較視覺整理已驗收通過。
+* Phase 6C-3 詳情頁視覺整理收斂與雨天備案按鈕主次調整已驗收通過。
+* Phase 6C-4 收藏 / 最近生成頁視覺整理與全域一致性收尾已驗收通過。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+下一階段預計進入 Phase 7：登入註冊、點數制與 API key 移出前端。
+
+Phase 7 開工前需先確認：
+
+* 使用者登入方式。
+* 點數制規則。
+* thin proxy / backend 技術方案。
+* OpenAI API key server-side secret 管理方式。
+* 前端是否仍保留未登入可瀏覽 / localStorage fallback。
+
+## 2026-04-17 Phase 7 開工前確認（一）：登入、點數與 Vercel Functions
+
+使用者提出並確認的 Phase 7 方向：
+
+### 登入與導覽
+
+* 優先評估 Google 登入是否可讓管理更簡單。
+* 登入按鈕放在右上角。
+* 原本右上角的 `Tripneeder` 品牌名稱改為置中。
+* 未登入時可瀏覽首頁並填寫偏好表單。
+* 未登入時按下 `出發！GO！` 不可呼叫 AI，需彈出 `請登入以繼續使用本服務` 視窗。
+* 登入提醒視窗按 `取消` 關閉視窗。
+* 登入提醒視窗按 `確認` 後自動導到登入頁面。
+* 未登入時收藏與最近生成頁仍可點選進入，但頁面不顯示資料，直接彈出同一個 `請登入以繼續使用本服務` 視窗。
+* 選單需在原本三項之外新增 `點數管理`。
+* 點數管理頁後續用於查看點數、儲值或管理點數。
+
+### 點數制
+
+* 初始點數為 100 點。
+* 每次 AI 分析成功扣除 20 點。
+* 任何分析失敗都不扣點。
+* 分析失敗頁面角落需統一顯示 `分析失敗不扣除點數`。
+* 此錯誤狀態較難用真實 API 失敗驗收，實作時需提供其他可驗收方式呈現給使用者看，不可只要求使用者自行碰運氣測試。
+
+### Backend / API key
+
+* Phase 7 thin proxy / backend 選用 Vercel Functions。
+* OpenAI API key 放在 Vercel Project → Settings → Environment Variables。
+* Vercel 環境變數範例：
+
+```txt
+OPENAI_API_KEY=sk-xxxx
+```
+
+* Vercel Function 中使用：
+
+```ts
+const key = process.env.OPENAI_API_KEY
+```
+
+* OpenAI API key 不可放在會 commit 的 `.env`。
+* Production / Preview / Development 可在 Vercel dashboard 分開設定。
+* 前端不可再使用 `VITE_OPENAI_BROWSER_CREDENTIAL` 呼叫 OpenAI，AI 呼叫需改由 Vercel Function server-side 代理。
+
+### 待確認議題
+
+* Google 登入若只負責驗證身分，仍需要資料庫紀錄使用者帳號與點數關聯。
+* 需決定資料庫 / BaaS 方案，用來記錄 user id、email、display name、points balance、points ledger 與手動加點紀錄。
+* 專題開發期間需支援管理者手動幫組員加點，需設計安全且容易操作的方式。
+
+## 2026-04-17 Phase 7 開工前確認（二）：Supabase 與點數管理器
+
+使用者確認：
+
+* Auth / DB 採用 Supabase。
+* Google 登入用於降低帳密管理負擔，但仍需用 Supabase 資料庫紀錄帳號與點數關聯。
+* 管理者手動幫組員增減點數的小工具需安排在登入完成、資料庫可匯入 / 讀取帳號後再做。
+* 小工具放在本專案資料夾內。
+* 小工具名稱使用：`點數管理器`。
+* `點數管理器` 需求：
+  * 視窗可非常簡陋。
+  * 可選擇目前資料庫中已登入過的帳號。
+  * 顯示選定帳號目前點數。
+  * 可手動增加或減少點數。
+  * 點數最低只能減到 0。
+  * 需有防呆機制，避免輸入錯誤或扣成負數。
+* 取消先前提議的強制分析失敗驗收方式。
+* `分析失敗不扣除點數` 字樣的驗收由使用者自行刪除 / 暫時移除 API key 觸發分析失敗來檢查。
+* Agent 不需額外提供 mock failure query flag 或測試入口。
+
+Phase 7A 實作範圍確認：
+
+* 先完成登入入口、Google 登入頁、未登入阻擋、導覽調整與點數管理頁入口。
+* 先使用 Supabase 前端 anon key 設定登入，不在本階段處理 OpenAI proxy。
+* `VITE_SUPABASE_URL` 與 `VITE_SUPABASE_ANON_KEY` 可存在前端環境變數，因 Supabase anon key 屬於公開 client key，真正權限需由 Supabase RLS 控制。
+* OpenAI API key 仍不可放前端，後續 Phase 7C 移到 Vercel Functions。
+
+## 2026-04-17 Phase 7A 完成待驗收
+
+Phase 7A 已完成實作，等待使用者驗收。
+
+本次完成範圍：
+
+* 新增 Supabase client 與 AuthProvider。
+* 新增 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` 前端設定讀取。
+* 新增 Google 登入頁。
+* Header 中 `Tripneeder` 改為置中。
+* Header 右上角新增登入 / 登出入口。
+* 選單新增 `點數管理`。
+* 新增點數管理頁入口；本階段先顯示登入帳號與資料庫點數待接上的提示。
+* 未登入時仍可瀏覽首頁偏好表單。
+* 未登入時按 `出發！GO！` 會跳出 `請登入以繼續使用本服務` 視窗，取消關閉，確認導到登入頁。
+* 未登入時進入收藏 / 最近生成 / 點數管理頁會跳出同一個登入提示視窗，頁面不顯示既有 localStorage 資料。
+* 分析失敗狀態新增角落提示 `分析失敗不扣除點數`。
+* 未加入額外 mock failure 或強制失敗驗收入口。
+
+尚未處理：
+
+* Supabase 資料表 schema。
+* 使用者初始 100 點資料建立。
+* 點數餘額讀取與交易紀錄。
+* AI 成功扣 20 點、失敗不扣點。
+* Vercel Functions OpenAI proxy。
+* `點數管理器` 小工具。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+* build 出現 Vite chunk size warning，原因是新增 Supabase client 後 bundle 變大；不影響本階段功能驗收，後續如需可再評估 lazy loading。
+
+## 2026-04-17 Phase 7A 驗收通過與 Phase 7B 開工
+
+使用者確認 Phase 7A 驗收通過，可以繼續推進。
+
+Phase 7B 範圍：
+
+* 建立 Supabase 點數資料表 schema。
+* 建立 `profiles`，用於記錄 auth user id、email、display name、目前點數。
+* 建立 `point_transactions`，用於記錄初始點數、扣點、管理員調整、退款等點數異動紀錄。
+* 使用者首次登入後需建立 profile 並給初始 100 點。
+* 前端點數管理頁需能顯示目前登入帳號、點數餘額與交易紀錄。
+* 本階段不做 AI 成功扣 20 點。
+* 本階段不做 Vercel Functions OpenAI proxy。
+* 本階段不做 `點數管理器` 小工具；該工具需等資料庫帳號與點數流程穩定後再做。
+
+## 2026-04-17 Phase 7B 完成待驗收
+
+Phase 7B 已完成實作，等待使用者驗收。
+
+本次完成範圍：
+
+* 新增 Supabase migration：`supabase/migrations/001_points_schema.sql`。
+* migration 建立 `profiles` 資料表。
+* migration 建立 `point_transactions` 資料表。
+* migration 啟用 RLS。
+* 使用者只能讀取自己的 profile 與 point transactions。
+* 新增 `initialize_user_profile()` Supabase RPC。
+* 使用者首次登入後會建立 profile 並給初始 100 點。
+* 初始 100 點只會建立一次，不會因重複登入或重複呼叫而重複加點。
+* AuthProvider 偵測到登入後會背景呼叫初始化函式。
+* 點數管理頁會讀取目前登入帳號、點數餘額與最近 20 筆點數紀錄。
+* 若 Supabase 尚未設定或 migration 尚未執行，點數管理頁會顯示可理解錯誤提示。
+* 新增點數交易類型顯示：
+  * `initial`：初始點數。
+  * `consume`：分析扣點。
+  * `admin_adjust`：管理調整。
+  * `refund`：退回點數。
+
+尚未處理：
+
+* AI 成功扣 20 點、失敗不扣點。
+* 點數不足阻擋分析。
+* Vercel Functions OpenAI proxy。
+* `點數管理器` 小工具。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+* build 仍有 Vite chunk size warning，與 Supabase client bundle 變大有關，不影響本階段驗收。
+
+## 2026-04-17 Phase 7B 驗收通過與 Supabase env 檢查
+
+使用者已在 Supabase SQL Editor 執行 `001_points_schema.sql`，並確認成功。
+
+使用者已在 `.env` 設定：
+
+```txt
+VITE_SUPABASE_URL
+VITE_SUPABASE_ANON_KEY
+```
+
+檢查結果：
+
+* `.env` 空行合法，不影響 Vite / 本機讀取。
+* `VITE_SUPABASE_URL` 已設定，格式為 `https://...supabase.co`。
+* `VITE_SUPABASE_ANON_KEY` 已設定。
+* 使用目前 Supabase URL 與 key 測試：
+  * `/auth/v1/settings` 回應 HTTP 200。
+  * `/rest/v1/profiles?select=id&limit=1` 回應 HTTP 200。
+* 因此 Supabase 前端登入 / 讀取設定可用。
+* 已重啟本機 Vite dev server，讓新的 `.env` 生效。
+
+Phase 7B 驗收通過，可以推進 Phase 7C。
+
+## 2026-04-17 Phase 7C 完成待驗收：Vercel Functions OpenAI proxy
+
+Phase 7C 已完成實作，等待使用者驗收。
+
+本次完成範圍：
+
+* 新增 Vercel Function：`api/generate-trip.ts`。
+* Vercel Function 從 server-side `OPENAI_API_KEY` 讀取 OpenAI key。
+* Vercel Function 使用 `OPENAI_MODEL`，未設定時 fallback 為 `gpt-4.1-mini`。
+* Vercel Function 呼叫 OpenAI Responses API。
+* Vercel Function 使用既有 trip prompt、JSON schema 與解析 / normalize 流程。
+* 前端 `ProxyTripPlanner` 已接上 `/api/generate-trip`。
+* 前端 `tripPlanner` 改為只使用 proxy planner。
+* 刪除前端直連 OpenAI 的舊 service 與 config。
+* 移除 `vite.config.ts` 內對 `VITE_OPENAI_BROWSER_CREDENTIAL` / `VITE_OPENAI_MODEL` 的注入。
+* 新增本機 Vite dev middleware，讓 `http://localhost:5173/api/generate-trip` 在本機開發時也能走同一個 handler。
+* 本機 proxy 只讀 server-side `OPENAI_API_KEY` / `OPENAI_MODEL`，不再讀前端 `VITE_OPENAI_BROWSER_CREDENTIAL`。
+* 已搜尋確認 production `dist` 沒有出現 `VITE_OPENAI_BROWSER_CREDENTIAL`、舊 OpenAI placeholder 或前端直連 OpenAI 字串。
+
+Phase 7C 後的 env 規則：
+
+* Supabase 前端公開設定：
+
+```txt
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
+```
+
+* OpenAI key 改用 server-side：
+
+```txt
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+* `VITE_OPENAI_BROWSER_CREDENTIAL` 不再使用。
+* Vercel Production / Preview / Development 需在 Project Settings → Environment Variables 設定 `OPENAI_API_KEY`。
+
+尚未處理：
+
+* AI 成功後扣 20 點。
+* AI 失敗不扣點的 server-side 交易保證。
+* 點數不足阻擋分析。
+* `點數管理器` 小工具。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+* 本機 `/api/generate-trip` 在沒有 `OPENAI_API_KEY` 時回應 HTTP 500，表示 dev middleware 有接到 Function。
+* build 仍有 Vite chunk size warning，與 Supabase client bundle 變大有關，不影響本階段驗收。
+
+## 2026-04-17 Phase 7C 暫時通過與 Phase 7D 開工
+
+使用者確認可以先繼續推進。
+
+現況：
+
+* Phase 7C 的 proxy 實作已完成。
+* 因 Google 登入尚未實際設定完成，未登入狀態會被阻擋，使用者目前無法實際送出 AI 分析驗收。
+* 使用者同意先繼續 Phase 7D。
+
+Phase 7D 範圍：
+
+* 生成前檢查使用者點數是否足夠。
+* 每次 AI 分析成功後扣除 20 點。
+* AI 呼叫失敗、AI 回傳格式錯誤、前端無法解析結果時不扣點。
+* 點數不足時不可呼叫 OpenAI，需顯示使用者可理解的錯誤。
+* 扣點需在 server-side / Supabase RPC 中進行，不可只在前端扣。
+* 本階段仍不做 `點數管理器` 小工具。
+
+## 2026-04-17 Phase 7D 完成待驗收
+
+Phase 7D 已完成實作，等待使用者驗收。
+
+本次完成範圍：
+
+* 新增 Supabase migration：`supabase/migrations/002_points_consumption.sql`。
+* 新增 RPC `get_my_points_balance()`，用於讀取目前登入使用者點數。
+* 新增 RPC `consume_points_for_analysis(cost, reason)`，用於 server-side 扣除分析點數。
+* `consume_points_for_analysis` 會確保點數不可扣成負數。
+* 前端送出 AI 分析時會從 Supabase session 取得 access token。
+* 前端呼叫 `/api/generate-trip` 時會帶 `Authorization: Bearer <access token>`。
+* Vercel Function 會先檢查登入 token；未登入直接回 401，不檢查 OpenAI key，也不呼叫 OpenAI。
+* Vercel Function 會先初始化 / 讀取使用者 profile。
+* Vercel Function 會在呼叫 OpenAI 前確認點數至少 20。
+* 點數不足時直接回錯誤，不呼叫 OpenAI。
+* OpenAI 呼叫成功且行程資料解析成功後，才呼叫 `consume_points_for_analysis` 扣 20 點。
+* OpenAI 呼叫失敗、AI 回傳格式錯誤或解析失敗時，不會扣點。
+* 本機 Vite dev middleware 已傳遞 Authorization header 到 API handler。
+
+Phase 7D 後的必要設定：
+
+* 需在 Supabase SQL Editor 執行 `supabase/migrations/002_points_consumption.sql`。
+* 本機 `.env` / Vercel Environment Variables 需設定 server-side OpenAI key：
+
+```txt
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+* `VITE_OPENAI_BROWSER_CREDENTIAL` 不再使用。
+* Vercel 建議同時設定 server-side Supabase env：
+
+```txt
+SUPABASE_URL=...
+SUPABASE_ANON_KEY=...
+```
+
+  若未設定，Function 目前會 fallback 使用 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`，但正式部署建議使用不帶 `VITE_` 的 server-side 命名，避免混淆。
+
+尚未處理：
+
+* Google OAuth provider 設定與實際登入驗收。
+* `點數管理器` 小工具。
+* 管理者手動增減點數流程。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+* 未登入直接呼叫本機 `/api/generate-trip` 回應 HTTP 401。
+* 已搜尋確認 production `dist` 沒有出現 `VITE_OPENAI_BROWSER_CREDENTIAL`、舊前端 OpenAI service 名稱或 OpenAI key placeholder。
+* build 仍有 Vite chunk size warning，與 Supabase client bundle 變大有關，不影響本階段驗收。
+
+## 2026-04-17 Phase 7E 外部設定待使用者完成：Google OAuth 與 server-side env
+
+Phase 7D 程式已完成，但因 Google 登入尚未實際設定完成，使用者目前無法登入與送出 AI 分析。
+
+下一步需由使用者在外部服務完成設定：
+
+* 在 Supabase SQL Editor 執行 `supabase/migrations/002_points_consumption.sql`。
+* 在 Google Cloud Console 建立 OAuth consent screen 與 OAuth Client。
+* 在 Google OAuth Client 設定 Supabase callback URL：
+
+```txt
+https://<supabase-project-ref>.supabase.co/auth/v1/callback
+```
+
+* 在 Supabase Authentication → Providers → Google 啟用 Google provider，填入 Google Client ID 與 Client Secret。
+* 在 Supabase Authentication → URL Configuration 設定本機開發網址：
+
+```txt
+Site URL: http://localhost:5173
+Redirect URLs: http://localhost:5173/**
+```
+
+* 未來部署到 Vercel 後，需再加入正式網址：
+
+```txt
+https://<vercel-domain>/**
+```
+
+* 本機 `.env` 需保留 Supabase 前端公開設定：
+
+```txt
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
+```
+
+* 本機 `.env` 需新增 / 改用 server-side OpenAI 設定：
+
+```txt
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+* 建議本機 `.env` 也新增 server-side Supabase 命名，與 Vercel Functions 對齊：
+
+```txt
+SUPABASE_URL=...
+SUPABASE_ANON_KEY=...
+```
+
+完成後需重啟 `http://localhost:5173/` dev server，讓 `.env` 生效。
+
+驗收順序：
+
+* 開啟 `/login`，點 `使用 Google 登入`。
+* Google 登入完成後回到 `http://localhost:5173/`。
+* 右上角顯示 `登出`。
+* 進入 `/points`，應可看到帳號與初始 100 點。
+* 送出 AI 分析，成功後點數應從 100 變成 80。
+* 若 API key 故意移除造成分析失敗，需看到 `分析失敗不扣除點數`，點數不可被扣除。
+
+## 2026-04-17 Phase 7E 本機 env 與 dev server 檢查
+
+使用者表示 Google OAuth、Supabase 與 env 已設定完成，並要求若 5173 dev server 仍開著，先關閉。
+
+本次檢查與處理：
+
+* 偵測到 `http://localhost:5173/` 被 node process 佔用。
+* 已關閉舊的 5173 dev server，避免它繼續使用舊 `.env`。
+* `.env` 格式合法，空行不影響讀取。
+* `VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`、`SUPABASE_URL`、`SUPABASE_ANON_KEY` 都已設定。
+* Supabase Auth settings 測試回應 HTTP 200。
+* 原本 `.env` 尚未設定 `OPENAI_API_KEY` / `OPENAI_MODEL`。
+* 已將舊的 `VITE_OPENAI_BROWSER_CREDENTIAL` 值複製為新的 server-side `OPENAI_API_KEY`。
+* 已補上 `OPENAI_MODEL`。
+* 已用新的 `.env` 重啟本機 dev server。
+* `http://localhost:5173/login` 回應 HTTP 200。
+* 未登入直接呼叫 `/api/generate-trip` 回應 HTTP 401，符合未登入先擋下的規則。
+
+注意：
+
+* `VITE_OPENAI_BROWSER_CREDENTIAL` 目前仍留在 `.env`，但程式已不再讀取；確認新流程正常後可刪除以避免混淆。
+
+## 2026-04-17 Phase 7E 登入後資料隔離與本機 Supabase env 修正
+
+使用者完成 Google provider 啟用後，已可連接 Google 登入。
+
+本次使用者回報：
+
+* 登入後收藏 / 最近生成仍看到原本 localStorage 內的舊資料，擔心不同登入者會看到同一份資料。
+* AI 分析失敗訊息顯示：`尚未設定 Supabase server-side 環境變數。`
+
+確認結果：
+
+* 舊版收藏與最近生成使用未分帳號的 localStorage key：
+  * `tripneeder.favoritePlans`
+  * `tripneeder.recentPlans`
+* 因此在同一個瀏覽器環境內，換不同登入帳號時確實會看到同一份本機收藏 / 最近生成資料。
+* 這不代表所有使用者跨裝置或跨瀏覽器都會看到同一份資料，但同一台電腦同一個瀏覽器切換帳號會有資料隔離問題。
+* 本機 Vite middleware 先前只把 `OPENAI_API_KEY` / `OPENAI_MODEL` 從 `.env` 寫入 `process.env`，漏了 `SUPABASE_URL` / `SUPABASE_ANON_KEY`，導致本機 `/api/generate-trip` 登入後進入 Supabase client 初始化時讀不到 server-side Supabase env。
+
+本次修正：
+
+* 登入後收藏與最近生成改為依 Supabase user id 分隔 localStorage key。
+* 新 key 格式：
+  * `tripneeder.favoritePlans.<userId>`
+  * `tripneeder.recentPlans.<userId>`
+* 舊的未分帳號 localStorage 資料不再於登入帳號頁面顯示，避免同一瀏覽器切換帳號時互相看到。
+* AI 分析成功後儲存最近生成時，會使用目前 Supabase session 的 user id。
+* 收藏、移除收藏、判斷是否已收藏都改用目前登入 user id。
+* `vite.config.ts` 已補上本機 dev server 載入：
+  * `SUPABASE_URL`
+  * `SUPABASE_ANON_KEY`
+* 已重啟本機 dev server，讓新的 env 注入生效。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+* `http://localhost:5173/login` 回應 HTTP 200。
+* build 仍有 Vite chunk size warning，與 Supabase client bundle 變大有關，不影響本階段驗收。
+
+待使用者繼續驗收：
+
+* 使用已登入的 IAB 重新整理收藏與最近生成頁，確認舊的未分帳號 localStorage 資料不再顯示。
+* 重新送出 AI 分析，確認不再出現 `尚未設定 Supabase server-side 環境變數。`
+* 成功產生三方案後，點數應從 100 扣到 80，`/points` 應出現 `分析扣點` 紀錄。
+
+## 2026-04-17 Phase 7D 驗收通過與點數管理器開工確認
+
+使用者確認：
+
+* Google 登入已可使用。
+* 登入後收藏 / 最近生成資料隔離修正成功。
+* AI 分析已成功。
+* Phase 7D 端到端驗收通過，可以推進進度。
+
+本次也已先用 Supabase SQL Editor 對 `wr124666@gmail.com` 人工增加 10000 點，作為點數管理器完成前的臨時處理。
+
+點數管理器最新定位確認：
+
+* 工具名稱叫 `點數管理器`。
+* 工具應放在本專案資料夾內，從專案資料夾打開使用。
+* 因為專案資料夾只有使用者本人持有，所以管理權限不需要做在 Tripneeder 使用者端程式內。
+* 不需要在 App UI 內設定點數管理器入口或管理者權限控管。
+* 不需要做登入使用者端可見的管理頁。
+* 工具重點是完成本機管理用途：
+  * 可選資料庫中已登入過的帳號。
+  * 顯示目前點數。
+  * 可手動增加或減少點數。
+  * 減少點數最低只能減到 0。
+  * 需有防呆與清楚提示。
+  * 需留下 `admin_adjust` 交易紀錄。
+* 工具可使用 server-side Supabase key；不可只用前端 anon key 繞過 RLS。
+
+## 2026-04-17 Phase 7 後續：點數管理器完成待驗收
+
+點數管理器已完成第一版本機工具，等待使用者驗收。
+
+本次完成範圍：
+
+* 新增資料夾：`點數管理器`。
+* 新增本機管理工具：`點數管理器/server.mjs`。
+* 新增使用說明：`點數管理器/README.md`。
+* 新增 npm script：
+
+```txt
+npm run points:manager
+```
+
+工具行為：
+
+* 啟動後開啟 `http://localhost:4174/`。
+* 只綁定 `localhost`，不對外網路開放。
+* 讀取專案根目錄 `.env`。
+* 需要：
+  * `SUPABASE_URL`
+  * `SUPABASE_SERVICE_ROLE_KEY`
+* `SUPABASE_SERVICE_ROLE_KEY` 不可使用 `VITE_` 開頭，不可放入前端 bundle。
+* 可列出 `profiles` 中已登入並建立 profile 的帳號。
+* 可用 email 或 display name 搜尋。
+* 可選擇帳號並查看目前點數。
+* 可輸入正整數增加點數。
+* 可輸入正整數減少點數。
+* 減少點數時有防呆，最低只能減到 0。
+* 每次調整會更新 `profiles.points_balance`。
+* 每次調整會新增一筆 `point_transactions`：
+  * `type = admin_adjust`
+  * `amount = 實際增減值`
+  * `balance_after = 調整後餘額`
+  * `reason = 使用者輸入原因`
+
+本階段明確不做：
+
+* 不放進 Tripneeder 使用者端 UI。
+* 不做 App 內管理員入口。
+* 不做前端登入權限判斷。
+* 不讓一般使用者在網站上看到點數管理器。
+
+驗證結果：
+
+* `node --check 點數管理器/server.mjs` 通過。
+* `npm run lint` 通過。
+* `npm run build` 通過。
+* 未設定 `SUPABASE_SERVICE_ROLE_KEY` 時，`http://localhost:4174/api/status` 正確回應 `ready: false`、`hasSupabaseUrl: true`、`hasServiceRoleKey: false`。
+* `http://localhost:4174/` 回應 HTTP 200。
+
+待使用者驗收：
+
+* 到 Supabase Dashboard 複製 service role key。
+* 在本機 `.env` 加入：
+
+```txt
+SUPABASE_SERVICE_ROLE_KEY=...
+```
+
+* 執行 `npm run points:manager`。
+* 開啟 `http://localhost:4174/`。
+* 搜尋並選擇帳號。
+* 測試增加 / 減少點數與減到 0 防呆。
+* 到 `/points` 確認 `管理調整` 交易紀錄與餘額同步。
+
+## 2026-04-18 點數管理器驗收通過
+
+使用者確認點數管理器已成功可用，可以繼續推進進度。
+
+已完成並驗收：
+
+* Phase 7D 端到端驗收通過。
+* Google 登入可用。
+* AI 分析成功後扣點流程可用。
+* 分析失敗不扣點提示已存在。
+* 收藏 / 最近生成已依登入帳號隔離。
+* 點數頁可顯示交易紀錄與管理調整。
+* 本機 `點數管理器` 可從專案資料夾啟動並調整點數。
+
+下一步需先確認後續工作階段內容，不可未確認就直接開工。
+
+## 2026-04-18 Phase 7F 開工確認：部署前安全與組員試用準備
+
+使用者確認可以進入下一個工作階段，並希望在目前點數制階段做到發布給組員試用。
+
+Phase 7F 目標：
+
+* 整理 Phase 7 登入、點數、OpenAI proxy、點數管理器完成後的部署前狀態。
+* 確保 OpenAI key 不會進入前端 bundle。
+* 確保 Supabase service role key 只供本機點數管理器使用，不放入使用者端或 Vercel。
+* 建立組員試用發布檢查清單。
+* 為後續部署到 Vercel 做好 env 與 OAuth 設定待辦。
+
+本階段範圍：
+
+* 移除本機 `.env` 中已停用的舊前端 OpenAI 變數：
+  * `VITE_OPENAI_BROWSER_CREDENTIAL`
+  * `VITE_OPENAI_MODEL`
+* 更新 `.env.example`，改成目前正確 env 分類：
+  * 前端公開 Supabase env。
+  * server-side Supabase env。
+  * server-side OpenAI env。
+  * 本機點數管理器 service role env。
+* 新增 `DEPLOYMENT_CHECKLIST.md`，整理發布給組員試用前的檢查項目。
+* 搜尋 production build 與程式碼，確認敏感 key 不進 bundle。
+* 跑 `npm run lint` 與 `npm run build`。
+
+本階段暫不做：
+
+* 不直接部署到 Vercel，除非使用者後續明確要求。
+* 不建立正式 App 內管理後台。
+* 不把收藏 / 最近生成搬到 Supabase；這預計屬於 Phase 8。
+
+## 2026-04-18 Phase 7F 完成待驗收：部署前安全與組員試用準備
+
+Phase 7F 已完成，等待使用者驗收。
+
+本次完成範圍：
+
+* `.env` 已移除舊的前端 OpenAI 變數：
+  * `VITE_OPENAI_BROWSER_CREDENTIAL`
+  * `VITE_OPENAI_MODEL`
+* `.env` 目前保留現行需要的 key：
+  * `VITE_SUPABASE_URL`
+  * `VITE_SUPABASE_ANON_KEY`
+  * `SUPABASE_URL`
+  * `SUPABASE_ANON_KEY`
+  * `OPENAI_API_KEY`
+  * `OPENAI_MODEL`
+  * `SUPABASE_SERVICE_ROLE_KEY`
+* `.env.example` 已更新為目前正確格式，並加上註解：
+  * `VITE_` 變數會進入前端 bundle。
+  * OpenAI key 不可使用 `VITE_`。
+  * Supabase service role key 不可使用 `VITE_`，只供本機點數管理器使用。
+* 新增 `DEPLOYMENT_CHECKLIST.md`，整理發布給組員試用前的本機、Vercel env、Supabase、Google OAuth 與安全檢查清單。
+* 確認 `SUPABASE_SERVICE_ROLE_KEY` 只用於本機 `點數管理器`，不放進 Tripneeder 使用者端 UI。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+* production `dist` 搜尋敏感字串無命中：
+  * `VITE_OPENAI_BROWSER_CREDENTIAL`
+  * `VITE_OPENAI_MODEL`
+  * `VITE_GEMINI`
+  * `GEMINI`
+  * `SUPABASE_SERVICE_ROLE_KEY`
+  * `OPENAI_API_KEY`
+  * `sk-...`
+* `http://localhost:5173/login` 回應 HTTP 200。
+* 未登入呼叫 `http://localhost:5173/api/generate-trip` 回應 HTTP 401。
+* `http://localhost:4174/api/status` 回應：
+  * `ready: true`
+  * `hasSupabaseUrl: true`
+  * `hasServiceRoleKey: true`
+
+下一步建議：
+
+* 若 Phase 7F 驗收通過，可進入「發布給組員試用」實作步驟。
+* 發布前需在 Vercel 設定必要 env，且不要設定 `SUPABASE_SERVICE_ROLE_KEY`。
+* 取得 Vercel 正式網址後，需回到 Supabase URL Configuration 加入正式網址。
+* 組員試用發布完成後，再進入 Phase 8：收藏 / 最近生成同步到 Supabase。
+
+## 2026-04-18 Phase 7F 驗收通過與 Phase 7G 開工確認：發布給組員試用
+
+使用者確認 Phase 7F 可通過，並同意進入 Phase 7G。
+
+Phase 7G 目標：
+
+* 將目前點數制階段部署到 Vercel，發布給組員試用。
+* 部署時延續 Phase 7F 的安全要求：
+  * OpenAI key 只放 server-side env。
+  * `SUPABASE_SERVICE_ROLE_KEY` 不放入 Vercel。
+  * 點數管理器仍只作為本機工具。
+
+Phase 7G 預計流程：
+
+* 確認 Vercel CLI 是否可用與是否已登入。
+* 確認本機專案是否已 link 到正確 Vercel project。
+* 確認 Vercel env 是否包含必要值：
+  * `VITE_SUPABASE_URL`
+  * `VITE_SUPABASE_ANON_KEY`
+  * `SUPABASE_URL`
+  * `SUPABASE_ANON_KEY`
+  * `OPENAI_API_KEY`
+  * `OPENAI_MODEL`
+* 明確不要把 `SUPABASE_SERVICE_ROLE_KEY` 設到 Vercel。
+* 執行部署並取得 Vercel URL。
+* 使用正式 / preview URL 驗證：
+  * 首頁載入。
+  * Google 登入流程。
+  * `/points`。
+  * AI 分析成功扣 20 點。
+  * 未登入 API 阻擋。
+* 取得 Vercel URL 後，提醒使用者到 Supabase URL Configuration 加入該網址。
+
+## 2026-04-18 Phase 7G 部署前檢查進度
+
+目前檢查結果：
+
+* 本機未安裝全域 `vercel` CLI。
+* `npx vercel --version` 可用，版本為 `51.6.1`。
+* `npx vercel whoami` / `npx vercel project ls` 會等待互動登入，已逾時中止。
+* Vercel connector 已登入，team 為：
+  * `linweiren's projects`
+  * `team_ZB0Kz8SiE0xyWl3dMCiXUUTf`
+* Vercel connector 查詢該 team 目前沒有任何 project。
+* 本地專案目前沒有 `.vercel/project.json`，尚未 link 到 Vercel project。
+
+本次新增部署前必要設定：
+
+* 新增 `vercel.json`。
+* 用途：Vite / React Router SPA 深層路由 rewrite 到 `/index.html`。
+* 避免部署後直接開啟或重新整理 `/login`、`/points`、`/plans/:id` 時出現 404。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+目前部署卡點：
+
+* Vercel project 尚未建立 / link。
+* Vercel env 尚未設定。
+* connector 可部署，但目前沒有可設定 env 的工具；若直接部署，網站可能因缺少 Vercel env 而登入 / AI 功能不可用。
+
+下一步需要使用者擇一：
+
+* 由使用者在 Vercel Dashboard 建立 project 並設定 env 後，再回來讓 Codex 部署 / 驗證。
+* 或由使用者先完成 CLI 登入與 project link，再讓 Codex 用 `npx vercel env add` / deploy 流程處理。
 

@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom'
+import { useDialog } from '../contexts/dialog'
 import type { PlanType, TransportMode } from '../types/trip'
+import { getPlanActualDuration } from '../utils/tripTiming'
 import {
   savePlanForDetail,
   type StoredTripRecord,
@@ -33,6 +35,7 @@ export function TripRecordList({
   onRemove,
 }: TripRecordListProps) {
   const navigate = useNavigate()
+  const dialog = useDialog()
 
   function openRecord(record: StoredTripRecord) {
     savePlanForDetail(record.plan, record.input)
@@ -52,7 +55,7 @@ export function TripRecordList({
     <div className="stored-trip-list">
       {records.map((record) => (
         <article
-          className="stored-trip-card"
+          className={`stored-trip-card${onRemove ? ' stored-trip-card-removable' : ''}`}
           key={record.id}
           role="button"
           tabIndex={0}
@@ -71,9 +74,17 @@ export function TripRecordList({
               onClick={(event) => {
                 event.stopPropagation()
 
-                if (window.confirm('確定要永久移除這個收藏嗎？')) {
-                  onRemove(record.id)
-                }
+                void dialog
+                  .confirm({
+                    title: '移除收藏',
+                    message: '確定要永久移除這個收藏嗎？',
+                    confirmLabel: '移除收藏',
+                  })
+                  .then((confirmed) => {
+                    if (confirmed) {
+                      onRemove(record.id)
+                    }
+                  })
               }}
             >
               移除收藏
@@ -83,8 +94,6 @@ export function TripRecordList({
           <div className="stored-trip-main">
             <p className="plan-type">{planLabels[record.plan.type]}</p>
             <h2>{record.plan.title}</h2>
-            <p className="plan-subtitle">{record.plan.subtitle}</p>
-            <p>{record.plan.summary}</p>
           </div>
 
           <dl className="stored-trip-metrics">
@@ -94,7 +103,7 @@ export function TripRecordList({
             </div>
             <div>
               <dt>總時間</dt>
-              <dd>{formatMinutes(record.plan.totalTime)}</dd>
+              <dd>{formatMinutes(getPlanActualDuration(record.plan))}</dd>
             </div>
             <div>
               <dt>預算</dt>

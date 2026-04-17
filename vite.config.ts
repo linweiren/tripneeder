@@ -1,41 +1,90 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { defineConfig } from 'vite'
+import type { IncomingMessage } from 'node:http'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
-export default defineConfig(() => {
-  const env = readLocalEnv()
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+
+  if (env.OPENAI_API_KEY) {
+    process.env.OPENAI_API_KEY = env.OPENAI_API_KEY
+  }
+
+  if (env.OPENAI_MODEL) {
+    process.env.OPENAI_MODEL = env.OPENAI_MODEL
+  }
+
+  if (env.SUPABASE_URL) {
+    process.env.SUPABASE_URL = env.SUPABASE_URL
+  }
+
+  if (env.SUPABASE_ANON_KEY) {
+    process.env.SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY
+  }
 
   return {
-    plugins: [react()],
-    define: {
-      'import.meta.env.VITE_OPENAI_BROWSER_CREDENTIAL': JSON.stringify(
-        env.VITE_OPENAI_BROWSER_CREDENTIAL ?? env.VITE_OPENAI_API_KEY ?? '',
-      ),
-      'import.meta.env.VITE_OPENAI_MODEL': JSON.stringify(
-        env.VITE_OPENAI_MODEL ?? 'gpt-4.1-mini',
-      ),
-    },
+    plugins: [react(), localApiPlugin()],
   }
 })
 
-function readLocalEnv() {
-  try {
-    return Object.fromEntries(
-      readFileSync(resolve(process.cwd(), '.env'), 'utf8')
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith('#'))
-        .map((line) => {
-          const separatorIndex = line.indexOf('=')
-          const key = line.slice(0, separatorIndex).trim()
-          const value = line.slice(separatorIndex + 1).trim().replace(/^"|"$/g, '')
+function localApiPlugin(): Plugin {
+  return {
+    name: 'tripneeder-local-api',
+    configureServer(server) {
+      server.middlewares.use('/api/generate-trip', async (req, res) => {
+        const { default: handler } = await import('./api/generate-trip')
+        const body = await readRequestBody(req)
 
-          return [key, value]
-        }),
-    )
-  } catch {
-    return {}
+        await handler(
+          {
+            method: req.method,
+            body,
+            headers: {
+              authorization: req.headers.authorization,
+            },
+          },
+          {
+            status(code) {
+              res.statusCode = code
+              return this
+            },
+            json(payload) {
+              res.setHeader('Content-Type', 'application/json; charset=utf-8')
+              res.end(JSON.stringify(payload))
+            },
+            setHeader(name, value) {
+              res.setHeader(name, value)
+            },
+          },
+        )
+      })
+    },
   }
+}
+
+function readRequestBody(req: IncomingMessage) {
+  return new Promise<unknown>((resolve, reject) => {
+    const chunks: Buffer[] = []
+
+    req.on('data', (chunk: Buffer) => {
+      chunks.push(chunk)
+    })
+
+    req.on('error', reject)
+
+    req.on('end', () => {
+      const rawBody = Buffer.concat(chunks).toString('utf8')
+
+      if (!rawBody) {
+        resolve(null)
+        return
+      }
+
+      try {
+        resolve(JSON.parse(rawBody))
+      } catch {
+        resolve(null)
+      }
+    })
+  })
 }
