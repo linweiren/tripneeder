@@ -3610,6 +3610,42 @@ https://jaxlqqctnnbfritxkkpy.supabase.co/auth/v1/callback
 * 需在 Supabase SQL Editor 套用 `supabase/migrations/004_point_transactions_retention.sql`。
 * SQL 套用與本機確認後，再提交 / 推送並部署到 Vercel。
 
+## 2026-04-18 Phase 8A 正式站回歸修正（二）：收藏 / 最近生成讀取體驗與選單收合
+
+使用者回報：
+
+* 收藏與最近生成頁會先出現 `同步失敗` 訊息，接著才顯示資料。
+* 每次重新進收藏 / 最近生成頁都會重新讀取一次，體驗很差。
+* 左上角下拉選單開啟後，目前只能再次點擊三條線收回；應可點擊畫面中除了三條線與選單選項以外的地方收起。
+
+判斷原因：
+
+* 先前流程將 localStorage 遷移與 Supabase 讀取視為頁面載入前置條件。
+* Supabase 慢或背景遷移逾時時，會先丟同步失敗提示，再 fallback 到本機資料。
+* 收藏 / 最近生成頁元件卸載後本地 state 消失，下次進頁面會重新跑同一段流程。
+
+本機修正：
+
+* 新增 module-level trip records cache。
+* 新增 sessionStorage trip records cache。
+* 收藏 / 最近生成頁進入時：
+  * 先立即顯示記憶體快取、sessionStorage 快取或 localStorage 資料。
+  * 背景再同步 Supabase。
+  * 背景同步成功後更新畫面與快取。
+  * 背景同步失敗不再跳同步失敗 alert，不阻斷使用。
+* 記憶體快取可支援同一 SPA session 內頁面切換秒開。
+* sessionStorage 快取可支援同一分頁重新整理後先顯示上次讀到的結果。
+* localStorage 仍只作為舊資料遷移與 fallback，不作為最新遠端快取來源。
+* 儲存最近生成、收藏、移除收藏時同步更新快取。
+* 左上角選單新增外部點擊收合：
+  * 點三條線與選單內項目不會觸發外部收合邏輯。
+  * 點畫面其他區域會關閉選單。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
 仍待完成：
 
 * 需經使用者確認後，將登入修正提交並推送到 GitHub `main`，讓 Vercel 重新部署。

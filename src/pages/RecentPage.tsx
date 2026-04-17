@@ -4,11 +4,12 @@ import { TripRecordList } from '../components/TripRecordList'
 import { useAuth } from '../contexts/auth'
 import { useDialog } from '../contexts/dialog'
 import {
+  getCachedRecentRecords,
+  hasCachedTripRecords,
   loadRecentRecords,
   prepareTripRecordsForUser,
 } from '../services/tripRecords/tripRecordService'
 import {
-  loadRecentTripRecords,
   type StoredTripRecord,
 } from '../utils/tripPlanStorage'
 import {
@@ -26,10 +27,10 @@ export function RecentPage() {
     userId: string
     records: StoredTripRecord[]
   } | null>(null)
+  const [isRecordsLoading, setIsRecordsLoading] = useState(false)
   const hasPromptedLoginRef = useRef(false)
   const visibleRecords =
     user && recordSnapshot?.userId === user.id ? recordSnapshot.records : []
-  const isRecordsLoading = Boolean(user && recordSnapshot?.userId !== user.id)
 
   useEffect(() => {
     if (!user) {
@@ -40,6 +41,17 @@ export function RecentPage() {
     const userId = user.id
 
     async function loadRecords() {
+      const cachedRecords = getCachedRecentRecords(userId)
+      const hasLoadedRemoteCache = hasCachedTripRecords('recent', userId)
+
+      if (isMounted) {
+        setRecordSnapshot({
+          userId,
+          records: cachedRecords,
+        })
+        setIsRecordsLoading(!hasLoadedRemoteCache && cachedRecords.length === 0)
+      }
+
       try {
         await withTimeout(
           prepareTripRecordsForUser(userId),
@@ -55,19 +67,16 @@ export function RecentPage() {
             userId,
             records: nextRecords,
           })
+          setIsRecordsLoading(false)
         }
       } catch {
         if (isMounted) {
           setRecordSnapshot({
             userId,
-            records: loadRecentTripRecords(userId),
+            records: getCachedRecentRecords(userId),
           })
+          setIsRecordsLoading(false)
         }
-
-        void dialog.alert({
-          title: '同步失敗',
-          message: '最近生成同步失敗，請稍後再試。',
-        })
       }
     }
 
@@ -76,7 +85,7 @@ export function RecentPage() {
     return () => {
       isMounted = false
     }
-  }, [dialog, user])
+  }, [user])
 
   useEffect(() => {
     if (isAuthLoading || user || hasPromptedLoginRef.current) {

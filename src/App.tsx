@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   AnalysisSessionProvider,
@@ -29,6 +29,7 @@ function App() {
 
 function AppLayout() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const menuAreaRef = useRef<HTMLDivElement | null>(null)
   const { plannerPath } = useAnalysisSession()
   const { user, isAuthLoading, signOut } = useAuth()
   const navigate = useNavigate()
@@ -38,10 +39,33 @@ function AppLayout() {
     navigate('/')
   }
 
+  useEffect(() => {
+    if (!isMenuOpen) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        menuAreaRef.current?.contains(event.target)
+      ) {
+        return
+      }
+
+      setIsMenuOpen(false)
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+    }
+  }, [isMenuOpen])
+
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="menu-area">
+        <div className="menu-area" ref={menuAreaRef}>
           <button
             className="menu-button"
             type="button"

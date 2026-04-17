@@ -4,12 +4,13 @@ import { TripRecordList } from '../components/TripRecordList'
 import { useAuth } from '../contexts/auth'
 import { useDialog } from '../contexts/dialog'
 import {
+  getCachedFavoriteRecords,
+  hasCachedTripRecords,
   loadFavoriteRecords,
   prepareTripRecordsForUser,
   removeFavoriteRecord,
 } from '../services/tripRecords/tripRecordService'
 import {
-  loadFavoriteTripRecords,
   type StoredTripRecord,
 } from '../utils/tripPlanStorage'
 import {
@@ -27,11 +28,11 @@ export function FavoritesPage() {
     userId: string
     records: StoredTripRecord[]
   } | null>(null)
+  const [isRecordsLoading, setIsRecordsLoading] = useState(false)
   const [storageRevision, setStorageRevision] = useState(0)
   const hasPromptedLoginRef = useRef(false)
   const visibleRecords =
     user && recordSnapshot?.userId === user.id ? recordSnapshot.records : []
-  const isRecordsLoading = Boolean(user && recordSnapshot?.userId !== user.id)
 
   useEffect(() => {
     if (!user) {
@@ -42,6 +43,17 @@ export function FavoritesPage() {
     const userId = user.id
 
     async function loadRecords() {
+      const cachedRecords = getCachedFavoriteRecords(userId)
+      const hasLoadedRemoteCache = hasCachedTripRecords('favorite', userId)
+
+      if (isMounted) {
+        setRecordSnapshot({
+          userId,
+          records: cachedRecords,
+        })
+        setIsRecordsLoading(!hasLoadedRemoteCache && cachedRecords.length === 0)
+      }
+
       try {
         await withTimeout(
           prepareTripRecordsForUser(userId),
@@ -57,19 +69,16 @@ export function FavoritesPage() {
             userId,
             records: nextRecords,
           })
+          setIsRecordsLoading(false)
         }
       } catch {
         if (isMounted) {
           setRecordSnapshot({
             userId,
-            records: loadFavoriteTripRecords(userId),
+            records: getCachedFavoriteRecords(userId),
           })
+          setIsRecordsLoading(false)
         }
-
-        void dialog.alert({
-          title: '同步失敗',
-          message: '收藏同步失敗，請稍後再試。',
-        })
       }
     }
 
@@ -78,7 +87,7 @@ export function FavoritesPage() {
     return () => {
       isMounted = false
     }
-  }, [dialog, storageRevision, user])
+  }, [storageRevision, user])
 
   useEffect(() => {
     if (isAuthLoading || user || hasPromptedLoginRef.current) {

@@ -25,6 +25,8 @@ type TripRecordRow = {
 
 const MIGRATION_STORAGE_KEY = 'tripneeder.tripRecordsMigrated'
 const FAVORITES_CHANGED_EVENT = 'tripneeder:favoritesChanged'
+const RECORD_CACHE_STORAGE_KEY = 'tripneeder.tripRecordCache'
+const tripRecordCache = new Map<string, StoredTripRecord[]>()
 
 export async function prepareTripRecordsForUser(userId: string) {
   await ensureUserProfile()
@@ -36,7 +38,10 @@ export async function loadFavoriteRecords(userId: string) {
     return loadFavoriteTripRecords(userId)
   }
 
-  return loadRemoteTripRecords('favorite', userId)
+  const records = await loadRemoteTripRecords('favorite', userId)
+  setTripRecordCache('favorite', userId, records)
+
+  return records
 }
 
 export async function loadRecentRecords(userId: string) {
@@ -44,7 +49,22 @@ export async function loadRecentRecords(userId: string) {
     return loadRecentTripRecords(userId)
   }
 
-  return loadRemoteTripRecords('recent', userId)
+  const records = await loadRemoteTripRecords('recent', userId)
+  setTripRecordCache('recent', userId, records)
+
+  return records
+}
+
+export function getCachedFavoriteRecords(userId: string) {
+  return getTripRecordCache('favorite', userId) ?? loadFavoriteTripRecords(userId)
+}
+
+export function getCachedRecentRecords(userId: string) {
+  return getTripRecordCache('recent', userId) ?? loadRecentTripRecords(userId)
+}
+
+export function hasCachedTripRecords(kind: TripRecordKind, userId: string) {
+  return tripRecordCache.has(getTripRecordCacheKey(kind, userId))
 }
 
 export async function saveFavoriteRecord(
@@ -55,6 +75,7 @@ export async function saveFavoriteRecord(
   await prepareTripRecordsForUser(userId)
 
   const localRecord = saveFavoriteTrip(plan, input, userId)
+  setTripRecordCache('favorite', userId, loadFavoriteTripRecords(userId))
   notifyFavoritesChanged()
 
   if (!supabase) {
@@ -110,6 +131,7 @@ export async function removeFavoriteRecord(
   }
 
   removeLocalFavoriteRecord(recordId, userId, plan)
+  setTripRecordCache('favorite', userId, loadFavoriteTripRecords(userId))
   notifyFavoritesChanged()
 }
 
@@ -119,6 +141,7 @@ export async function saveRecentGeneratedRecords(
   userId: string,
 ) {
   saveGeneratedPlans(plans, input, userId)
+  setTripRecordCache('recent', userId, loadRecentTripRecords(userId))
 
   if (!supabase) {
     return
@@ -314,6 +337,64 @@ function mapTripRecordRow(row: TripRecordRow): StoredTripRecord {
     input: row.input,
     createdAt: row.created_at,
   }
+}
+
+function getTripRecordCache(kind: TripRecordKind, userId: string) {
+  const cacheKey = getTripRecordCacheKey(kind, userId)
+  const memoryCache = tripRecordCache.get(cacheKey)
+
+  if (memoryCache) {
+    return memoryCache
+  }
+
+  const sessionCache = loadSessionTripRecordCache(cacheKey)
+
+  if (sessionCache) {
+    tripRecordCache.set(cacheKey, sessionCache)
+  }
+
+  return sessionCache
+}
+
+function setTripRecordCache(
+  kind: TripRecordKind,
+  userId: string,
+  records: StoredTripRecord[],
+) {
+  const cacheKey = getTripRecordCacheKey(kind, userId)
+
+  tripRecordCache.set(cacheKey, records)
+  saveSessionTripRecordCache(cacheKey, records)
+}
+
+function getTripRecordCacheKey(kind: TripRecordKind, userId: string) {
+  return `${kind}:${userId}`
+}
+
+function loadSessionTripRecordCache(cacheKey: string) {
+  const rawCache = sessionStorage.getItem(`${RECORD_CACHE_STORAGE_KEY}.${cacheKey}`)
+
+  if (!rawCache) {
+    return null
+  }
+
+  try {
+    const records = JSON.parse(rawCache) as StoredTripRecord[]
+
+    return Array.isArray(records) ? records : null
+  } catch {
+    return null
+  }
+}
+
+function saveSessionTripRecordCache(
+  cacheKey: string,
+  records: StoredTripRecord[],
+) {
+  sessionStorage.setItem(
+    `${RECORD_CACHE_STORAGE_KEY}.${cacheKey}`,
+    JSON.stringify(records),
+  )
 }
 
 function hasMigrated(userId: string) {
