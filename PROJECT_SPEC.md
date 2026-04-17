@@ -4066,3 +4066,101 @@ Phase 8A 實作原則：
 * Phase 8A 仍未正式驗收通過。
 * 不可進入 Phase 8B，需等使用者完成本次收藏 / 最近生成一致性複驗與前一份正式站互動複驗。
 * 使用者已確認本機複驗可行，下一步可部署到正式站再測一次。
+
+## 2026-04-18 Phase 8A 正式站回報：舊資料 fingerprint 向後相容
+
+使用者回報：
+
+* 本機複驗可行，但部署到正式站後同樣問題仍存在。
+* 正式站從 `最近生成` 收藏後，進 `收藏` 仍看不到剛收藏的方案。
+* 回到 `最近生成` 再進同一方案，按鈕仍會變回 `收藏此方案`。
+* 另外，正式站唯一存在於 `收藏` 的項目，從收藏頁點進詳情後也顯示 `收藏此方案`，且按鈕可按。
+
+重新判斷：
+
+* 這不是單純本機快取流程問題，而是正式站已有舊資料。
+* 舊資料可能保留在 Supabase、localStorage 或 sessionStorage。
+* 原本 `createPlanFingerprint` 會把交通段 `label` 等顯示用文字納入 fingerprint。
+* 詳情頁會重新整理交通段資料，例如清掉交通 label 內的時間字樣，因此「同一行程」在列表與詳情頁可能被算成不同 fingerprint。
+* 本機測試常用新資料，正式站則有舊資料與舊 fingerprint，所以本機可行但正式站仍失準。
+
+本機修正：
+
+* `createPlanFingerprint` 改成穩定版：
+  * 停靠點只比對 id、名稱、類型、描述、地址、停留時間與 Google Maps URL。
+  * 交通段只比對起訖 stop id、交通方式、大眾運輸類型與時間。
+  * 不再把交通段 `label` 這類顯示文字納入 fingerprint。
+* `isFavoriteRecord` 若用目前 fingerprint 查不到 Supabase 既有收藏，會再讀取遠端收藏清單，改用新版穩定 fingerprint 比對每筆 `plan`。
+* `saveRemoteFavoriteRecord` 在新增前也會用新版穩定 fingerprint 掃遠端既有收藏，避免正式站舊資料因 DB 內舊 fingerprint 不同而被新增成假重複。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+待部署與正式站複驗：
+
+* 需提交並推送到 GitHub `main`，等待 Vercel production 更新。
+* 正式站更新後，請重測：
+  * 從 `收藏` 點進唯一既有收藏項目，詳情頁應顯示 `已收藏` 且按鈕不可按。
+  * 從 `最近生成` 點任一方案收藏，再進 `收藏` 應立即看到剛收藏的方案。
+  * 回 `最近生成` 再進同一方案，按鈕應維持 `已收藏`。
+
+狀態：
+
+* Phase 8A 仍未正式驗收通過。
+* 不可進入 Phase 8B。
+
+## 2026-04-18 Phase 8A 正式站回報（二）：舊版 localStorage 收藏未遷移
+
+使用者補充：
+
+* 正式站的收藏內容跟舊版收藏內容沒有對上。
+* 使用者確認明明是同一個帳號，因此不應該看到不同收藏集。
+
+資料檢查：
+
+* 用 service role 檢查目前 Supabase project：`https://jaxlqqctnnbfritxkkpy.supabase.co`。
+* 目前 auth users 只有 1 位。
+* `trip_records` 目前共有 15 筆：
+  * `favorite`：3 筆。
+  * `recent`：12 筆。
+* 因此不像是同 email 在不同 Supabase user id 底下，而比較像舊版 localStorage 沒被遷移。
+
+重新判斷：
+
+* Phase 7F-1 曾修正成登入後不再顯示舊版未分帳號 localStorage：
+  * `tripneeder.favoritePlans`
+  * `tripneeder.recentPlans`
+* 當時是為了避免同一瀏覽器多帳號互相看到收藏。
+* Phase 8A 的初版遷移主要遷移依 user id 分隔後的 key：
+  * `tripneeder.favoritePlans.<userId>`
+  * `tripneeder.recentPlans.<userId>`
+* 因此正式站如果仍保留最舊版未分帳號 localStorage，會出現「同一帳號但舊版收藏沒對上」的感覺。
+
+本機修正：
+
+* 新增一次性 legacy migration：
+  * storage key：`tripneeder.legacyTripRecordsMigrated.<userId>`。
+* 登入後準備 trip records 時，除了原本的 user-scoped localStorage 遷移，也會嘗試遷移舊版未分帳號 localStorage：
+  * `loadFavoriteTripRecords()`。
+  * `loadRecentTripRecords()`。
+* 舊版收藏會逐筆寫入目前登入者的 Supabase `favorite` records。
+* 舊版最近生成會寫入目前登入者的 Supabase `recent` records，並用穩定 fingerprint 避免和遠端既有 recent 重複。
+* 寫入 recent 後仍會維持最多 12 筆 recent records。
+* 舊版收藏寫入前也會先用穩定 fingerprint 掃遠端既有收藏，避免假重複。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+待部署與正式站複驗：
+
+* 部署後，正式站同一帳號重新進入收藏 / 最近生成時，應會把舊版未分帳號 localStorage 搬進 Supabase。
+* 若該瀏覽器曾經用不同人共用同一份未登入 localStorage，仍可能把那份舊資料歸入目前登入帳號；目前依使用者確認「同一帳號」採用此遷移策略。
+
+狀態：
+
+* Phase 8A 仍未正式驗收通過。
+* 不可進入 Phase 8B。

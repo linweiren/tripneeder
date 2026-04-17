@@ -25,6 +25,7 @@ type TripRecordRow = {
 }
 
 const MIGRATION_STORAGE_KEY = 'tripneeder.tripRecordsMigrated'
+const LEGACY_MIGRATION_STORAGE_KEY = 'tripneeder.legacyTripRecordsMigrated'
 const FAVORITES_CHANGED_EVENT = 'tripneeder:favoritesChanged'
 const RECORD_CACHE_STORAGE_KEY = 'tripneeder.tripRecordCache'
 const PENDING_FAVORITES_STORAGE_KEY = 'tripneeder.pendingFavoriteFingerprints'
@@ -41,6 +42,7 @@ export async function prepareTripRecordsForUser(userId: string) {
   const nextPreparation = (async () => {
     await ensureUserProfile()
     await migrateLocalTripRecords(userId)
+    await migrateLegacyTripRecords(userId)
   })()
 
   tripRecordPreparationPromises.set(userId, nextPreparation)
@@ -229,7 +231,13 @@ export async function isFavoriteRecord(plan: TripPlan, userId: string) {
       .maybeSingle()
 
     if (!error) {
-      return Boolean(data)
+      if (data) {
+        return true
+      }
+
+      return (await loadFavoriteRecords(userId)).some(
+        (record) => createPlanFingerprint(record.plan) === planFingerprint,
+      )
     }
   }
 
@@ -302,6 +310,66 @@ async function migrateLocalTripRecords(userId: string) {
   localStorage.setItem(getMigrationStorageKey(userId), 'true')
 }
 
+async function migrateLegacyTripRecords(userId: string) {
+  if (!supabase || hasMigratedLegacyRecords(userId)) {
+    return
+  }
+
+  const legacyFavoriteRecords = loadFavoriteTripRecords()
+  const legacyRecentRecords = loadRecentTripRecords()
+
+  for (const record of legacyFavoriteRecords) {
+    await saveRemoteFavoriteRecord({
+      plan: record.plan,
+      input: record.input,
+      userId,
+      planFingerprint: createPlanFingerprint(record.plan),
+      createdAt: record.createdAt,
+    })
+  }
+
+  await saveLegacyRecentRecords(userId, legacyRecentRecords)
+  localStorage.setItem(getLegacyMigrationStorageKey(userId), 'true')
+}
+
+async function saveLegacyRecentRecords(
+  userId: string,
+  legacyRecentRecords: StoredTripRecord[],
+) {
+  if (legacyRecentRecords.length === 0) {
+    return
+  }
+
+  const remoteRecentRecords = await loadRemoteTripRecords('recent', userId)
+  const remoteFingerprints = new Set(
+    remoteRecentRecords.map((record) => createPlanFingerprint(record.plan)),
+  )
+  const recordsToInsert = legacyRecentRecords.filter(
+    (record) => !remoteFingerprints.has(createPlanFingerprint(record.plan)),
+  )
+
+  if (recordsToInsert.length === 0) {
+    return
+  }
+
+  const { error } = await supabase!.from('trip_records').insert(
+    recordsToInsert.map((record) => ({
+      user_id: userId,
+      kind: 'recent',
+      plan: record.plan,
+      input: record.input,
+      plan_fingerprint: createPlanFingerprint(record.plan),
+      created_at: record.createdAt,
+    })),
+  )
+
+  if (error) {
+    throw new Error('同步失敗，請稍後再試。')
+  }
+
+  await trimRecentRecords(userId)
+}
+
 async function saveRemoteFavoriteRecord({
   plan,
   input,
@@ -335,6 +403,15 @@ async function saveRemoteFavoriteRecord({
     return mapTripRecordRow(existing)
   }
 
+  const canonicalExisting = await loadRemoteFavoriteRecordByCanonicalFingerprint(
+    userId,
+    planFingerprint,
+  )
+
+  if (canonicalExisting) {
+    return canonicalExisting
+  }
+
   const { data, error } = await supabase
     .from('trip_records')
     .insert({
@@ -357,6 +434,19 @@ async function saveRemoteFavoriteRecord({
   }
 
   return mapTripRecordRow(data)
+}
+
+async function loadRemoteFavoriteRecordByCanonicalFingerprint(
+  userId: string,
+  planFingerprint: string,
+) {
+  const records = await loadRemoteTripRecords('favorite', userId)
+
+  return (
+    records.find(
+      (record) => createPlanFingerprint(record.plan) === planFingerprint,
+    ) ?? null
+  )
 }
 
 async function loadExistingRemoteFavoriteRecord(
@@ -583,6 +673,14 @@ function hasMigrated(userId: string) {
 
 function getMigrationStorageKey(userId: string) {
   return `${MIGRATION_STORAGE_KEY}.${userId}`
+}
+
+function hasMigratedLegacyRecords(userId: string) {
+  return localStorage.getItem(getLegacyMigrationStorageKey(userId)) === 'true'
+}
+
+function getLegacyMigrationStorageKey(userId: string) {
+  return `${LEGACY_MIGRATION_STORAGE_KEY}.${userId}`
 }
 
 function removeLocalFavoriteRecord(

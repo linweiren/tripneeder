@@ -1,4 +1,4 @@
-import type { TripInput, TripPlan } from '../types/trip'
+import type { Stop, TransportSegment, TripInput, TripPlan } from '../types/trip'
 
 const TRIP_PLANS_STORAGE_KEY = 'tripneeder.generatedPlans'
 const TRIP_INPUT_STORAGE_KEY = 'tripneeder.lastInput'
@@ -172,11 +172,35 @@ export function createPlanFingerprint(plan: TripPlan) {
     summary: plan.summary,
     budget: plan.budget,
     transportMode: plan.transportMode,
-    stops: plan.stops,
-    transportSegments: plan.transportSegments,
-    rainBackup: plan.rainBackup,
-    rainTransportSegments: plan.rainTransportSegments,
+    stops: plan.stops.map(normalizeStopForFingerprint),
+    transportSegments: plan.transportSegments.map(normalizeSegmentForFingerprint),
+    rainBackup: plan.rainBackup.map(normalizeStopForFingerprint),
+    rainTransportSegments: plan.rainTransportSegments.map(
+      normalizeSegmentForFingerprint,
+    ),
   })
+}
+
+function normalizeStopForFingerprint(stop: Stop) {
+  return {
+    id: stop.id,
+    name: stop.name,
+    type: stop.type,
+    description: stop.description,
+    address: stop.address,
+    duration: stop.duration,
+    googleMapsUrl: stop.googleMapsUrl,
+  }
+}
+
+function normalizeSegmentForFingerprint(segment: TransportSegment) {
+  return {
+    fromStopId: segment.fromStopId,
+    toStopId: segment.toStopId,
+    mode: segment.mode,
+    publicTransitType: segment.publicTransitType,
+    duration: segment.duration,
+  }
 }
 
 function saveRecentGeneratedPlans(
