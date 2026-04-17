@@ -17,6 +17,8 @@ import {
   loginPromptTitle,
 } from '../utils/loginPrompt'
 
+const RECORD_SYNC_TIMEOUT_MS = 8000
+
 export function FavoritesPage() {
   const navigate = useNavigate()
   const dialog = useDialog()
@@ -41,8 +43,14 @@ export function FavoritesPage() {
 
     async function loadRecords() {
       try {
-        await prepareTripRecordsForUser(userId)
-        const nextRecords = await loadFavoriteRecords(userId)
+        await withTimeout(
+          prepareTripRecordsForUser(userId),
+          RECORD_SYNC_TIMEOUT_MS,
+        )
+        const nextRecords = await withTimeout(
+          loadFavoriteRecords(userId),
+          RECORD_SYNC_TIMEOUT_MS,
+        )
 
         if (isMounted) {
           setRecordSnapshot({
@@ -132,4 +140,15 @@ export function FavoritesPage() {
       ) : null}
     </section>
   )
+}
+
+function withTimeout<Value>(promise: Promise<Value>, timeoutMs: number) {
+  return Promise.race([
+    promise,
+    new Promise<Value>((_, reject) => {
+      window.setTimeout(() => {
+        reject(new Error('同步逾時，請稍後再試。'))
+      }, timeoutMs)
+    }),
+  ])
 }

@@ -31,6 +31,8 @@ export type PointsSnapshot = {
   transactions: PointTransaction[]
 }
 
+const MAX_POINT_TRANSACTIONS = 30
+
 export async function initializeUserProfile(): Promise<UserProfile> {
   if (!supabase) {
     throw new Error('尚未設定 Supabase，無法讀取點數資料。')
@@ -54,6 +56,7 @@ export async function loadPointsSnapshot(): Promise<PointsSnapshot> {
   }
 
   const profile = await initializeUserProfile()
+  await trimMyPointTransactions()
 
   const { data: transactions, error: transactionsError } = await supabase
     .from('point_transactions')
@@ -62,7 +65,7 @@ export async function loadPointsSnapshot(): Promise<PointsSnapshot> {
     )
     .eq('user_id', profile.id)
     .order('created_at', { ascending: false })
-    .limit(20)
+    .limit(MAX_POINT_TRANSACTIONS)
     .returns<PointTransaction[]>()
 
   if (transactionsError) {
@@ -73,6 +76,14 @@ export async function loadPointsSnapshot(): Promise<PointsSnapshot> {
     profile,
     transactions: transactions ?? [],
   }
+}
+
+async function trimMyPointTransactions() {
+  if (!supabase) {
+    return
+  }
+
+  await supabase.rpc('trim_my_point_transactions')
 }
 
 export async function getMyPointsBalance(): Promise<number> {

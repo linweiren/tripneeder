@@ -3568,6 +3568,48 @@ https://jaxlqqctnnbfritxkkpy.supabase.co/auth/v1/callback
 * 使用正式站快速複驗登入、最近生成、收藏、移除收藏、三方案保留與扣點提示。
 * 正式站複驗通過後，可將新版網址給組員試用。
 
+## 2026-04-18 Phase 8A 正式站回歸修正：列表讀取逾時、取消分析、點數紀錄保留
+
+使用者回報與更正：
+
+* 正式站再次進入後，直接點收藏 / 最近生成會一直停在讀取階段。
+* 使用者更正 AI 分析生成本身正常，卡住的是收藏 / 最近生成讀取。
+* AI 分析中原本應有 `取消分析` 按鈕，目前消失。
+* `取消分析` 需先跳確認視窗：
+  * 文字：`確定取消嗎？點數已確定扣除。`
+  * 按確認才取消生成並回到偏好頁面。
+  * 按取消則維持分析中。
+* 點數管理的點數紀錄最多保留 30 筆，超過 30 筆需刪除最舊紀錄直到 <= 30。
+
+本機修正：
+
+* 收藏頁與最近生成頁讀取 Supabase / 遷移 localStorage 時新增 8 秒 timeout。
+  * 超過 8 秒會退回 localStorage fallback。
+  * 頁面會停止顯示無限讀取。
+  * 仍會顯示 `同步失敗` 提示。
+* AI 分析中的 loading 畫面恢復 `取消分析` 按鈕。
+* 點擊 `取消分析` 會先開 App confirm：
+  * title：`取消分析`
+  * message：`確定取消嗎？點數已確定扣除。`
+  * confirmLabel：`確認取消`
+* 確認取消後呼叫 `cancelAnalysis()`，清除當前分析 session 並回到偏好頁面。
+* 新增 Supabase migration：`supabase/migrations/004_point_transactions_retention.sql`
+  * 新增 `trim_point_transactions_for_user()` trigger function。
+  * 新增 `point_transactions_trim_after_insert` trigger。
+  * 每次新增點數交易後，自動保留該使用者最新 30 筆交易，刪除更舊交易。
+  * 新增 `trim_my_point_transactions()` 供點數頁讀取時清理既有舊資料。
+* 點數頁交易紀錄讀取上限改為 30 筆。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+仍待完成：
+
+* 需在 Supabase SQL Editor 套用 `supabase/migrations/004_point_transactions_retention.sql`。
+* SQL 套用與本機確認後，再提交 / 推送並部署到 Vercel。
+
 仍待完成：
 
 * 需經使用者確認後，將登入修正提交並推送到 GitHub `main`，讓 Vercel 重新部署。

@@ -78,6 +78,7 @@ export function HomePage() {
     startAnalysis: startSessionAnalysis,
     retryAnalysis,
     resetAnalysisFlow,
+    cancelAnalysis,
   } = useAnalysisSession()
   const { user } = useAuth()
   const dialog = useDialog()
@@ -190,6 +191,18 @@ export function HomePage() {
     void startAnalysis()
   }
 
+  async function handleCancelAnalysis() {
+    const confirmed = await dialog.confirm({
+      title: '取消分析',
+      message: '確定取消嗎？點數已確定扣除。',
+      confirmLabel: '確認取消',
+    })
+
+    if (confirmed) {
+      cancelAnalysis()
+    }
+  }
+
   if (session?.status === 'success') {
     return <Navigate to={session.lastRoute} replace />
   }
@@ -223,6 +236,17 @@ export function HomePage() {
                 <li key={step}>{step}</li>
               ))}
             </ul>
+          ) : null}
+          {!analysisError ? (
+            <div className="loading-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => void handleCancelAnalysis()}
+              >
+                取消分析
+              </button>
+            </div>
           ) : null}
           {analysisError ? (
             <div className="loading-actions">
