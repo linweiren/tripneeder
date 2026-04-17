@@ -367,7 +367,7 @@ export function DetailPage() {
       await saveFavoriteRecord(snapshotPlan, lastInput, user.id)
       setFavoriteRevision((current) => current + 1)
     } catch (error) {
-      setHasSavedFavorite(false)
+      setHasSavedFavorite(await isFavoriteRecord(snapshotPlan, user.id))
       setFavoriteRevision((current) => current + 1)
       void dialog.alert({
         title: '收藏同步失敗',

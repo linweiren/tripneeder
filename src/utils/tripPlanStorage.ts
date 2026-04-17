@@ -116,6 +116,16 @@ export function loadFavoriteTripRecords(ownerId?: string) {
   )
 }
 
+export function saveFavoriteTripRecords(
+  records: StoredTripRecord[],
+  ownerId?: string,
+) {
+  localStorage.setItem(
+    getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId),
+    JSON.stringify(records),
+  )
+}
+
 export function saveFavoriteTrip(
   plan: TripPlan,
   input: TripInput | null,
@@ -124,13 +134,12 @@ export function saveFavoriteTrip(
   const storageKey = getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId)
   const records = loadFavoriteTripRecords(ownerId)
   const planFingerprint = createPlanFingerprint(plan)
+  const existingRecord = records.find(
+    (record) => createPlanFingerprint(record.plan) === planFingerprint,
+  )
 
-  if (
-    records.some((record) => createPlanFingerprint(record.plan) === planFingerprint)
-  ) {
-    return records.find(
-      (record) => createPlanFingerprint(record.plan) === planFingerprint,
-    )
+  if (existingRecord) {
+    return existingRecord
   }
 
   const nextRecord = createStoredTripRecord(plan, input)
@@ -149,12 +158,11 @@ export function isFavoriteTripPlan(plan: TripPlan, ownerId?: string) {
 }
 
 export function removeFavoriteTrip(recordId: string, ownerId?: string) {
-  const storageKey = getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId)
   const records = loadFavoriteTripRecords(ownerId).filter(
     (record) => record.id !== recordId,
   )
 
-  localStorage.setItem(storageKey, JSON.stringify(records))
+  saveFavoriteTripRecords(records, ownerId)
 }
 
 export function createPlanFingerprint(plan: TripPlan) {

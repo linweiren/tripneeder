@@ -3469,6 +3469,97 @@ https://jaxlqqctnnbfritxkkpy.supabase.co/auth/v1/callback
 * `npm run lint` 通過。
 * `npm run build` 通過。
 
+## 2026-04-18 任務暫停與新聊天框交接：Phase 8A 正式站快取體驗修正後
+
+使用者準備切換到新聊天框，任務暫停。
+
+目前最新狀態：
+
+* Phase 1 到 Phase 7G 已驗收通過。
+* Phase 8 已開始。
+* Phase 8A：收藏 / 最近生成同步到 Supabase 已完成主要實作，並經過多輪本機與正式站修正。
+* Supabase SQL 已套用：
+  * `supabase/migrations/003_trip_records.sql`
+  * `supabase/migrations/004_point_transactions_retention.sql`
+* 最新部署已推送到 GitHub `main`：
+  * `66f0213`：`Sync trip records with Supabase`
+  * `15a9e31`：`Fix record loading timeout and analysis cancel`
+  * `f010fd8`：`Improve trip record loading cache`
+* 正式站已切到最新部署資產：
+  * `index-CvjdYgkM.js`
+* `git status --short` 在新增本交接紀錄前為乾淨。
+
+最新已完成修正：
+
+* 收藏 / 最近生成頁不再以遠端同步作為顯示前置條件。
+* 收藏 / 最近生成頁進入時會先顯示：
+  * module-level memory cache。
+  * 同一分頁重新整理後可用的 `sessionStorage` cache。
+  * 舊 localStorage fallback。
+* 背景再同步 Supabase，成功後更新畫面與快取。
+* 背景同步失敗不再跳 `同步失敗` alert 干擾使用者。
+* 收藏 / 最近生成資料讀過一次後，同一 SPA session 內再次進入應可直接顯示。
+* 同一分頁重新整理後，再進收藏 / 最近生成應可先顯示 sessionStorage 快取，再背景更新。
+* 左上角選單開啟後，點擊三條線與選單選項以外的畫面區域會收起選單。
+* AI 分析中已恢復 `取消分析` 按鈕。
+* 點擊 `取消分析` 會先跳確認：
+  * title：`取消分析`
+  * message：`確定取消嗎？點數已確定扣除。`
+  * confirmLabel：`確認取消`
+* 首頁送出按鈕文案已改為 `出發！GO！（扣除20點數）`。
+* 點數紀錄 retention：
+  * 每位使用者最多保留最新 30 筆 `point_transactions`。
+  * 新交易 insert 後由 Supabase trigger 自動刪除超過 30 筆的舊紀錄。
+  * 點數頁讀取上限改為 30 筆。
+
+最新本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+正式站已完成的基本檢查：
+
+* `https://tripneeder.vercel.app/favorites` 回 HTTP 200。
+* `https://tripneeder.vercel.app/recent` 回 HTTP 200。
+* 正式 bundle 內確認包含 trip record cache 相關程式。
+
+仍待使用者在正式站互動複驗：
+
+* 進 `收藏`，等它成功顯示一次。
+* 切到首頁或其他頁，再回 `收藏`，應直接顯示剛剛讀到的結果，不再重新卡讀取。
+* `最近生成` 同樣測一次。
+* 同一分頁重新整理後再進收藏 / 最近生成，應先顯示 sessionStorage 快取，再背景更新。
+* 左上角選單打開後，點畫面其他地方應收起。
+* AI 分析中應顯示 `取消分析`，點擊後需先跳確認。
+* 點數紀錄最多保留 / 顯示 30 筆。
+
+下一階段規劃建議：
+
+* 若上述正式站互動複驗通過，Phase 8A 可判定正式站驗收通過。
+* Phase 8A 正式站驗收通過後，可進入 Phase 8B。
+* Phase 8B 建議名稱：`正式試用前資料與營運收尾`。
+* Phase 8B 建議範圍：
+  * 組員試用說明：登入、點數、扣點、收藏 / 最近生成、問題回報方式。
+  * 點數管理器使用 SOP：補點、扣點、防呆、service role key 不外流。
+  * Supabase 資料檢查 SOP：`profiles`、`point_transactions`、`trip_records`。
+  * Vercel domain / Supabase redirect 設定變更注意事項。
+  * 試用回饋清單模板：登入問題、AI 結果品質、扣點問題、收藏同步問題。
+* 不可直接跳過 Phase 8A 正式站互動複驗進入 Phase 8B。
+
+新聊天框接手提醒：
+
+* 必須先用 UTF-8 讀取 `PROJECT_SPEC.md`，避免繁體中文企畫書與交接紀錄亂碼。
+* 必須以 `PROJECT_SPEC.md` 最末端最新交接紀錄為準。
+* 若前文與最新交接紀錄衝突，以最新交接紀錄為準。
+* 全程使用繁體中文回覆。
+* 每個 phase / 子階段完成後必須先讓使用者驗收，驗收通過後才可以進下一階段。
+* 任何新增或修改後確認下來的規格，都要同步寫進 `PROJECT_SPEC.md`。
+* 不要擅自跳 phase。
+* UI 細節不清楚時要先問使用者，尤其是資訊顯示位置、卡片內容、詳情頁內容、按鈕文案等。
+* Figma MCP 先不介入早期功能開發，除非使用者後續明確確認要用。
+* 本機驗收網址優先使用 `http://localhost:5173/`，不要優先給 `127.0.0.1`。
+* 避免用 `cmd /c start` 啟動 dev server；若需要啟動 dev server，使用 PowerShell / Start-Process 或一般 `npm run dev`，並確認 `localhost:5173` 回應。
+
 ## 2026-04-18 Phase 8A 驗收中修正（四）：移除收藏後詳情頁按鈕同步
 
 使用者回報：
@@ -3842,3 +3933,136 @@ Phase 8A 實作原則：
 * `npm run lint` 通過。
 * `npm run build` 通過。
 
+## 2026-04-18 最終交接：Phase 8A 正式站快取體驗修正後暫停
+
+使用者準備切換到新聊天框，任務暫停。此段為目前 `PROJECT_SPEC.md` 最末端交接紀錄，新聊天框請以此段為準。
+
+目前最新狀態：
+
+* Phase 1 到 Phase 7G 已驗收通過。
+* Phase 8 已開始。
+* Phase 8A：收藏 / 最近生成同步到 Supabase 已完成主要實作，並經過多輪本機與正式站修正。
+* Supabase SQL 已套用：
+  * `supabase/migrations/003_trip_records.sql`
+  * `supabase/migrations/004_point_transactions_retention.sql`
+* 最新已推送到 GitHub `main`：
+  * `66f0213`：`Sync trip records with Supabase`
+  * `15a9e31`：`Fix record loading timeout and analysis cancel`
+  * `f010fd8`：`Improve trip record loading cache`
+* 正式站已切到最新部署資產：`index-CvjdYgkM.js`。
+* `git status --short` 在新增本交接紀錄前只有 `PROJECT_SPEC.md` 被修改，其他工作區乾淨。
+
+最新已完成修正：
+
+* 收藏 / 最近生成頁不再以遠端同步作為顯示前置條件。
+* 收藏 / 最近生成頁進入時會先顯示：
+  * module-level memory cache。
+  * 同一分頁重新整理後可用的 `sessionStorage` cache。
+  * 舊 localStorage fallback。
+* 背景再同步 Supabase，成功後更新畫面與快取。
+* 背景同步失敗不再跳 `同步失敗` alert 干擾使用者。
+* 收藏 / 最近生成資料讀過一次後，同一 SPA session 內再次進入應可直接顯示。
+* 同一分頁重新整理後，再進收藏 / 最近生成應可先顯示 sessionStorage 快取，再背景更新。
+* 左上角選單開啟後，點擊三條線與選單選項以外的畫面區域會收起選單。
+* AI 分析中已恢復 `取消分析` 按鈕。
+* 點擊 `取消分析` 會先跳確認：
+  * title：`取消分析`
+  * message：`確定取消嗎？點數已確定扣除。`
+  * confirmLabel：`確認取消`
+* 首頁送出按鈕文案已改為 `出發！GO！（扣除20點數）`。
+* 點數紀錄 retention：
+  * 每位使用者最多保留最新 30 筆 `point_transactions`。
+  * 新交易 insert 後由 Supabase trigger 自動刪除超過 30 筆的舊紀錄。
+  * 點數頁讀取上限改為 30 筆。
+
+正式站仍待使用者互動複驗：
+
+* 進 `收藏`，等它成功顯示一次。
+* 切到首頁或其他頁，再回 `收藏`，應直接顯示剛剛讀到的結果，不再重新卡讀取。
+* `最近生成` 同樣測一次。
+* 同一分頁重新整理後再進收藏 / 最近生成，應先顯示 sessionStorage 快取，再背景更新。
+* 左上角選單打開後，點畫面其他地方應收起。
+* AI 分析中應顯示 `取消分析`，點擊後需先跳確認。
+* 點數紀錄最多保留 / 顯示 30 筆。
+
+下一階段規劃建議：
+
+* 若上述正式站互動複驗通過，Phase 8A 可判定正式站驗收通過。
+* Phase 8A 正式站驗收通過後，可進入 Phase 8B。
+* Phase 8B 建議名稱：`正式試用前資料與營運收尾`。
+* Phase 8B 建議範圍：
+  * 組員試用說明：登入、點數、扣點、收藏 / 最近生成、問題回報方式。
+  * 點數管理器使用 SOP：補點、扣點、防呆、service role key 不外流。
+  * Supabase 資料檢查 SOP：`profiles`、`point_transactions`、`trip_records`。
+  * Vercel domain / Supabase redirect 設定變更注意事項。
+  * 試用回饋清單模板：登入問題、AI 結果品質、扣點問題、收藏同步問題。
+* 不可直接跳過 Phase 8A 正式站互動複驗進入 Phase 8B。
+
+新聊天框接手提醒：
+
+* 必須先用 UTF-8 讀取 `PROJECT_SPEC.md`，避免繁體中文企畫書與交接紀錄亂碼。
+* 必須以 `PROJECT_SPEC.md` 最末端最新交接紀錄為準。
+* 若前文與最新交接紀錄衝突，以最新交接紀錄為準。
+* 全程使用繁體中文回覆。
+* 每個 phase / 子階段完成後必須先讓使用者驗收，驗收通過後才可以進下一階段。
+* 任何新增或修改後確認下來的規格，都要同步寫進 `PROJECT_SPEC.md`。
+* 不要擅自跳 phase。
+* UI 細節不清楚時要先問使用者，尤其是資訊顯示位置、卡片內容、詳情頁內容、按鈕文案等。
+* Figma MCP 先不介入早期功能開發，除非使用者後續明確確認要用。
+* 本機驗收網址優先使用 `http://localhost:5173/`，不要優先給 `127.0.0.1`。
+* 避免用 `cmd /c start` 啟動 dev server；若需要啟動 dev server，使用 PowerShell / Start-Process 或一般 `npm run dev`，並確認 `localhost:5173` 回應。
+
+## 2026-04-18 Phase 8A 驗收中修正（四）：收藏與最近生成快取一致性
+
+使用者回報：
+
+* 一進網站先到 `最近生成`，隨便進一個方案並收藏。
+* 再進 `收藏` 時，只顯示既有 local 資料，沒有剛剛收藏的方案。
+* 回到 `最近生成` 再進同一方案時，按鈕又從 `已收藏` 變回 `收藏此方案`。
+* 再次回 `收藏` 仍沒有變化，剛剛收藏的動作看起來消失。
+
+判斷原因：
+
+* 收藏成功後，本機 localStorage、module-level cache、sessionStorage cache、Supabase 遠端讀取結果沒有被視為同一個一致性來源。
+* 遠端讀取若比收藏寫入狀態慢、失敗或回傳舊資料，可能覆蓋剛剛的本機收藏快取。
+* 詳情頁收藏按鈕狀態查詢主要依賴遠端 / 舊快取，沒有先認得同一 session 內剛建立的待同步收藏。
+
+本機修正：
+
+* `prepareTripRecordsForUser(userId)` 加入同一使用者的 in-flight promise 去重，避免最近生成頁與詳情頁同時觸發舊資料遷移時互相競速。
+* 收藏時先寫入 local fallback，並將該方案 fingerprint 標記為同一分頁 session 內的待同步收藏。
+* 收藏後立即更新：
+  * localStorage favorite records。
+  * module-level memory cache。
+  * sessionStorage trip record cache。
+  * `tripneeder:favoritesChanged` 事件。
+* Supabase 收藏寫入成功後：
+  * 清除待同步 fingerprint。
+  * 用資料庫回傳的 remote record 取代同 fingerprint 的本機暫存 record。
+  * 再次更新 memory / sessionStorage / localStorage 快取。
+* 收藏頁讀取遠端收藏時，會把 remote records 與同一 session 內仍待同步的本機收藏合併，避免剛收藏的資料被一次遠端讀取覆蓋掉。
+* `isFavoriteRecord` 會先檢查待同步 fingerprint 與目前 cache，再查 Supabase，避免回到最近生成詳情時按鈕又變回 `收藏此方案`。
+* 詳情頁收藏若發生遠端同步錯誤，但本機待同步收藏已存在，按鈕狀態會維持 `已收藏`，不再回開。
+* Supabase favorite insert 若遇到唯一鍵競速衝突，會重新讀取既有 remote record，不直接當作收藏失敗。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+* `http://localhost:5173/` 目前有既有 dev server 回應。
+* 本次曾用 PowerShell / `Start-Process` 嘗試另起 dev server；因 `5173` 已被既有 Vite server 占用，新啟動的 server 暫時落在 `5174`，確認後已關閉 `5174`，保留既有 `5173`。
+
+待使用者複驗：
+
+* 在本機或正式站套用本次修正後，重新測：
+  * 先進 `最近生成`。
+  * 進任一方案詳情並按 `收藏此方案`。
+  * 進 `收藏`，應立即看到剛收藏的方案。
+  * 回 `最近生成` 再進同一方案，按鈕應維持 `已收藏` 並不可再點。
+  * 重新整理同一分頁後，再進收藏 / 最近生成，仍應先顯示 sessionStorage 快取，再背景同步。
+
+狀態：
+
+* Phase 8A 仍未正式驗收通過。
+* 不可進入 Phase 8B，需等使用者完成本次收藏 / 最近生成一致性複驗與前一份正式站互動複驗。
+* 使用者已確認本機複驗可行，下一步可部署到正式站再測一次。
