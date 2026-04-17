@@ -3336,6 +3336,7 @@ Phase 7G 預計流程：
 本次修正：
 
 * `api/generate-trip.ts` 的相對 imports 改為 `.js` 副檔名。
+* `api/generate-trip.ts` 補上 Node type reference，避免 Vercel Function 獨立 TypeScript 檢查時將 `process` 標成錯誤。
 * `src/services/ai/tripPlanPrompt.ts` 的 type-only 相對 imports 改為 `.js` 副檔名。
 * `tsconfig.node.json` 納入 `api/**/*.ts`，讓本機 `npm run build` 能先檢查 Vercel Function 相關 TypeScript 問題。
 

@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { buildTripPrompt, parseTripPlanResponse } from '../src/services/ai/tripPlanPrompt.js'
 import { tripPlanResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
 import type { GenerateTripPlansRequest } from '../src/services/ai/types.js'
