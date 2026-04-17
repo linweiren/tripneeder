@@ -1,6 +1,6 @@
 import type {
   GenerateTripPlansResponse,
-} from './types'
+} from './types.js'
 import type {
   PlanType,
   Stop,
@@ -9,7 +9,7 @@ import type {
   TransportMode,
   TripInput,
   TripPlan,
-} from '../../types/trip'
+} from '../../types/trip.js'
 
 const PLAN_ORDER: PlanType[] = ['safe', 'balanced', 'explore']
 const TRIP_RESPONSE_ERROR =

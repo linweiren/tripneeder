@@ -1,6 +1,6 @@
-import { buildTripPrompt, parseTripPlanResponse } from '../src/services/ai/tripPlanPrompt'
-import { tripPlanResponseSchema } from '../src/services/ai/tripPlanResponseSchema'
-import type { GenerateTripPlansRequest } from '../src/services/ai/types'
+import { buildTripPrompt, parseTripPlanResponse } from '../src/services/ai/tripPlanPrompt.js'
+import { tripPlanResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
+import type { GenerateTripPlansRequest } from '../src/services/ai/types.js'
 import { createClient } from '@supabase/supabase-js'
 
 type VercelRequest = {

@@ -3309,3 +3309,46 @@ Phase 7G 預計流程：
 * 由使用者在 Vercel Dashboard 建立 project 並設定 env 後，再回來讓 Codex 部署 / 驗證。
 * 或由使用者先完成 CLI 登入與 project link，再讓 Codex 用 `npx vercel env add` / deploy 流程處理。
 
+## 2026-04-18 Phase 7G Vercel 設定檢查與 API 修正
+
+使用者表示 Vercel Dashboard 已設定完成，要求檢查是否有缺漏。
+
+檢查結果：
+
+* Vercel team：`linweiren's projects`。
+* Vercel project `tripneeder` 已建立：
+  * project id：`prj_Bdg0HtfVLYX94lJxYHrRrP1U5wVu`
+  * framework：`vite`
+  * production domain：`https://tripneeder.vercel.app`
+* Production deployment 狀態為 `READY`。
+* `https://tripneeder.vercel.app/` 回應 HTTP 200。
+* `https://tripneeder.vercel.app/login` 回應 HTTP 200。
+* `https://tripneeder.vercel.app/points` 回應 HTTP 200，SPA rewrite 正常。
+
+發現問題：
+
+* 未登入呼叫 `https://tripneeder.vercel.app/api/generate-trip` 回應 HTTP 500，預期應為 HTTP 401。
+* Vercel build logs 顯示 API Function TypeScript 編譯錯誤：
+  * `api/generate-trip.ts` 的相對 import 在 Node ESM / Vercel Function 編譯環境中需要 `.js` 副檔名。
+  * `src/services/ai/tripPlanPrompt.ts` 被 API Function 匯入時，也需要 Node ESM 相容的 `.js` import。
+  * Vercel Function 編譯會檢查 `api/**/*.ts`，但本機 `tsconfig.node.json` 先前未包含 `api/**/*.ts`，所以本機 build 沒先抓到。
+
+本次修正：
+
+* `api/generate-trip.ts` 的相對 imports 改為 `.js` 副檔名。
+* `src/services/ai/tripPlanPrompt.ts` 的 type-only 相對 imports 改為 `.js` 副檔名。
+* `tsconfig.node.json` 納入 `api/**/*.ts`，讓本機 `npm run build` 能先檢查 Vercel Function 相關 TypeScript 問題。
+
+驗證結果：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+下一步：
+
+* 將修正提交並推送到 GitHub `main`，透過 Vercel Git integration 觸發新 production deployment。
+* 新部署完成後，需再次驗證：
+  * `/api/generate-trip` 未登入回 HTTP 401。
+  * Google 登入與 `/points`。
+  * AI 分析成功扣點。
+
