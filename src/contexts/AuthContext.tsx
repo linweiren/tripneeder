@@ -17,9 +17,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     let isMounted = true
+    const authClient = supabase
 
-    supabase.auth
-      .getSession()
+    async function initializeAuthSession() {
+      const redirectCode = new URLSearchParams(window.location.search).get(
+        'code',
+      )
+
+      if (redirectCode) {
+        const { error } = await authClient.auth.exchangeCodeForSession(
+          redirectCode,
+        )
+
+        if (!error) {
+          window.history.replaceState(null, '', window.location.pathname)
+        }
+      }
+
+      return authClient.auth.getSession()
+    }
+
+    initializeAuthSession()
       .then(({ data }) => {
         if (isMounted) {
           setUser(data.session?.user ?? null)
@@ -31,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       })
 
-    const { data } = supabase.auth.onAuthStateChange(
+    const { data } = authClient.auth.onAuthStateChange(
       (_event, session: Session | null) => {
         setUser(session?.user ?? null)
         setIsAuthLoading(false)

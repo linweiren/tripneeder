@@ -3353,3 +3353,127 @@ Phase 7G 預計流程：
   * Google 登入與 `/points`。
   * AI 分析成功扣點。
 
+## 2026-04-18 Phase 7G 部署檢查完成與任務暫停
+
+使用者準備切換到新聊天框，任務暫停。
+
+Phase 7G 目前進度：
+
+* Vercel project `tripneeder` 已建立。
+* 正式網址已取得：
+
+```txt
+https://tripneeder.vercel.app
+```
+
+* Vercel project 設定：
+  * framework：`vite`
+  * production domain：`https://tripneeder.vercel.app`
+* Vercel production deployment 已 READY。
+* 已新增 `vercel.json`，讓 React Router SPA 深層路由 rewrite 到 `/index.html`。
+* 正式網址檢查：
+  * `https://tripneeder.vercel.app/` 回 HTTP 200。
+  * `https://tripneeder.vercel.app/login` 回 HTTP 200。
+  * `https://tripneeder.vercel.app/points` 回 HTTP 200。
+  * Google 登入按鈕可正常導到 Google OAuth。
+  * OAuth `redirect_uri` 是 Supabase callback：
+
+```txt
+https://jaxlqqctnnbfritxkkpy.supabase.co/auth/v1/callback
+```
+
+  * OAuth `redirect_to` 是正式網址：
+
+```txt
+https://tripneeder.vercel.app
+```
+
+  * 未登入呼叫 `https://tripneeder.vercel.app/api/generate-trip` 已正確回 HTTP 401。
+
+本次部署中發現並已修正：
+
+* 原本正式站 `/api/generate-trip` 未登入會回 HTTP 500，不是預期的 HTTP 401。
+* 原因是 Vercel Function 獨立編譯時，`api/generate-trip.ts` 的 Node ESM import 與 `process` 型別檢查有問題。
+* 已修正：
+  * `api/generate-trip.ts` 相對 imports 改為 `.js` 副檔名。
+  * `api/generate-trip.ts` 補上 Node type reference。
+  * `src/services/ai/tripPlanPrompt.ts` type-only 相對 imports 改為 `.js` 副檔名。
+  * `tsconfig.node.json` 納入 `api/**/*.ts`，讓本機 build 能先檢查 Vercel Function TypeScript 問題。
+* 已提交並推送到 GitHub `main`：
+  * `6bbb46b`：`Fix Vercel API function build`
+  * `a303931`：`Clean up Vercel function typing`
+* 最新 Vercel deployment build logs 已無 API Function TypeScript error。
+
+仍待完成 / 下一步：
+
+* 使用者需到 Supabase Authentication → URL Configuration 補正式網址。
+* 建議設定：
+
+```txt
+Site URL:
+https://tripneeder.vercel.app
+
+Redirect URLs:
+http://localhost:5173/**
+https://tripneeder.vercel.app/**
+```
+
+* Google Cloud Console 不需要改成 Vercel 網址，仍維持 Supabase callback：
+
+```txt
+https://jaxlqqctnnbfritxkkpy.supabase.co/auth/v1/callback
+```
+
+* Supabase URL Configuration 補完後，需用正式網址完整驗收：
+  * 打開 `https://tripneeder.vercel.app/login`。
+  * Google 登入。
+  * 確認回到首頁且右上角顯示 `登出`。
+  * 打開 `/points` 確認點數。
+  * 首頁送出 AI 分析。
+  * 成功產生三方案後確認扣 20 點。
+  * `/points` 確認出現 `分析扣點`。
+* 若正式網址完整驗收成功，Phase 7G 可判定為「可發布給組員試用」。
+* Phase 7G 驗收通過後，再進入 Phase 8：收藏 / 最近生成同步到 Supabase。
+
+新聊天框接手提醒：
+
+* 必須先用 UTF-8 讀取 `PROJECT_SPEC.md`。
+* 必須以 `PROJECT_SPEC.md` 最末端最新交接紀錄為準。
+* 不可跳 phase。
+* 每個 phase / 子階段完成後必須先讓使用者驗收。
+* Figma MCP 仍先不介入，除非使用者明確要求。
+
+## 2026-04-18 Phase 7G 正式站登入回歸問題
+
+使用者回報正式站 Google 登入後沒有切換成已登入狀態，右上角仍未顯示 `登出`，因此 Phase 7G 發布驗收暫停，先修復登入 session 接回問題。
+
+目前檢查：
+
+* `https://tripneeder.vercel.app/` 回 HTTP 200。
+* `https://tripneeder.vercel.app/login` 回 HTTP 200。
+* `https://tripneeder.vercel.app/points` 回 HTTP 200。
+* 使用接近前端格式、但不帶登入 token 的 `/api/generate-trip` 呼叫回 HTTP 401，API 未登入阻擋仍正常。
+* 空 `{}` 呼叫 `/api/generate-trip` 會先回 HTTP 400，原因是請求內容不完整，這不代表登入保護失效。
+
+本機修正：
+
+* `src/services/auth/supabaseClient.ts` 明確設定 Supabase auth：
+  * `autoRefreshToken: true`
+  * `detectSessionInUrl: true`
+  * `flowType: 'pkce'`
+  * `persistSession: true`
+* `src/contexts/AuthContext.tsx` 在 OAuth redirect 回來且 URL 有 `code` 時，主動呼叫 `exchangeCodeForSession(code)`，成功後清掉網址上的 code，再讀取 session。
+
+本機驗證：
+
+* `npm run lint` 通過。
+* `npm run build` 通過。
+
+仍待完成：
+
+* 需經使用者確認後，將登入修正提交並推送到 GitHub `main`，讓 Vercel 重新部署。
+* 新部署完成後，使用正式網址重新驗收 Google 登入：
+  * 登入後右上角需顯示 `登出`。
+  * `/points` 需顯示該登入帳號的點數。
+  * AI 分析成功後需扣 20 點並新增 `分析扣點` 紀錄。
+
