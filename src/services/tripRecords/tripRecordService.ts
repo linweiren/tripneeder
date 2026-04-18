@@ -10,6 +10,7 @@ import {
   saveFavoriteTrip,
   saveFavoriteTripRecords,
   saveGeneratedPlans,
+  updateRecentTripRecordPlan,
   type StoredTripRecord,
 } from '../../utils/tripPlanStorage'
 
@@ -203,6 +204,45 @@ export async function saveRecentGeneratedRecords(
   }
 
   await trimRecentRecords(userId)
+}
+
+export async function upgradeRecentGeneratedRecord(
+  plan: TripPlan,
+  input: TripInput | null,
+  userId: string,
+) {
+  updateRecentTripRecordPlan(plan, input, userId)
+  setTripRecordCache('recent', userId, loadRecentTripRecords(userId))
+
+  if (!supabase) {
+    return
+  }
+
+  const records = await loadRemoteTripRecords('recent', userId)
+  const record = records.find(
+    (currentRecord) =>
+      currentRecord.plan.id === plan.id &&
+      (!input || !currentRecord.input || isSameTripInput(currentRecord.input, input)),
+  )
+
+  if (!record) {
+    return
+  }
+
+  const { error } = await supabase
+    .from('trip_records')
+    .update({
+      plan,
+      input,
+      plan_fingerprint: createPlanFingerprint(plan),
+    })
+    .eq('id', record.id)
+    .eq('user_id', userId)
+    .eq('kind', 'recent')
+
+  if (error) {
+    throw new Error('最近生成升級同步失敗，已先保存在本機。')
+  }
 }
 
 export async function isFavoriteRecord(plan: TripPlan, userId: string) {
@@ -704,6 +744,10 @@ function removeLocalFavoriteRecord(
 
 function notifyFavoritesChanged() {
   window.dispatchEvent(new Event(FAVORITES_CHANGED_EVENT))
+}
+
+function isSameTripInput(left: TripInput, right: TripInput) {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

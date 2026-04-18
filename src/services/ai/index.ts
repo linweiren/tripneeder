@@ -5,6 +5,8 @@ export const tripPlanner: AiTripPlanner = new ProxyTripPlanner()
 
 export type {
   AiTripPlanner,
+  CompleteTripPlanDetailsRequest,
+  CompleteTripPlanDetailsResponse,
   GenerateTripPlansRequest,
   GenerateTripPlansResponse,
   RecalculateTransportRequest,

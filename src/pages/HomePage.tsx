@@ -59,11 +59,7 @@ const initialInput: TripInput = {
   },
 }
 
-const loadingSteps = [
-  '理解你的旅行偏好',
-  '整理時間與起點',
-  '準備交給 AI 分析',
-]
+const planSlotLabels = ['保守型', '平衡型', '探索型']
 
 const hourOptions = Array.from({ length: 24 }, (_, index) =>
   String(index).padStart(2, '0'),
@@ -208,33 +204,65 @@ export function HomePage() {
   }
 
   if (isAnalysisInProgress || analysisError) {
+    const partialPlans = session?.partialPlans ?? []
+    const readyCount = Math.min(partialPlans.length, 3)
+
     return (
       <section className="page trip-loading">
         <p className="page-kicker">正在準備分析</p>
         <h1 className="page-title">想來點什麼樣的旅行？</h1>
         <div className="loading-panel" role="status" aria-live="polite">
-          {!analysisError ? (
-            <div className="loading-mark" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </div>
-          ) : null}
           <div>
-            <h2>{analysisError ? '分析沒有成功' : '正在整理你的旅行偏好...'}</h2>
+            <h2>
+              {analysisError
+                ? '分析沒有成功'
+                : readyCount === 0
+                  ? '正在整理你的旅行偏好...'
+                  : `已完成 ${readyCount} / 3 個方案`}
+            </h2>
             <p>
               {analysisError ||
-                'AI 正在規劃三種行程風格，請稍等一下。'}
+                (readyCount === 0
+                  ? 'AI 正在規劃三種行程風格，請稍等一下。'
+                  : '方案會逐張出現，完成後自動前往結果頁。')}
             </p>
           </div>
           {analysisError ? (
             <p className="analysis-no-charge-note">分析失敗不扣除點數</p>
           ) : null}
           {!analysisError ? (
-            <ul className="loading-steps">
-              {loadingSteps.map((step) => (
-                <li key={step}>{step}</li>
-              ))}
+            <ul className="plan-skeleton-list">
+              {planSlotLabels.map((slotLabel, index) => {
+                const plan = partialPlans[index]
+                const isReady = Boolean(plan?.title)
+                return (
+                  <li
+                    key={slotLabel}
+                    className={`plan-skeleton-card${isReady ? ' is-ready' : ''}`}
+                  >
+                    <span className="plan-skeleton-tag">{slotLabel}</span>
+                    {isReady ? (
+                      <>
+                        <h3 className="plan-skeleton-title">{plan?.title}</h3>
+                        {plan?.subtitle ? (
+                          <p className="plan-skeleton-subtitle">
+                            {plan.subtitle}
+                          </p>
+                        ) : null}
+                        {plan?.summary ? (
+                          <p className="plan-skeleton-summary">{plan.summary}</p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <span className="plan-skeleton-bar plan-skeleton-bar-title" />
+                        <span className="plan-skeleton-bar plan-skeleton-bar-subtitle" />
+                        <span className="plan-skeleton-bar plan-skeleton-bar-summary" />
+                      </>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           ) : null}
           {!analysisError ? (

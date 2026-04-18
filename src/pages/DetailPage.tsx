@@ -86,7 +86,8 @@ export function DetailPage() {
   const { planId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
-  const { setFlowRoute } = useAnalysisSession()
+  const { setFlowRoute, planDetailStates, requestPlanDetails } =
+    useAnalysisSession()
   const { user } = useAuth()
   const dialog = useDialog()
   const plans = loadGeneratedPlans()
@@ -94,11 +95,20 @@ export function DetailPage() {
   const isStoredSource = sourcePage === 'favorites' || sourcePage === 'recent'
   const storedDetailPlan = loadPlanForDetail(planId)
   const generatedPlan = plans.find((plan) => plan.id === planId)
-  const selectedPlan = isStoredSource
+  const initialSelectedPlan = isStoredSource
     ? storedDetailPlan ?? generatedPlan
     : generatedPlan ?? storedDetailPlan
-  const lastInput =
-    selectedPlan === storedDetailPlan ? loadInputForDetail() : loadLastTripInput()
+  // Memoize with stable deps to prevent a new object reference on every render.
+  // A new reference would cause the detail-completion useEffect to abort its own fetch
+  // each time setDetailCompletionStatus triggers a re-render.
+  const lastInput = useMemo(() => {
+    const stored = loadPlanForDetail(planId)
+    const generated = plans.find((p) => p.id === planId)
+    const initial = isStoredSource ? stored ?? generated : generated ?? stored
+    return initial === stored ? loadInputForDetail() : loadLastTripInput()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStoredSource, planId])
+  const [selectedPlan, setSelectedPlan] = useState(initialSelectedPlan)
   const [isRainMode, setIsRainMode] = useState(false)
   const [stopOrders, setStopOrders] = useState<Partial<Record<OrderMode, string[]>>>(
     {},
@@ -114,6 +124,14 @@ export function DetailPage() {
   const [favoriteRevision, setFavoriteRevision] = useState(0)
   const [hasSavedFavorite, setHasSavedFavorite] = useState(false)
   const [isSavingFavorite, setIsSavingFavorite] = useState(false)
+  const detailState = planId ? planDetailStates[planId] : undefined
+  const detailCompletionStatus: 'idle' | 'loading' | 'error' =
+    detailState?.status === 'loading'
+      ? 'loading'
+      : detailState?.status === 'error'
+        ? 'error'
+        : 'idle'
+  const detailCompletionError = detailState?.error ?? ''
   const favoriteStatusRequestIdRef = useRef(0)
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -216,6 +234,55 @@ export function DetailPage() {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [planId])
+
+  useEffect(() => {
+    const nextStoredDetailPlan = loadPlanForDetail(planId)
+    const nextGeneratedPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
+    const nextSelectedPlan = isStoredSource
+      ? nextStoredDetailPlan ?? nextGeneratedPlan
+      : nextGeneratedPlan ?? nextStoredDetailPlan
+
+    // Only replace the selectedPlan reference when the meaningful state changes;
+    // otherwise the detail-completion useEffect will see a new selectedPlan ref
+    // on mount and abort its own fetch before the response arrives.
+    setSelectedPlan((prev) => {
+      if (!nextSelectedPlan) return nextSelectedPlan
+      if (!prev) return nextSelectedPlan
+      if (
+        prev.id === nextSelectedPlan.id &&
+        Boolean(prev.isDetailComplete) === Boolean(nextSelectedPlan.isDetailComplete)
+      ) {
+        return prev
+      }
+      return nextSelectedPlan
+    })
+  }, [isStoredSource, planId])
+
+  // Ensure a detail-completion fetch is running for this plan. The fetch is
+  // owned by the AnalysisSession context so it keeps running even if the user
+  // leaves this page before it finishes.
+  useEffect(() => {
+    if (!planId || !selectedPlan || selectedPlan.isDetailComplete) return
+    requestPlanDetails(planId)
+  }, [planId, requestPlanDetails, selectedPlan])
+
+  // When the context marks this plan as complete, re-read the upgraded plan
+  // from sessionStorage so the current detail view refreshes in-place.
+  useEffect(() => {
+    if (!planId) return
+    if (detailState?.status !== 'complete') return
+    if (selectedPlan?.isDetailComplete) return
+
+    const upgradedGenerated = loadGeneratedPlans().find((plan) => plan.id === planId)
+    const upgradedStored = loadPlanForDetail(planId)
+    const upgraded = isStoredSource
+      ? upgradedStored ?? upgradedGenerated
+      : upgradedGenerated ?? upgradedStored
+
+    if (upgraded?.isDetailComplete) {
+      setSelectedPlan(upgraded)
+    }
+  }, [detailState?.status, isStoredSource, planId, selectedPlan])
 
   useEffect(() => {
     function refreshFavoriteStatus() {
@@ -353,6 +420,14 @@ export function DetailPage() {
       return
     }
 
+    if (!selectedPlan.isDetailComplete) {
+      void dialog.alert({
+        title: '正在補完整細節',
+        message: '正在補完整細節，完成後再收藏。',
+      })
+      return
+    }
+
     const snapshotPlan = buildSnapshotPlan({
       plan: selectedPlan,
       stopOrders,
@@ -466,6 +541,44 @@ export function DetailPage() {
         </div>
       </dl>
 
+      {!selectedPlan.isDetailComplete ? (
+        <div className="detail-completion-panel" role="status" aria-live="polite">
+          {detailCompletionStatus === 'error' ? (
+            <>
+              <h2>細節補充失敗</h2>
+              <p>{detailCompletionError || '細節補充失敗，請稍後再試。'}</p>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  if (planId) requestPlanDetails(planId)
+                }}
+              >
+                細節補充失敗，重新補充
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="detail-completion-heading">
+                <span
+                  className="detail-completion-spinner"
+                  aria-hidden="true"
+                />
+                <h2>正在補完整細節</h2>
+              </div>
+              <p>先看路線骨架，景點介紹、雨天備案與交通摘要正在補上。</p>
+              <div
+                className="detail-completion-progress"
+                role="presentation"
+                aria-hidden="true"
+              >
+                <span className="detail-completion-progress-bar" />
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
+
       {shouldShowLegacyNotice ? (
         <p className="legacy-data-note">
           目前讀到舊版交通資料，已先以相容模式顯示；重新產生行程後會取得新版交通段資訊。
@@ -524,7 +637,10 @@ export function DetailPage() {
                   </div>
 
                   <p className="stop-description">
-                    {stop.description || '請重新產生行程，AI 會為這個景點補上具體簡介。'}
+                    {stop.description ||
+                      (selectedPlan.isDetailComplete
+                        ? '這個景點暫時沒有補充說明。'
+                        : '正在補完整細節，AI 會為這個景點補上具體簡介。')}
                   </p>
 
                   <dl className="stop-details">
@@ -535,16 +651,14 @@ export function DetailPage() {
                   </dl>
 
                   <div className="stop-actions">
-                    {stop.googleMapsUrl ? (
-                      <a
-                        className="maps-link"
-                        href={stop.googleMapsUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        開啟 Google Maps
-                      </a>
-                    ) : null}
+                    <a
+                      className="maps-link"
+                      href={buildMapsSearchUrl(stop)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      開啟 Google Maps
+                    </a>
                     <a
                       className="maps-link"
                     href={buildDirectionsUrl(stop, activeTransportMode)}
@@ -603,6 +717,7 @@ export function DetailPage() {
             className="submit-button"
             type="button"
             onClick={() => setIsRainMode((current) => !current)}
+            disabled={!selectedPlan.isDetailComplete}
           >
             {isRainMode ? '查看一般行程' : '切換雨天備案'}
           </button>
@@ -615,7 +730,11 @@ export function DetailPage() {
             onClick={() => void handleSaveFavorite()}
             disabled={hasSavedFavorite || isSavingFavorite}
           >
-            {hasSavedFavorite ? '已收藏' : '收藏此方案'}
+            {hasSavedFavorite
+              ? '已收藏'
+              : selectedPlan.isDetailComplete
+                ? '收藏此方案'
+                : '補完細節後可收藏'}
           </button>
         </div>
       </div>
@@ -1201,6 +1320,18 @@ function buildDirectionsUrl(stop: Stop, mode: TransportMode) {
   const travelMode = mode === 'public_transit' ? 'transit' : 'driving'
 
   return `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=${travelMode}`
+}
+
+function buildMapsSearchUrl(stop: Stop) {
+  if (stop.googleMapsUrl) {
+    return stop.googleMapsUrl
+  }
+
+  const query = encodeURIComponent(
+    [stop.name, stop.address].filter(Boolean).join(' '),
+  )
+
+  return `https://www.google.com/maps/search/?api=1&query=${query}`
 }
 
 function getStopId(stop: Stop | undefined, index: number) {

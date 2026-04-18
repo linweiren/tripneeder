@@ -2,15 +2,23 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useLocation, useNavigate } from 'react-router-dom'
 import { tripPlanner } from '../services/ai'
 import { supabase } from '../services/auth/supabaseClient'
-import { saveRecentGeneratedRecords } from '../services/tripRecords/tripRecordService'
+import {
+  saveRecentGeneratedRecords,
+  upgradeRecentGeneratedRecord,
+} from '../services/tripRecords/tripRecordService'
 import type { TripInput } from '../types/trip'
 import {
   clearGeneratedTripFlow,
+  loadGeneratedPlans,
+  loadLastTripInput,
   saveGeneratedPlans,
+  updateDetailPlan,
+  updateGeneratedPlan,
 } from '../utils/tripPlanStorage'
 import {
   AnalysisSessionContext,
   type AnalysisSession,
+  type PlanDetailState,
 } from './analysisSession'
 
 const ANALYSIS_SESSION_STORAGE_KEY = 'tripneeder.analysisSession'
@@ -21,9 +29,14 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
   const location = useLocation()
   const locationRef = useRef(location)
   const requestIdRef = useRef(0)
+  const abortControllerRef = useRef<AbortController | null>(null)
   const [session, setSession] = useState<AnalysisSession | null>(() =>
     loadAnalysisSession(),
   )
+  const [planDetailStates, setPlanDetailStates] = useState<
+    Record<string, PlanDetailState>
+  >({})
+  const planDetailControllersRef = useRef<Record<string, AbortController>>({})
 
   useEffect(() => {
     locationRef.current = location
@@ -39,12 +52,17 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     const startedAt = getTimestamp()
     requestIdRef.current = requestId
 
+    abortControllerRef.current?.abort()
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     const nextSession: AnalysisSession = {
       status: 'analyzing',
       input,
       startedAt,
       updatedAt: startedAt,
       lastRoute: '/',
+      partialPlans: [],
     }
 
     setAndStoreSession(nextSession)
@@ -54,6 +72,21 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       const response = await tripPlanner.generateTripPlans({
         input,
         accessToken: token,
+        signal: controller.signal,
+        onPlan: (plan) => {
+          if (requestId !== requestIdRef.current) return
+          setSession((current) => {
+            if (!current || current.status !== 'analyzing') return current
+            const nextPartial = [...(current.partialPlans ?? []), plan]
+            const nextState = {
+              ...current,
+              partialPlans: nextPartial,
+              updatedAt: getTimestamp(),
+            }
+            saveAnalysisSession(nextState)
+            return nextState
+          })
+        },
       })
 
       if (requestId !== requestIdRef.current) {
@@ -112,9 +145,106 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
 
   const cancelAnalysis = useCallback(() => {
     requestIdRef.current += 1
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
+    Object.values(planDetailControllersRef.current).forEach((controller) => {
+      controller.abort()
+    })
+    planDetailControllersRef.current = {}
+    setPlanDetailStates({})
     clearStoredAnalysisSession()
     clearGeneratedTripFlow()
     setSession(null)
+  }, [])
+
+  const requestPlanDetails = useCallback((planId: string) => {
+    if (!planId) return
+
+    const currentPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
+
+    if (!currentPlan) {
+      return
+    }
+
+    if (currentPlan.isDetailComplete) {
+      setPlanDetailStates((prev) => {
+        if (prev[planId]?.status === 'complete') {
+          return prev
+        }
+        return { ...prev, [planId]: { status: 'complete' } }
+      })
+      return
+    }
+
+    const input = loadLastTripInput()
+
+    if (!input) {
+      return
+    }
+
+    const existingController = planDetailControllersRef.current[planId]
+    if (existingController) {
+      // Loading already in-flight; no-op. Re-subscribing consumers will pick up
+      // the eventual state transition from the original fetch.
+      return
+    }
+
+    const controller = new AbortController()
+    planDetailControllersRef.current[planId] = controller
+    setPlanDetailStates((prev) => ({
+      ...prev,
+      [planId]: { status: 'loading' },
+    }))
+
+    void (async () => {
+      try {
+        const { accessToken, userId } = await getSessionAuth()
+        const response = await tripPlanner.completeTripPlanDetails({
+          input,
+          plan: currentPlan,
+          accessToken,
+          signal: controller.signal,
+        })
+
+        if (controller.signal.aborted) return
+
+        updateGeneratedPlan(response.plan)
+        updateDetailPlan(response.plan)
+
+        if (userId) {
+          try {
+            await upgradeRecentGeneratedRecord(response.plan, input, userId)
+          } catch {
+            // The upgraded plan is already persisted locally; remote sync will retry later.
+          }
+        }
+
+        if (controller.signal.aborted) return
+
+        setPlanDetailStates((prev) => ({
+          ...prev,
+          [planId]: { status: 'complete', completedAt: getTimestamp() },
+        }))
+        window.dispatchEvent(
+          new CustomEvent('tripneeder:planDetailComplete', { detail: { planId } }),
+        )
+      } catch (error) {
+        if (controller.signal.aborted) return
+
+        setPlanDetailStates((prev) => ({
+          ...prev,
+          [planId]: {
+            status: 'error',
+            error:
+              error instanceof Error ? error.message : '細節補充失敗，請稍後再試。',
+          },
+        }))
+      } finally {
+        if (planDetailControllersRef.current[planId] === controller) {
+          delete planDetailControllersRef.current[planId]
+        }
+      }
+    })()
   }, [])
 
   const resetAnalysisFlow = useCallback(() => {
@@ -163,11 +293,15 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       cancelAnalysis,
       resetAnalysisFlow,
       setFlowRoute,
+      planDetailStates,
+      requestPlanDetails,
     }),
     [
       cancelAnalysis,
       isSessionExpired,
+      planDetailStates,
       plannerPath,
+      requestPlanDetails,
       resetAnalysisFlow,
       retryAnalysis,
       session,

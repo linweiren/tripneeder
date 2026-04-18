@@ -1,7 +1,7 @@
 /// <reference types="node" />
 
-import { buildTripPrompt, parseTripPlanResponse } from '../src/services/ai/tripPlanPrompt.js'
-import { tripPlanResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
+import { buildTripPrompt, parseTripPlanSkeletonResponse } from '../src/services/ai/tripPlanPrompt.js'
+import { tripPlanSkeletonResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
 import type { GenerateTripPlansRequest } from '../src/services/ai/types.js'
 import { createClient } from '@supabase/supabase-js'
 
@@ -11,12 +11,15 @@ type VercelRequest = {
   headers?: {
     authorization?: string
   }
+  signal?: AbortSignal
 }
 
 type VercelResponse = {
   status: (code: number) => VercelResponse
   json: (body: unknown) => void
   setHeader: (name: string, value: string) => void
+  write: (chunk: string) => void
+  end: () => void
 }
 
 type RpcResult<T> = PromiseLike<{
@@ -66,8 +69,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
+  let supabase: PointsSupabaseClient
   try {
-    const supabase = createUserScopedSupabaseClient(accessToken)
+    supabase = createUserScopedSupabaseClient(accessToken)
     const balance = await getAvailablePoints(supabase)
 
     if (balance < ANALYSIS_COST) {
@@ -76,19 +80,237 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
       return
     }
-
-    const text = await requestTripPlans(apiKey, request)
-    const data = parseTripPlanResponse(text)
-    await consumeAnalysisPoints(supabase)
-
-    res.status(200).json(data)
   } catch (error) {
     res.status(502).json({
-      error:
-        error instanceof Error
-          ? error.message
-          : 'AI 分析失敗，請稍後再試。',
+      error: error instanceof Error ? error.message : 'AI 分析失敗，請稍後再試。',
     })
+    return
+  }
+
+  res.status(200)
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8')
+  res.setHeader('X-Accel-Buffering', 'no')
+
+  const writeEvent = (event: Record<string, unknown>) => {
+    res.write(`${JSON.stringify(event)}\n`)
+  }
+
+  try {
+    const openAiResponse = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        stream: true,
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: buildTripPrompt(request.input),
+              },
+            ],
+          },
+        ],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'trip_plan_response',
+            schema: tripPlanSkeletonResponseSchema,
+            strict: false,
+          },
+        },
+      }),
+      signal: req.signal,
+    })
+
+    if (!openAiResponse.ok || !openAiResponse.body) {
+      const message = await buildOpenAiErrorMessage(openAiResponse)
+      writeEvent({ event: 'error', message })
+      res.end()
+      return
+    }
+
+    const extractor = new PlanExtractor()
+    let fullText = ''
+    let pointsConsumed = false
+
+    const reader = openAiResponse.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let sseBuffer = ''
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+
+      sseBuffer += decoder.decode(value, { stream: true })
+      const events = sseBuffer.split('\n\n')
+      sseBuffer = events.pop() ?? ''
+
+      for (const rawEvent of events) {
+        const delta = extractDeltaFromSseEvent(rawEvent)
+        if (!delta) continue
+
+        fullText += delta
+        const plans = extractor.push(delta)
+
+        for (const plan of plans) {
+          writeEvent({ event: 'plan', plan })
+
+          if (!pointsConsumed) {
+            pointsConsumed = true
+            try {
+              await consumeAnalysisPoints(supabase)
+            } catch (error) {
+              writeEvent({
+                event: 'points_warning',
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : '扣點流程失敗，請稍後再試。',
+              })
+            }
+          }
+        }
+      }
+    }
+
+    let finalResponse
+    try {
+      finalResponse = parseTripPlanSkeletonResponse(fullText)
+    } catch (error) {
+      writeEvent({
+        event: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : '這次 AI 產生的行程資料不夠完整，請重新分析一次。',
+      })
+      res.end()
+      return
+    }
+
+    writeEvent({ event: 'done', response: finalResponse })
+    res.end()
+  } catch (error) {
+    writeEvent({
+      event: 'error',
+      message:
+        error instanceof Error ? error.message : 'AI 分析失敗，請稍後再試。',
+    })
+    res.end()
+  }
+}
+
+function extractDeltaFromSseEvent(rawEvent: string): string {
+  const lines = rawEvent.split('\n')
+  let dataPayload = ''
+
+  for (const line of lines) {
+    if (line.startsWith('data:')) {
+      dataPayload += line.slice(5).trimStart()
+    }
+  }
+
+  if (!dataPayload || dataPayload === '[DONE]') {
+    return ''
+  }
+
+  try {
+    const parsed = JSON.parse(dataPayload) as {
+      type?: string
+      delta?: string
+    }
+
+    if (parsed.type === 'response.output_text.delta' && typeof parsed.delta === 'string') {
+      return parsed.delta
+    }
+  } catch {
+    // Ignore unparseable SSE frames.
+  }
+
+  return ''
+}
+
+class PlanExtractor {
+  private state: 'before_plans' | 'in_array' | 'in_plan' | 'after_plans' = 'before_plans'
+  private preBuf = ''
+  private depth = 0
+  private inString = false
+  private escape = false
+  private planBuf = ''
+
+  push(chunk: string): unknown[] {
+    const emitted: unknown[] = []
+
+    for (let i = 0; i < chunk.length; i++) {
+      const ch = chunk[i]
+
+      if (this.state === 'before_plans') {
+        this.preBuf += ch
+        const plansIdx = this.preBuf.indexOf('"plans"')
+        if (plansIdx >= 0) {
+          const bracketIdx = this.preBuf.indexOf('[', plansIdx)
+          if (bracketIdx >= 0) {
+            this.state = 'in_array'
+            this.preBuf = ''
+          }
+        }
+        continue
+      }
+
+      if (this.state === 'in_array') {
+        if (ch === '{') {
+          this.state = 'in_plan'
+          this.depth = 1
+          this.planBuf = '{'
+          this.inString = false
+          this.escape = false
+        } else if (ch === ']') {
+          this.state = 'after_plans'
+        }
+        continue
+      }
+
+      if (this.state === 'in_plan') {
+        this.planBuf += ch
+
+        if (this.escape) {
+          this.escape = false
+          continue
+        }
+        if (ch === '\\') {
+          this.escape = true
+          continue
+        }
+        if (ch === '"') {
+          this.inString = !this.inString
+          continue
+        }
+        if (this.inString) continue
+
+        if (ch === '{') {
+          this.depth++
+        } else if (ch === '}') {
+          this.depth--
+          if (this.depth === 0) {
+            try {
+              emitted.push(JSON.parse(this.planBuf))
+            } catch {
+              // Ignore partial / malformed plan; final validation will catch issues.
+            }
+            this.state = 'in_array'
+            this.planBuf = ''
+          }
+        }
+      }
+    }
+
+    return emitted
   }
 }
 
@@ -163,54 +385,6 @@ function parseRequestBody(body: unknown): GenerateTripPlansRequest | null {
   return body as GenerateTripPlansRequest
 }
 
-async function requestTripPlans(
-  apiKey: string,
-  request: GenerateTripPlansRequest,
-) {
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
-      input: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'input_text',
-              text: buildTripPrompt(request.input),
-            },
-          ],
-        },
-      ],
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'trip_plan_response',
-          schema: tripPlanResponseSchema,
-          strict: false,
-        },
-      },
-    }),
-  })
-
-  if (!response.ok) {
-    throw new Error(await buildOpenAiErrorMessage(response))
-  }
-
-  const data = (await response.json()) as OpenAiResponse
-  const text = extractOpenAiText(data)
-
-  if (!text) {
-    throw new Error('OpenAI 沒有回傳可解析的內容，請重新分析。')
-  }
-
-  return text
-}
-
 async function buildOpenAiErrorMessage(response: Response) {
   const detail = await readOpenAiErrorDetail(response)
 
@@ -239,34 +413,8 @@ async function readOpenAiErrorDetail(response: Response) {
   }
 }
 
-function extractOpenAiText(data: OpenAiResponse) {
-  if (typeof data.output_text === 'string') {
-    return data.output_text
-  }
-
-  for (const output of data.output ?? []) {
-    for (const content of output.content ?? []) {
-      if (content.type === 'output_text' && typeof content.text === 'string') {
-        return content.text
-      }
-    }
-  }
-
-  return ''
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
-}
-
-type OpenAiResponse = {
-  output_text?: string
-  output?: Array<{
-    content?: Array<{
-      type?: string
-      text?: string
-    }>
-  }>
 }
 
 type OpenAiErrorResponse = {

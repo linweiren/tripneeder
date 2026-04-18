@@ -77,4 +77,5 @@ export type TripPlan = {
   transportSegments: TransportSegment[]
   rainBackup: Stop[]
   rainTransportSegments: TransportSegment[]
+  isDetailComplete?: boolean
 }

@@ -31,6 +31,17 @@ export function saveGeneratedPlans(
   }
 }
 
+export function updateGeneratedPlan(nextPlan: TripPlan) {
+  const plans = loadGeneratedPlans()
+  const nextPlans = plans.map((plan) =>
+    plan.id === nextPlan.id ? nextPlan : plan,
+  )
+
+  if (nextPlans.some((plan) => plan.id === nextPlan.id)) {
+    sessionStorage.setItem(TRIP_PLANS_STORAGE_KEY, JSON.stringify(nextPlans))
+  }
+}
+
 export function loadGeneratedPlans() {
   const rawPlans = sessionStorage.getItem(TRIP_PLANS_STORAGE_KEY)
 
@@ -76,6 +87,14 @@ export function savePlanForDetail(plan: TripPlan, input: TripInput | null) {
   }
 }
 
+export function updateDetailPlan(nextPlan: TripPlan) {
+  const currentPlan = loadPlanForDetail(nextPlan.id)
+
+  if (currentPlan) {
+    sessionStorage.setItem(DETAIL_PLAN_STORAGE_KEY, JSON.stringify(nextPlan))
+  }
+}
+
 export function loadPlanForDetail(planId?: string) {
   const rawPlan = sessionStorage.getItem(DETAIL_PLAN_STORAGE_KEY)
 
@@ -114,6 +133,28 @@ export function loadFavoriteTripRecords(ownerId?: string) {
   return loadStoredTripRecords(
     getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId),
   )
+}
+
+export function updateRecentTripRecordPlan(
+  nextPlan: TripPlan,
+  input: TripInput | null,
+  ownerId?: string,
+) {
+  const storageKey = getOwnerStorageKey(RECENT_PLANS_STORAGE_KEY, ownerId)
+  const records = loadRecentTripRecords(ownerId)
+  const nextRecords = records.map((record) =>
+    record.plan.id === nextPlan.id &&
+    (!input || !record.input || isSameTripInput(record.input, input))
+      ? {
+          ...record,
+          plan: nextPlan,
+          input: input ?? record.input,
+        }
+      : record,
+  )
+
+  localStorage.setItem(storageKey, JSON.stringify(nextRecords))
+  return nextRecords
 }
 
 export function saveFavoriteTripRecords(
@@ -220,6 +261,10 @@ function saveRecentGeneratedPlans(
 
 function getOwnerStorageKey(storageKey: string, ownerId?: string) {
   return ownerId ? `${storageKey}.${ownerId}` : storageKey
+}
+
+function isSameTripInput(left: TripInput, right: TripInput) {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function loadStoredTripRecords(storageKey: string) {

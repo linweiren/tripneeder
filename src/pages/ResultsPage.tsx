@@ -17,7 +17,8 @@ const transportLabels: Record<TransportMode, string> = {
 }
 
 export function ResultsPage() {
-  const { resetAnalysisFlow, setFlowRoute } = useAnalysisSession()
+  const { resetAnalysisFlow, setFlowRoute, requestPlanDetails } =
+    useAnalysisSession()
   const plans = loadGeneratedPlans()
 
   if (plans.length === 0) {
@@ -47,7 +48,10 @@ export function ResultsPage() {
           <PlanCard
             key={plan.id}
             plan={plan}
-            onSelect={setFlowRoute}
+            onSelect={(route) => {
+              setFlowRoute(route)
+              requestPlanDetails(plan.id)
+            }}
           />
         ))}
       </div>

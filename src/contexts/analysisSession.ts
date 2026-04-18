@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 import type { TripInput } from '../types/trip'
+import type { PartialTripPlan } from '../services/ai/types'
 
 export type AnalysisSessionStatus = 'analyzing' | 'success' | 'error'
 
@@ -10,6 +11,15 @@ export type AnalysisSession = {
   updatedAt: number
   lastRoute: string
   error?: string
+  partialPlans?: PartialTripPlan[]
+}
+
+export type PlanDetailStatus = 'loading' | 'complete' | 'error'
+
+export type PlanDetailState = {
+  status: PlanDetailStatus
+  error?: string
+  completedAt?: number
 }
 
 export type AnalysisSessionContextValue = {
@@ -21,6 +31,8 @@ export type AnalysisSessionContextValue = {
   cancelAnalysis: () => void
   resetAnalysisFlow: () => void
   setFlowRoute: (route: string) => void
+  planDetailStates: Record<string, PlanDetailState>
+  requestPlanDetails: (planId: string) => void
 }
 
 export const AnalysisSessionContext =
