@@ -1,0 +1,41 @@
+我們正在開發 C:\Users\User\Desktop\tripneeder 專案（TripNeeder，AI 即時行程決策 Web App）。
+
+請先用 UTF-8 讀取 PROJECT_SPEC.md。這是唯一主規格檔。
+
+# 永久規則
+- 全程使用繁體中文回覆。
+- 每個子階段完成後必須先讓使用者驗收，通過才進下一項。
+- 不可擅自跳 phase 或跳子階段。
+- 任何確認後的規格變更都要同步寫進 PROJECT_SPEC.md。
+- UI 細節不清楚時要先問使用者。
+- 本機驗收網址優先 http://localhost:5173/。
+- 不要 reset / checkout / revert 任何現有變更。
+- OpenAI API key 不可放前端；SUPABASE_SERVICE_ROLE_KEY 不可放前端 / client bundle。
+
+# 目前狀態
+- Phase 1 ~ 8A 全部驗收通過；Phase 8B 已永久取消。
+- Phase 9A（AI 生成速度優化）全部驗收通過：9A-1 prompt 瘦身、9A-2 streaming 骨架卡片、9A-3 兩階段生成（骨架先出、詳情後補）。完整實作細節見 SPEC 8.5。
+- 可給外部測試的穩定版本：commit bd11d8b（Vercel production READY）。
+- **下一步：Phase 9B 人設系統。**
+
+# 下一步：Phase 9B 子階段
+- 9B-1　Supabase migration 新增人設欄位（同行對象 / 預算感 / 體力 / 飲食禁忌）；啟動前需確認用 `profiles` 擴充還是獨立 `user_persona` 表。
+- 9B-2　選單新增「個性化設定」入口；新頁面可讀取 / 編輯 / 儲存人設。
+- 9B-3　生成時有人設 → 套用；無人設 → 用系統中性預設。
+- 9B-4　系統中性預設：情侶 / 約會、一般預算、體力普通、無飲食禁忌。
+- 原則：不強制，沒填不阻擋任何功能。
+
+# 後續 Phase 順序（詳細子階段見 SPEC 8.3）
+- 9C：地理約束（第一站 ≤ 2 km + 交通時間軟規則 + 定位反查地名）
+- 9D：Google Places 地點驗證（含申請教學文件 docs/setup/google-places-setup.md）
+- 9E：極簡輸入模式（依賴 9B；首頁只問「在哪 / 多久」）
+- 9F：局部編輯（詳情頁刪站 + 換站 API，換站扣 5 點）
+- 9G：時間跨度過大 bug 修復
+
+# 關鍵技術事實
+- AI 三方案是單次 API call 產生（非三次），並行化不成立。
+- 模型：gpt-4.1-mini（Responses API）。已驗證換 gpt-4o 沒快且品質較差，不再換模型。
+- 9A 後：第一階段用 NDJSON streaming 回三方案骨架；使用者點詳情才補細節，補細節不扣點。
+- 核心檔案：`api/generate-trip.ts`、`api/generate-trip-details.ts`、`src/services/ai/`、`src/contexts/AnalysisSessionContext.tsx`、`src/pages/HomePage.tsx`、`src/pages/ResultsPage.tsx`、`src/pages/DetailPage.tsx`、`src/types/trip.ts`
+
+先讀 PROJECT_SPEC.md（重點讀 8.3、8.5、第 9 章），回覆目前掌握狀態後等使用者下指令再動工。
