@@ -10,6 +10,7 @@ import {
   saveFavoriteTrip,
   saveFavoriteTripRecords,
   saveGeneratedPlans,
+  updateFavoriteTripRecordPlan,
   updateRecentTripRecordPlan,
   type StoredTripRecord,
 } from '../../utils/tripPlanStorage'
@@ -27,9 +28,11 @@ type TripRecordRow = {
 
 const MIGRATION_STORAGE_KEY = 'tripneeder.tripRecordsMigrated'
 const LEGACY_MIGRATION_STORAGE_KEY = 'tripneeder.legacyTripRecordsMigrated'
+const RECENT_BACKFILL_STORAGE_KEY = 'tripneeder.recentBackfilled'
 const FAVORITES_CHANGED_EVENT = 'tripneeder:favoritesChanged'
 const RECORD_CACHE_STORAGE_KEY = 'tripneeder.tripRecordCache'
 const PENDING_FAVORITES_STORAGE_KEY = 'tripneeder.pendingFavoriteFingerprints'
+const PENDING_RECENT_STORAGE_KEY = 'tripneeder.pendingRecentFingerprints'
 const tripRecordCache = new Map<string, StoredTripRecord[]>()
 const tripRecordPreparationPromises = new Map<string, Promise<void>>()
 
@@ -44,6 +47,8 @@ export async function prepareTripRecordsForUser(userId: string) {
     await ensureUserProfile()
     await migrateLocalTripRecords(userId)
     await migrateLegacyTripRecords(userId)
+    await backfillLocalRecentRecords(userId)
+    await syncPendingRecentRecords(userId)
   })()
 
   tripRecordPreparationPromises.set(userId, nextPreparation)
@@ -76,7 +81,9 @@ export async function loadRecentRecords(userId: string) {
     return loadRecentTripRecords(userId)
   }
 
-  const records = mergeRemoteRecentRecordsWithLocalFallback(
+  await syncPendingRecentRecords(userId)
+
+  const records = mergeRemoteRecentRecordsWithPendingLocalRecords(
     await loadRemoteTripRecords('recent', userId),
     userId,
   )
@@ -93,7 +100,14 @@ export function getCachedFavoriteRecords(userId: string) {
 }
 
 export function getCachedRecentRecords(userId: string) {
-  return getTripRecordCache('recent', userId) ?? loadRecentTripRecords(userId)
+  if (!supabase) {
+    return loadRecentTripRecords(userId)
+  }
+
+  return mergeRemoteRecentRecordsWithPendingLocalRecords(
+    getTripRecordCache('recent', userId) ?? [],
+    userId,
+  )
 }
 
 export function hasCachedTripRecords(kind: TripRecordKind, userId: string) {
@@ -184,7 +198,18 @@ export async function saveRecentGeneratedRecords(
   userId: string,
 ) {
   saveGeneratedPlans(plans, input, userId)
-  setTripRecordCache('recent', userId, loadRecentTripRecords(userId))
+  markPendingRecentFingerprints(
+    userId,
+    plans.map((plan) => createPlanFingerprint(plan)),
+  )
+  setTripRecordCache(
+    'recent',
+    userId,
+    mergeRemoteRecentRecordsWithPendingLocalRecords(
+      getTripRecordCache('recent', userId) ?? [],
+      userId,
+    ),
+  )
 
   if (!supabase) {
     return
@@ -206,12 +231,17 @@ export async function saveRecentGeneratedRecords(
     throw new Error('最近生成同步失敗，已先保存在本機。')
   }
 
+  clearPendingRecentFingerprints(
+    userId,
+    plans.map((plan) => createPlanFingerprint(plan)),
+  )
+
   await trimRecentRecords(userId)
 
   setTripRecordCache(
     'recent',
     userId,
-    mergeRemoteRecentRecordsWithLocalFallback(
+    mergeRemoteRecentRecordsWithPendingLocalRecords(
       await loadRemoteTripRecords('recent', userId),
       userId,
     ),
@@ -259,11 +289,79 @@ export async function upgradeRecentGeneratedRecord(
   setTripRecordCache(
     'recent',
     userId,
-    mergeRemoteRecentRecordsWithLocalFallback(
+    mergeRemoteRecentRecordsWithPendingLocalRecords(
       await loadRemoteTripRecords('recent', userId),
       userId,
     ),
   )
+}
+
+export async function syncUpdatedTripRecordPlan(
+  previousPlan: TripPlan,
+  nextPlan: TripPlan,
+  input: TripInput | null,
+  userId: string,
+) {
+  updateRecentTripRecordPlan(nextPlan, input, userId)
+  updateFavoriteTripRecordPlan(nextPlan, input, userId, previousPlan)
+
+  if (!supabase) {
+    setTripRecordCache('recent', userId, loadRecentTripRecords(userId))
+    setTripRecordCache('favorite', userId, loadFavoriteTripRecords(userId))
+    notifyFavoritesChanged()
+    return
+  }
+
+  setTripRecordCache(
+    'recent',
+    userId,
+    mergeRemoteRecentRecordsWithPendingLocalRecords(
+      updateCachedRecordsWithPlan(
+        getTripRecordCache('recent', userId) ?? [],
+        previousPlan,
+        nextPlan,
+        input,
+      ),
+      userId,
+    ),
+  )
+  setTripRecordCache(
+    'favorite',
+    userId,
+    mergeRemoteFavoriteRecordsWithPendingLocalRecords(
+      updateCachedFavoriteRecordsWithPlan(
+        getTripRecordCache('favorite', userId) ?? [],
+        previousPlan,
+        nextPlan,
+        input,
+      ),
+      userId,
+    ),
+  )
+  notifyFavoritesChanged()
+
+  await Promise.all([
+    updateRemoteRecentRecords(previousPlan, nextPlan, input, userId),
+    updateRemoteFavoriteRecords(previousPlan, nextPlan, input, userId),
+  ])
+
+  setTripRecordCache(
+    'recent',
+    userId,
+    mergeRemoteRecentRecordsWithPendingLocalRecords(
+      await loadRemoteTripRecords('recent', userId),
+      userId,
+    ),
+  )
+  setTripRecordCache(
+    'favorite',
+    userId,
+    mergeRemoteFavoriteRecordsWithPendingLocalRecords(
+      await loadRemoteTripRecords('favorite', userId),
+      userId,
+    ),
+  )
+  notifyFavoritesChanged()
 }
 
 export async function isFavoriteRecord(plan: TripPlan, userId: string) {
@@ -321,6 +419,257 @@ async function loadRemoteTripRecords(kind: TripRecordKind, userId: string) {
   }
 
   return data.map(mapTripRecordRow)
+}
+
+async function updateRemoteRecentRecords(
+  previousPlan: TripPlan,
+  nextPlan: TripPlan,
+  input: TripInput | null,
+  userId: string,
+) {
+  const records = await loadRemoteTripRecords('recent', userId)
+  const matchingRecords = records.filter(
+    (record) =>
+      record.plan.id === previousPlan.id &&
+      (!input || !record.input || isSameTripInput(record.input, input)),
+  )
+
+  await updateRemoteTripRecords(matchingRecords, 'recent', nextPlan, input, userId)
+}
+
+function updateCachedRecordsWithPlan(
+  records: StoredTripRecord[],
+  previousPlan: TripPlan,
+  nextPlan: TripPlan,
+  input: TripInput | null,
+) {
+  return records.map((record) =>
+    record.plan.id === previousPlan.id &&
+    (!input || !record.input || isSameTripInput(record.input, input))
+      ? {
+          ...record,
+          plan: nextPlan,
+          input: input ?? record.input,
+        }
+      : record,
+  )
+}
+
+function updateCachedFavoriteRecordsWithPlan(
+  records: StoredTripRecord[],
+  previousPlan: TripPlan,
+  nextPlan: TripPlan,
+  input: TripInput | null,
+) {
+  const previousFingerprint = createPlanFingerprint(previousPlan)
+  const nextFingerprint = createPlanFingerprint(nextPlan)
+
+  return records.map((record) => {
+    const recordFingerprint = createPlanFingerprint(record.plan)
+
+    if (
+      record.plan.id !== previousPlan.id &&
+      recordFingerprint !== previousFingerprint &&
+      recordFingerprint !== nextFingerprint
+    ) {
+      return record
+    }
+
+    return {
+      ...record,
+      plan: nextPlan,
+      input: input ?? record.input,
+    }
+  })
+}
+
+async function syncPendingRecentRecords(userId: string) {
+  if (!supabase) {
+    return
+  }
+
+  const pendingFingerprints = getPendingRecentFingerprints(userId)
+
+  if (pendingFingerprints.size === 0) {
+    return
+  }
+
+  const pendingRecords = loadRecentTripRecords(userId).filter((record) =>
+    pendingFingerprints.has(createPlanFingerprint(record.plan)),
+  )
+
+  if (pendingRecords.length === 0) {
+    savePendingRecentFingerprints(userId, new Set())
+    return
+  }
+
+  const remoteRecords = await loadRemoteTripRecords('recent', userId)
+  const remoteFingerprints = new Set(
+    remoteRecords.map((record) => createPlanFingerprint(record.plan)),
+  )
+  const recordsToInsert = pendingRecords.filter(
+    (record) => !remoteFingerprints.has(createPlanFingerprint(record.plan)),
+  )
+
+  if (recordsToInsert.length > 0) {
+    const { error } = await supabase.from('trip_records').insert(
+      recordsToInsert.map((record) => ({
+        user_id: userId,
+        kind: 'recent',
+        plan: record.plan,
+        input: record.input,
+        plan_fingerprint: createPlanFingerprint(record.plan),
+        created_at: record.createdAt,
+      })),
+    )
+
+    if (error) {
+      return
+    }
+
+    await trimRecentRecords(userId)
+  }
+
+  clearPendingRecentFingerprints(
+    userId,
+    pendingRecords.map((record) => createPlanFingerprint(record.plan)),
+  )
+}
+
+async function backfillLocalRecentRecords(userId: string) {
+  if (!supabase || hasBackfilledRecentRecords(userId)) {
+    return
+  }
+
+  const localRecentRecords = loadRecentTripRecords(userId)
+
+  if (localRecentRecords.length === 0) {
+    localStorage.setItem(getRecentBackfillStorageKey(userId), 'true')
+    return
+  }
+
+  const remoteRecentRecords = await loadRemoteTripRecords('recent', userId)
+  const remoteFingerprints = new Set(
+    remoteRecentRecords.map((record) => createPlanFingerprint(record.plan)),
+  )
+  const recordsToInsert = localRecentRecords.filter(
+    (record) => !remoteFingerprints.has(createPlanFingerprint(record.plan)),
+  )
+
+  if (recordsToInsert.length > 0) {
+    const { error } = await supabase.from('trip_records').insert(
+      recordsToInsert.map((record) => ({
+        user_id: userId,
+        kind: 'recent',
+        plan: record.plan,
+        input: record.input,
+        plan_fingerprint: createPlanFingerprint(record.plan),
+        created_at: record.createdAt,
+      })),
+    )
+
+    if (error) {
+      return
+    }
+
+    await trimRecentRecords(userId)
+  }
+
+  localStorage.setItem(getRecentBackfillStorageKey(userId), 'true')
+}
+
+async function updateRemoteFavoriteRecords(
+  previousPlan: TripPlan,
+  nextPlan: TripPlan,
+  input: TripInput | null,
+  userId: string,
+) {
+  const previousFingerprint = createPlanFingerprint(previousPlan)
+  const nextFingerprint = createPlanFingerprint(nextPlan)
+  const records = await loadRemoteTripRecords('favorite', userId)
+  const existingNextRecord = records.find(
+    (record) => createPlanFingerprint(record.plan) === nextFingerprint,
+  )
+  const matchingRecords = records.filter((record) => {
+    const recordFingerprint = createPlanFingerprint(record.plan)
+
+    return (
+      record.plan.id === previousPlan.id ||
+      recordFingerprint === previousFingerprint ||
+      recordFingerprint === nextFingerprint
+    )
+  })
+
+  if (existingNextRecord) {
+    const recordsToDelete = matchingRecords.filter(
+      (record) => record.id !== existingNextRecord.id,
+    )
+
+    await updateRemoteTripRecords(
+      [existingNextRecord],
+      'favorite',
+      nextPlan,
+      input,
+      userId,
+    )
+    await deleteRemoteTripRecords(recordsToDelete, 'favorite', userId)
+    return
+  }
+
+  await updateRemoteTripRecords(matchingRecords, 'favorite', nextPlan, input, userId)
+}
+
+async function updateRemoteTripRecords(
+  records: StoredTripRecord[],
+  kind: TripRecordKind,
+  nextPlan: TripPlan,
+  input: TripInput | null,
+  userId: string,
+) {
+  for (const record of records) {
+    const { error } = await supabase!
+      .from('trip_records')
+      .update({
+        plan: nextPlan,
+        input: input ?? record.input,
+        plan_fingerprint: createPlanFingerprint(nextPlan),
+      })
+      .eq('id', record.id)
+      .eq('user_id', userId)
+      .eq('kind', kind)
+
+    if (error) {
+      if (kind === 'favorite' && isDuplicateFavoriteError(error)) {
+        continue
+      }
+
+      throw new Error('同步更新行程紀錄失敗，請稍後再試。')
+    }
+  }
+}
+
+async function deleteRemoteTripRecords(
+  records: StoredTripRecord[],
+  kind: TripRecordKind,
+  userId: string,
+) {
+  if (records.length === 0) {
+    return
+  }
+
+  const { error } = await supabase!
+    .from('trip_records')
+    .delete()
+    .eq('user_id', userId)
+    .eq('kind', kind)
+    .in(
+      'id',
+      records.map((record) => record.id),
+    )
+
+  if (error) {
+    throw new Error('同步更新行程紀錄失敗，請稍後再試。')
+  }
 }
 
 async function ensureUserProfile() {
@@ -487,7 +836,7 @@ async function saveRemoteFavoriteRecord({
     .single<TripRecordRow>()
 
   if (isDuplicateFavoriteError(error)) {
-    return loadExistingRemoteFavoriteRecord(userId, planFingerprint)
+    return loadExistingRemoteFavoriteRecord(userId, planFingerprint, plan)
   }
 
   if (error || !data) {
@@ -513,6 +862,7 @@ async function loadRemoteFavoriteRecordByCanonicalFingerprint(
 async function loadExistingRemoteFavoriteRecord(
   userId: string,
   planFingerprint: string,
+  plan?: TripPlan,
 ) {
   const { data, error } = await supabase!
     .from('trip_records')
@@ -522,11 +872,36 @@ async function loadExistingRemoteFavoriteRecord(
     .eq('plan_fingerprint', planFingerprint)
     .maybeSingle<TripRecordRow>()
 
+  if (!error && data) {
+    return mapTripRecordRow(data)
+  }
+
+  const canonicalExisting = await loadRemoteFavoriteRecordByCanonicalFingerprint(
+    userId,
+    planFingerprint,
+  )
+
+  if (canonicalExisting) {
+    return canonicalExisting
+  }
+
+  if (plan) {
+    const records = await loadRemoteTripRecords('favorite', userId)
+    const sameTitleRecord = records.find(
+      (record) =>
+        record.plan.title === plan.title &&
+        record.plan.subtitle === plan.subtitle &&
+        record.plan.summary === plan.summary,
+    )
+
+    if (sameTitleRecord) {
+      return sameTitleRecord
+    }
+  }
+
   if (error || !data) {
     throw new Error('收藏同步失敗，請稍後再試。')
   }
-
-  return mapTripRecordRow(data)
 }
 
 async function trimRecentRecords(userId: string) {
@@ -651,13 +1026,23 @@ function mergeRemoteFavoriteRecordsWithPendingLocalRecords(
   return mergeTripRecordsByFingerprint(remoteRecords, pendingRecords)
 }
 
-function mergeRemoteRecentRecordsWithLocalFallback(
+function mergeRemoteRecentRecordsWithPendingLocalRecords(
   remoteRecords: StoredTripRecord[],
   userId: string,
 ) {
+  const pendingFingerprints = getPendingRecentFingerprints(userId)
+
+  if (pendingFingerprints.size === 0) {
+    return remoteRecords
+  }
+
+  const pendingRecords = loadRecentTripRecords(userId).filter((record) =>
+    pendingFingerprints.has(createPlanFingerprint(record.plan)),
+  )
+
   return mergeTripRecordsByFingerprint(
     remoteRecords,
-    loadRecentTripRecords(userId),
+    pendingRecords,
   ).slice(0, MAX_RECENT_RECORDS)
 }
 
@@ -730,6 +1115,65 @@ function savePendingFavoriteFingerprints(
   sessionStorage.setItem(storageKey, JSON.stringify(nextFingerprints))
 }
 
+function markPendingRecentFingerprints(
+  userId: string,
+  planFingerprints: string[],
+) {
+  const fingerprints = getPendingRecentFingerprints(userId)
+
+  for (const planFingerprint of planFingerprints) {
+    fingerprints.add(planFingerprint)
+  }
+
+  savePendingRecentFingerprints(userId, fingerprints)
+}
+
+function clearPendingRecentFingerprints(
+  userId: string,
+  planFingerprints: string[],
+) {
+  const fingerprints = getPendingRecentFingerprints(userId)
+
+  for (const planFingerprint of planFingerprints) {
+    fingerprints.delete(planFingerprint)
+  }
+
+  savePendingRecentFingerprints(userId, fingerprints)
+}
+
+function getPendingRecentFingerprints(userId: string) {
+  const rawFingerprints = sessionStorage.getItem(
+    `${PENDING_RECENT_STORAGE_KEY}.${userId}`,
+  )
+
+  if (!rawFingerprints) {
+    return new Set<string>()
+  }
+
+  try {
+    const fingerprints = JSON.parse(rawFingerprints) as string[]
+
+    return new Set(Array.isArray(fingerprints) ? fingerprints : [])
+  } catch {
+    return new Set<string>()
+  }
+}
+
+function savePendingRecentFingerprints(
+  userId: string,
+  fingerprints: Set<string>,
+) {
+  const storageKey = `${PENDING_RECENT_STORAGE_KEY}.${userId}`
+  const nextFingerprints = Array.from(fingerprints)
+
+  if (nextFingerprints.length === 0) {
+    sessionStorage.removeItem(storageKey)
+    return
+  }
+
+  sessionStorage.setItem(storageKey, JSON.stringify(nextFingerprints))
+}
+
 function isDuplicateFavoriteError(error: unknown) {
   return (
     isRecord(error) &&
@@ -752,6 +1196,14 @@ function hasMigratedLegacyRecords(userId: string) {
 
 function getLegacyMigrationStorageKey(userId: string) {
   return `${LEGACY_MIGRATION_STORAGE_KEY}.${userId}`
+}
+
+function hasBackfilledRecentRecords(userId: string) {
+  return localStorage.getItem(getRecentBackfillStorageKey(userId)) === 'true'
+}
+
+function getRecentBackfillStorageKey(userId: string) {
+  return `${RECENT_BACKFILL_STORAGE_KEY}.${userId}`
 }
 
 function removeLocalFavoriteRecord(

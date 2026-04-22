@@ -799,14 +799,17 @@
   right: 0;
   z-index: 20;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
+  width: 100%;
+  min-width: 0;
   padding: 0;
   background: rgba(255, 252, 246, 0.98);
   border: 1px solid rgba(96, 86, 72, 0.18);
-  border-radius: 12px;
+  border-radius: 8px;
   box-shadow: 0 16px 48px rgba(48, 43, 34, 0.18);
   overflow: hidden;
-  max-height: 320px;
+  max-height: min(320px, calc(100vh - 140px));
 }
 
 .candidate-menu-header {
@@ -841,12 +844,16 @@
 .candidate-list {
   display: grid;
   gap: 0;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .candidate-item {
   display: grid;
   gap: 2px;
+  min-width: 0;
   padding: 12px 14px;
   text-align: left;
   background: transparent;
@@ -867,11 +874,19 @@
 .candidate-item strong {
   color: #2d2b26;
   font-size: 16px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .candidate-item span {
   color: #6f6251;
   font-size: 13px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .candidate-item small {

@@ -53,7 +53,7 @@ export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlace
   const wantsNoFullMeals = input.tags.includes('no_full_meals')
   const allowedMinutes = getAllowedTripMinutes(input)
   const minimumActualMinutes = allowedMinutes
-    ? Math.ceil(allowedMinutes * getRequiredCoverageRatio(allowedMinutes))
+    ? Math.ceil(allowedMinutes * getRequiredCoverageRatio())
     : null
   
   // Use persona values if input values are missing
@@ -398,7 +398,7 @@ function parseTimeToMinutes(value?: string) {
   return hour * 60 + minute
 }
 
-function getRequiredCoverageRatio(_allowedMinutes: number) {
+function getRequiredCoverageRatio() {
   // 統一提升至 85%，確保行程時長符合使用者期望
   return 0.85
 }

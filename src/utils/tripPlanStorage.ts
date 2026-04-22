@@ -157,6 +157,43 @@ export function updateRecentTripRecordPlan(
   return nextRecords
 }
 
+export function updateFavoriteTripRecordPlan(
+  nextPlan: TripPlan,
+  input: TripInput | null,
+  ownerId?: string,
+  previousPlan?: TripPlan,
+) {
+  const storageKey = getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId)
+  const records = loadFavoriteTripRecords(ownerId)
+  const previousFingerprint = previousPlan
+    ? createPlanFingerprint(previousPlan)
+    : null
+  const nextFingerprint = createPlanFingerprint(nextPlan)
+  const nextRecords = mergeRecordsByFingerprint(
+    records.map((record) => {
+      const recordFingerprint = createPlanFingerprint(record.plan)
+      const matchesPreviousPlan =
+        Boolean(previousPlan) && record.plan.id === previousPlan?.id
+      const matchesFingerprint =
+        recordFingerprint === previousFingerprint ||
+        recordFingerprint === nextFingerprint
+
+      if (!matchesPreviousPlan && !matchesFingerprint) {
+        return record
+      }
+
+      return {
+        ...record,
+        plan: nextPlan,
+        input: input ?? record.input,
+      }
+    }),
+  )
+
+  localStorage.setItem(storageKey, JSON.stringify(nextRecords))
+  return nextRecords
+}
+
 export function saveFavoriteTripRecords(
   records: StoredTripRecord[],
   ownerId?: string,
@@ -207,16 +244,25 @@ export function removeFavoriteTrip(recordId: string, ownerId?: string) {
 }
 
 export function createPlanFingerprint(plan: TripPlan) {
+  const stops = Array.isArray(plan.stops) ? plan.stops : []
+  const transportSegments = Array.isArray(plan.transportSegments)
+    ? plan.transportSegments
+    : []
+  const rainBackup = Array.isArray(plan.rainBackup) ? plan.rainBackup : []
+  const rainTransportSegments = Array.isArray(plan.rainTransportSegments)
+    ? plan.rainTransportSegments
+    : []
+
   return JSON.stringify({
     title: plan.title,
     subtitle: plan.subtitle,
     summary: plan.summary,
     budget: plan.budget,
     transportMode: plan.transportMode,
-    stops: plan.stops.map(normalizeStopForFingerprint),
-    transportSegments: plan.transportSegments.map(normalizeSegmentForFingerprint),
-    rainBackup: plan.rainBackup.map(normalizeStopForFingerprint),
-    rainTransportSegments: plan.rainTransportSegments.map(
+    stops: stops.map(normalizeStopForFingerprint),
+    transportSegments: transportSegments.map(normalizeSegmentForFingerprint),
+    rainBackup: rainBackup.map(normalizeStopForFingerprint),
+    rainTransportSegments: rainTransportSegments.map(
       normalizeSegmentForFingerprint,
     ),
   })
@@ -256,6 +302,19 @@ function saveRecentGeneratedPlans(
   localStorage.setItem(
     storageKey,
     JSON.stringify([...nextRecords, ...records].slice(0, MAX_RECENT_RECORDS)),
+  )
+}
+
+function mergeRecordsByFingerprint(records: StoredTripRecord[]) {
+  const recordByFingerprint = new Map<string, StoredTripRecord>()
+
+  for (const record of records) {
+    recordByFingerprint.set(createPlanFingerprint(record.plan), record)
+  }
+
+  return Array.from(recordByFingerprint.values()).sort(
+    (left, right) =>
+      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
   )
 }
 

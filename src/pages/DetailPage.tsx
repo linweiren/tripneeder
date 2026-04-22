@@ -44,7 +44,7 @@ import {
 import {
   isFavoriteRecord,
   saveFavoriteRecord,
-  upgradeRecentGeneratedRecord,
+  syncUpdatedTripRecordPlan,
 } from '../services/tripRecords/tripRecordService'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import { useAuth } from '../contexts/auth'
@@ -196,6 +196,7 @@ export function DetailPage() {
       setSelectedPlan(updatedPlan)
       updateGeneratedPlan(updatedPlan)
       updateDetailPlan(updatedPlan)
+      await persistPlanUpdate(selectedPlan, updatedPlan)
       
       // Clear order overrides if any
       setStopOrders((current) => ({ ...current, [orderMode]: [] }))
@@ -211,6 +212,12 @@ export function DetailPage() {
 
   async function handleOpenReplaceMenu(stopId: string) {
     if (!selectedPlan) return
+
+    if (replacingStopId === stopId) {
+      setReplacingStopId(null)
+      return
+    }
+
     setReplacingStopId(stopId)
     
     if (candidates.length === 0) {
@@ -264,7 +271,7 @@ export function DetailPage() {
       setSelectedPlan(updatedPlan)
       updateGeneratedPlan(updatedPlan)
       updateDetailPlan(updatedPlan)
-      await persistRecentPlanUpdate(updatedPlan)
+      await persistPlanUpdate(selectedPlan, updatedPlan)
       setReplacingStopId(null)
     } catch (error) {
       void dialog.alert({
@@ -276,15 +283,18 @@ export function DetailPage() {
     }
   }
 
-  async function persistRecentPlanUpdate(updatedPlan: TripPlan) {
-    if (sourcePage !== 'recent' || !user) {
+  async function persistPlanUpdate(
+    previousPlan: TripPlan,
+    updatedPlan: TripPlan,
+  ) {
+    if (!user) {
       return
     }
 
     try {
-      await upgradeRecentGeneratedRecord(updatedPlan, lastInput, user.id)
+      await syncUpdatedTripRecordPlan(previousPlan, updatedPlan, lastInput, user.id)
     } catch (error) {
-      console.error('Recent record update failed:', error)
+      console.error('Trip record update failed:', error)
     }
   }
 
@@ -445,6 +455,32 @@ export function DetailPage() {
   }, [])
 
   useEffect(() => {
+    if (!replacingStopId) {
+      return
+    }
+
+    function closeReplacementMenuOnOutsidePointer(event: PointerEvent) {
+      const target = event.target
+
+      if (!(target instanceof Element)) {
+        return
+      }
+
+      if (target.closest('[data-candidate-menu-root="true"]')) {
+        return
+      }
+
+      setReplacingStopId(null)
+    }
+
+    document.addEventListener('pointerdown', closeReplacementMenuOnOutsidePointer)
+
+    return () => {
+      document.removeEventListener('pointerdown', closeReplacementMenuOnOutsidePointer)
+    }
+  }, [replacingStopId])
+
+  useEffect(() => {
     if (!selectedPlan || !user || isSavingFavorite) {
       return
     }
@@ -554,6 +590,7 @@ export function DetailPage() {
     setSelectedPlan(updatedPlan)
     updateGeneratedPlan(updatedPlan)
     updateDetailPlan(updatedPlan)
+    await persistPlanUpdate(selectedPlan, updatedPlan)
   }
 
   async function applyGlobalTransportMode(nextMode: TransportMode) {
@@ -697,6 +734,7 @@ export function DetailPage() {
       setSelectedPlan(updatedPlan)
       updateGeneratedPlan(updatedPlan)
       updateDetailPlan(updatedPlan)
+      await persistPlanUpdate(selectedPlan, updatedPlan)
       setStopOrders((current) => ({ ...current, [orderMode]: [] }))
       setSegmentModeOverrides((current) => ({ ...current, [orderMode]: {} }))
       setTransportModeOverrides((current) => {
@@ -936,7 +974,12 @@ export function DetailPage() {
                       <span className="maps-link maps-link-disabled">無法導航</span>
                     )}
                     
-                    <div className="stop-edit-actions">
+                    <div
+                      className="stop-edit-actions"
+                      data-candidate-menu-root={
+                        replacingStopId === getStopId(stop, index) ? 'true' : undefined
+                      }
+                    >
                       <button
                         className="maps-link stop-edit-button"
                         type="button"
@@ -1080,10 +1123,18 @@ function buildSnapshotPlan({
   segmentModeOverrides: SegmentModeOverrides
 }): TripPlan {
   const mainMode = transportModeOverrides.main ?? plan.transportMode
-  const mainStops = applyStopOrder(plan.stops, stopOrders.main)
+  const baseMainStops = Array.isArray(plan.stops) ? plan.stops : []
+  const baseMainSegments = Array.isArray(plan.transportSegments)
+    ? plan.transportSegments
+    : []
+  const baseRainStops = Array.isArray(plan.rainBackup) ? plan.rainBackup : []
+  const baseRainSegments = Array.isArray(plan.rainTransportSegments)
+    ? plan.rainTransportSegments
+    : []
+  const mainStops = applyStopOrder(baseMainStops, stopOrders.main)
   const mainSegments = applySegmentModeOverrides(
     getGloballyAppliedTransportSegments(
-      getTransportSegments(plan.transportSegments, mainStops, plan.stops, mainMode),
+      getTransportSegments(baseMainSegments, mainStops, baseMainStops, mainMode),
       mainMode,
       transportModeOverrides.main,
     ),
@@ -1091,13 +1142,13 @@ function buildSnapshotPlan({
   )
 
   const rainMode = transportModeOverrides.rain ?? plan.transportMode
-  const rainStops = applyStopOrder(plan.rainBackup, stopOrders.rain)
+  const rainStops = applyStopOrder(baseRainStops, stopOrders.rain)
   const rainSegments = applySegmentModeOverrides(
     getGloballyAppliedTransportSegments(
       getTransportSegments(
-        plan.rainTransportSegments,
+        baseRainSegments,
         rainStops,
-        plan.rainBackup,
+        baseRainStops,
         rainMode,
       ),
       rainMode,
