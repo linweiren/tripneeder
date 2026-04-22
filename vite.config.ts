@@ -29,6 +29,11 @@ export default defineConfig(({ mode }) => {
     process.env.OPENAI_MODEL = env.OPENAI_MODEL
   }
 
+  if (env.GOOGLE_PLACES_API_KEY || env.VITE_GOOGLE_PLACES_API_KEY) {
+    process.env.GOOGLE_PLACES_API_KEY =
+      env.GOOGLE_PLACES_API_KEY || env.VITE_GOOGLE_PLACES_API_KEY
+  }
+
   if (env.SUPABASE_URL) {
     process.env.SUPABASE_URL = env.SUPABASE_URL
   }
@@ -53,6 +58,11 @@ function localApiPlugin(): Plugin {
 
       server.middlewares.use('/api/generate-trip', async (req, res) => {
         const { default: handler } = await import('./api/generate-trip')
+        await handleLocalApiRequest(req, res, handler)
+      })
+
+      server.middlewares.use('/api/geocode', async (req, res) => {
+        const { default: handler } = await import('./api/geocode')
         await handleLocalApiRequest(req, res, handler)
       })
     },

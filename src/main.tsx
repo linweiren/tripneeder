@@ -6,6 +6,7 @@ import { DetailPage } from './pages/DetailPage.tsx'
 import { FavoritesPage } from './pages/FavoritesPage.tsx'
 import { HomePage } from './pages/HomePage.tsx'
 import { LoginPage } from './pages/LoginPage.tsx'
+import { PersonaPage } from './pages/PersonaPage.tsx'
 import { PointsPage } from './pages/PointsPage.tsx'
 import { RecentPage } from './pages/RecentPage.tsx'
 import { ResultsPage } from './pages/ResultsPage.tsx'
@@ -23,6 +24,7 @@ const router = createBrowserRouter([
       { path: 'recent', element: <RecentPage /> },
       { path: 'login', element: <LoginPage /> },
       { path: 'points', element: <PointsPage /> },
+      { path: 'persona', element: <PersonaPage /> },
     ],
   },
 ])

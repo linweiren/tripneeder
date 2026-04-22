@@ -10,6 +10,7 @@ import { useAuth } from './contexts/auth'
 import './App.css'
 
 const navItems = [
+  { to: '/persona', label: '個性化設定' },
   { to: '/favorites', label: '收藏' },
   { to: '/recent', label: '最近生成' },
   { to: '/points', label: '點數管理' },

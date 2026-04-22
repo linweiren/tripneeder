@@ -7,6 +7,7 @@ import {
 } from '../src/services/ai/tripPlanPrompt.js'
 import { tripPlanDetailsResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
 import type { TripInput, TripPlan } from '../src/types/trip.js'
+import { validateStopsWithPlaces } from './_lib/google-places.js'
 
 type VercelRequest = {
   method?: string
@@ -24,6 +25,13 @@ type VercelResponse = {
 }
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
+
+const SYSTEM_DEFAULT_PERSONA = {
+  companion: '情侶 / 約會',
+  budget: '一般',
+  stamina: '普通',
+  diet: '無',
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Cache-Control', 'no-store')
@@ -56,7 +64,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    createUserScopedSupabaseClient(accessToken)
+    const supabase = createUserScopedSupabaseClient(accessToken)
+    const userId = getUserIdFromToken(accessToken)
+    const persona = await getMergedPersona(supabase, userId, request.input)
 
     const openAiResponse = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
@@ -72,7 +82,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             content: [
               {
                 type: 'input_text',
-                text: buildTripDetailsPrompt(request.input, request.plan),
+                text: buildTripDetailsPrompt(request.input, request.plan, persona),
               },
             ],
           },
@@ -102,13 +112,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return
     }
 
+    const detailedPlan = parseTripPlanDetailsResponse(text, request.plan)
+
+    // 9D: 將第一階段已經驗證過的 placeId 補回第二階段
+    // 這樣可以確保詳情頁依然保有精準的地圖連結
+    detailedPlan.stops = detailedPlan.stops.map((stop) => {
+      const originalStop = request.plan.stops.find((s) => s.id === stop.id)
+      if (originalStop?.placeId) {
+        return {
+          ...stop,
+          placeId: originalStop.placeId,
+          googleMapsUrl: originalStop.googleMapsUrl,
+          lat: originalStop.lat,
+          lng: originalStop.lng,
+          // 如果 AI 補完細節後名稱或地址變空泛了，可以用回第一階段 Google 驗證過的正式名稱
+          name: originalStop.name,
+          address: originalStop.address,
+        }
+      }
+      return stop
+    })
+
+    // 同時對其餘景點（包含雨天備案）進行一次性的 Places 驗證
+    const bias = request.input.location.lat && request.input.location.lng
+      ? { lat: request.input.location.lat, lng: request.input.location.lng }
+      : undefined
+    const { validatedPlan } = await validateStopsWithPlaces(detailedPlan, bias)
+    const stablePlan = preserveMainStopIdentity(validatedPlan, request.plan)
+
     res.status(200).json({
-      plan: parseTripPlanDetailsResponse(text, request.plan),
+      plan: stablePlan,
     })
   } catch (error) {
     res.status(502).json({
       error: error instanceof Error ? error.message : '細節補充失敗，請稍後再試。',
     })
+  }
+}
+
+function preserveMainStopIdentity(plan: TripPlan, originalPlan: TripPlan): TripPlan {
+  return {
+    ...plan,
+    stops: plan.stops.map((stop) => {
+      const originalStop = originalPlan.stops.find((candidate) => candidate.id === stop.id)
+
+      if (!originalStop?.placeId) {
+        return stop
+      }
+
+      return {
+        ...stop,
+        name: originalStop.name,
+        address: originalStop.address,
+        placeId: originalStop.placeId,
+        googleMapsUrl: originalStop.googleMapsUrl,
+        lat: originalStop.lat,
+        lng: originalStop.lng,
+      }
+    }),
   }
 }
 
@@ -132,6 +193,79 @@ function createUserScopedSupabaseClient(accessToken: string) {
       persistSession: false,
     },
   })
+}
+
+function getUserIdFromToken(accessToken: string): string | undefined {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(accessToken.split('.')[1], 'base64').toString(),
+    )
+    return payload.sub
+  } catch {
+    return undefined
+  }
+}
+
+type DbPersona = {
+  persona_companion: string | null
+  persona_budget: string | null
+  persona_stamina: string | null
+  persona_diet: string | null
+}
+
+async function getMergedPersona(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  userId: string | undefined,
+  input: TripInput,
+) {
+  let dbPersona: Partial<DbPersona> = {}
+
+  if (userId) {
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('persona_companion, persona_budget, persona_stamina, persona_diet')
+        .eq('id', userId)
+        .single()
+      if (data) {
+        dbPersona = data
+      }
+    } catch {
+      // Ignore DB errors
+    }
+  }
+
+  const budgetLabels: Record<string, string> = {
+    budget: '小資',
+    standard: '一般',
+    premium: '輕奢',
+    luxury: '豪華',
+  }
+
+  const companionLabels: Record<string, string> = {
+    date: '情侶 / 約會',
+    relax: '放鬆',
+    explore: '探索',
+    food: '美食',
+    outdoor: '戶外',
+    indoor: '室內',
+    solo: '獨旅',
+    other: '其他',
+  }
+
+  return {
+    companion:
+      companionLabels[input.category] ||
+      dbPersona.persona_companion ||
+      SYSTEM_DEFAULT_PERSONA.companion,
+    budget:
+      budgetLabels[input.budget] ||
+      dbPersona.persona_budget ||
+      SYSTEM_DEFAULT_PERSONA.budget,
+    stamina: dbPersona.persona_stamina || SYSTEM_DEFAULT_PERSONA.stamina,
+    diet: dbPersona.persona_diet || SYSTEM_DEFAULT_PERSONA.diet,
+  }
 }
 
 function parseRequestBody(body: unknown): {

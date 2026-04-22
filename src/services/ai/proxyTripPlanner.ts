@@ -14,6 +14,7 @@ type StreamEvent =
   | { event: 'done'; response: GenerateTripPlansResponse }
   | { event: 'error'; message: string }
   | { event: 'points_warning'; message: string }
+  | { event: 'plan_warning'; message: string }
 
 export class ProxyTripPlanner implements AiTripPlanner {
   async generateTripPlans(
@@ -66,6 +67,7 @@ export class ProxyTripPlanner implements AiTripPlanner {
     let buffer = ''
     let finalResponse: GenerateTripPlansResponse | null = null
     let errorMessage: string | null = null
+    const warnings: string[] = []
 
     while (true) {
       const { value, done } = await reader.read()
@@ -92,6 +94,9 @@ export class ProxyTripPlanner implements AiTripPlanner {
           finalResponse = parsed.response
         } else if (parsed.event === 'error') {
           errorMessage = parsed.message
+        } else if (parsed.event === 'plan_warning') {
+          warnings.push(parsed.message)
+          request.onWarning?.(parsed.message)
         }
       }
     }
@@ -102,6 +107,16 @@ export class ProxyTripPlanner implements AiTripPlanner {
 
     if (!isGenerateTripPlansResponse(finalResponse)) {
       throw new Error('這次 AI 產生的行程資料不夠完整，請重新分析一次。')
+    }
+
+    const combinedWarnings = Array.from(
+      new Set([...(finalResponse.warnings ?? []), ...warnings]),
+    )
+    if (combinedWarnings.length > 0) {
+      finalResponse = {
+        ...finalResponse,
+        warnings: combinedWarnings,
+      }
     }
 
     return finalResponse

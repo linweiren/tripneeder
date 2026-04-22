@@ -151,7 +151,7 @@ export function DetailPage() {
       return []
     }
 
-    return isRainMode ? selectedPlan.rainBackup : selectedPlan.stops
+    return (isRainMode ? selectedPlan.rainBackup : selectedPlan.stops) || []
   }, [isRainMode, selectedPlan])
 
   const rawTransportSegments = useMemo(() => {
@@ -159,9 +159,11 @@ export function DetailPage() {
       return []
     }
 
-    return isRainMode
-      ? selectedPlan.rainTransportSegments
-      : selectedPlan.transportSegments
+    return (
+      (isRainMode
+        ? selectedPlan.rainTransportSegments
+        : selectedPlan.transportSegments) || []
+    )
   }, [isRainMode, selectedPlan])
   const activeTransportMode =
     transportModeOverrides[orderMode] ??
@@ -598,6 +600,8 @@ export function DetailPage() {
             {stopRows.map(({ stop, startTime, endTime }, index) => {
           const stopKey = getStopKey(stop, index, isRainMode)
           const nextSegment = visibleTransportSegmentsWithOverrides[index]
+          const mapsUrl = getVerifiedMapsUrl(stop)
+          const directionsUrl = getVerifiedDirectionsUrl(stop, activeTransportMode)
 
           return (
             <SortableTimelineGroup id={getStopId(stop, index)} key={stopKey}>
@@ -651,22 +655,30 @@ export function DetailPage() {
                   </dl>
 
                   <div className="stop-actions">
-                    <a
-                      className="maps-link"
-                      href={buildMapsSearchUrl(stop)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      開啟 Google Maps
-                    </a>
-                    <a
-                      className="maps-link"
-                    href={buildDirectionsUrl(stop, activeTransportMode)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      開始導航
-                    </a>
+                    {mapsUrl ? (
+                      <a
+                        className="maps-link"
+                        href={mapsUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        開啟 Google Maps
+                      </a>
+                    ) : (
+                      <span className="maps-link maps-link-disabled">地點未驗證</span>
+                    )}
+                    {directionsUrl ? (
+                      <a
+                        className="maps-link"
+                        href={directionsUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        開始導航
+                      </a>
+                    ) : (
+                      <span className="maps-link maps-link-disabled">無法導航</span>
+                    )}
                   </div>
                 </div>
               </article>
@@ -1070,12 +1082,13 @@ function getTransportSegments(
 
 function getBaseTransportSegments(
   segments: unknown,
-  stops: Stop[],
+  stops: Stop[] | undefined,
   fallbackMode: TransportMode,
 ) {
-  if (Array.isArray(segments) && segments.length === Math.max(stops.length - 1, 0)) {
+  const safeStops = stops || []
+  if (Array.isArray(segments) && segments.length === Math.max(safeStops.length - 1, 0)) {
     const normalizedSegments = segments.map((segment, index) =>
-      normalizeTransportSegment(segment, stops, fallbackMode, index),
+      normalizeTransportSegment(segment, safeStops, fallbackMode, index),
     )
 
     if (normalizedSegments.every(isTransportSegmentValue)) {
@@ -1083,9 +1096,9 @@ function getBaseTransportSegments(
     }
   }
 
-  return stops.slice(0, -1).map((stop, index) => ({
+  return safeStops.slice(0, -1).map((stop, index) => ({
     fromStopId: getStopId(stop, index),
-    toStopId: getStopId(stops[index + 1], index + 1),
+    toStopId: getStopId(safeStops[index + 1], index + 1),
     mode: fallbackMode,
     duration: estimateLegacyTransportDuration(stop.transport),
     label: buildTransportFallbackLabel(fallbackMode),
@@ -1098,20 +1111,24 @@ function buildTransportSegmentsForOrder(
   baseSegments: TransportSegment[],
   fallbackMode: TransportMode,
 ) {
+  const safeOrderedStops = orderedStops || []
+  const safeOriginalStops = originalStops || []
+  const safeBaseSegments = baseSegments || []
+
   const averageDuration =
     Math.round(
-      baseSegments.reduce((total, segment) => total + segment.duration, 0) /
-        Math.max(baseSegments.length, 1),
+      safeBaseSegments.reduce((total, segment) => total + segment.duration, 0) /
+        Math.max(safeBaseSegments.length, 1),
     ) || 20
   const originalIndexById = new Map(
-    originalStops.map((stop, index) => [getStopId(stop, index), index]),
+    safeOriginalStops.map((stop, index) => [getStopId(stop, index), index]),
   )
 
-  return orderedStops.slice(0, -1).map((stop, index) => {
+  return safeOrderedStops.slice(0, -1).map((stop, index) => {
     const fromStopId = getStopId(stop, index)
-    const toStopId = getStopId(orderedStops[index + 1], index + 1)
+    const toStopId = getStopId(safeOrderedStops[index + 1], index + 1)
     const existingSegment = findReusableTransportSegment(
-      baseSegments,
+      safeBaseSegments,
       fromStopId,
       toStopId,
     )
@@ -1128,7 +1145,7 @@ function buildTransportSegmentsForOrder(
       fromStopId,
       toStopId,
       originalIndexById,
-      baseSegments,
+      safeBaseSegments,
       averageDuration,
     )
 
@@ -1317,21 +1334,31 @@ function getSegmentKey(segment: TransportSegment) {
 
 function buildDirectionsUrl(stop: Stop, mode: TransportMode) {
   const destination = encodeURIComponent(stop.address || stop.name)
-  const travelMode = mode === 'public_transit' ? 'transit' : 'driving'
+  const travelMode =
+    mode === 'public_transit' ? 'transit' : mode === 'scooter' ? 'two-wheeler' : 'driving'
+  const placeParam = stop.placeId ? `&destination_place_id=${stop.placeId}` : ''
 
-  return `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=${travelMode}`
+  return `https://www.google.com/maps/dir/?api=1&destination=${destination}${placeParam}&travelmode=${travelMode}&dir_action=navigate`
 }
 
-function buildMapsSearchUrl(stop: Stop) {
-  if (stop.googleMapsUrl) {
+function getVerifiedMapsUrl(stop: Stop) {
+  if (stop.googleMapsUrl && !stop.googleMapsUrl.includes('/maps/search/')) {
     return stop.googleMapsUrl
   }
 
-  const query = encodeURIComponent(
-    [stop.name, stop.address].filter(Boolean).join(' '),
-  )
+  if (stop.placeId) {
+    return `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(stop.placeId)}`
+  }
 
-  return `https://www.google.com/maps/search/?api=1&query=${query}`
+  return null
+}
+
+function getVerifiedDirectionsUrl(stop: Stop, mode: TransportMode) {
+  if (!stop.placeId) {
+    return null
+  }
+
+  return buildDirectionsUrl(stop, mode)
 }
 
 function getStopId(stop: Stop | undefined, index: number) {

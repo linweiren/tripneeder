@@ -53,6 +53,9 @@ export type Stop = {
   duration: number
   transport?: string
   googleMapsUrl?: string
+  placeId?: string
+  lat?: number
+  lng?: number
 }
 
 export type TransportSegment = {

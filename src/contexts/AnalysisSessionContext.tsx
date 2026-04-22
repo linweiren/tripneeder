@@ -62,6 +62,7 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       startedAt,
       updatedAt: startedAt,
       lastRoute: '/',
+      warnings: [],
       partialPlans: [],
     }
 
@@ -81,6 +82,21 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
             const nextState = {
               ...current,
               partialPlans: nextPartial,
+              updatedAt: getTimestamp(),
+            }
+            saveAnalysisSession(nextState)
+            return nextState
+          })
+        },
+        onWarning: (message) => {
+          if (requestId !== requestIdRef.current) return
+          setSession((current) => {
+            if (!current || current.status !== 'analyzing') return current
+            const currentWarnings = current.warnings ?? []
+            if (currentWarnings.includes(message)) return current
+            const nextState = {
+              ...current,
+              warnings: [...currentWarnings, message],
               updatedAt: getTimestamp(),
             }
             saveAnalysisSession(nextState)
@@ -109,6 +125,7 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
         startedAt,
         updatedAt: getTimestamp(),
         lastRoute: '/results',
+        warnings: response.warnings,
       }
 
       setAndStoreSession(successSession)
@@ -389,7 +406,10 @@ function isAnalysisSession(value: unknown): value is AnalysisSession {
     typeof value.startedAt === 'number' &&
     typeof value.updatedAt === 'number' &&
     typeof value.lastRoute === 'string' &&
-    (typeof value.error === 'undefined' || typeof value.error === 'string')
+    (typeof value.error === 'undefined' || typeof value.error === 'string') &&
+    (typeof value.warnings === 'undefined' ||
+      (Array.isArray(value.warnings) &&
+        value.warnings.every((warning) => typeof warning === 'string')))
   )
 }
 

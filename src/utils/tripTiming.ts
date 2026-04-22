@@ -18,12 +18,12 @@ export function getAllowedTripMinutes(input: TripInput | null) {
 }
 
 export function getPlanActualDuration(plan: TripPlan) {
-  return getTimelineDuration(plan.stops, plan.transportSegments)
+  return getTimelineDuration(plan.stops ?? [], plan.transportSegments ?? [])
 }
 
 export function getTimelineDuration(
-  stops: Array<{ duration: number }>,
-  transportSegments: TransportSegment[],
+  stops: Array<{ duration: number }> = [],
+  transportSegments: TransportSegment[] = [],
 ) {
   return (
     stops.reduce((total, stop) => total + stop.duration, 0) +

@@ -7,15 +7,25 @@ export type PartialTripPlan = Partial<TripPlan> & {
   summary?: string
 }
 
+export type Persona = {
+  companion?: string
+  budget?: string
+  stamina?: string
+  diet?: string
+}
+
 export type GenerateTripPlansRequest = {
   input: TripInput
+  persona?: Persona
   accessToken?: string
   signal?: AbortSignal
   onPlan?: (plan: PartialTripPlan) => void
+  onWarning?: (message: string) => void
 }
 
 export type GenerateTripPlansResponse = {
   plans: TripPlan[]
+  warnings?: string[]
 }
 
 export type CompleteTripPlanDetailsRequest = {

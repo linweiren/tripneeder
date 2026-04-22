@@ -12,6 +12,7 @@ const stopSchema = {
     description: { type: 'string' },
     address: { type: 'string' },
     duration: { type: 'number' },
+    placeId: { type: 'string' },
   },
 }
 
@@ -28,6 +29,7 @@ const skeletonStopSchema = {
     },
     address: { type: 'string' },
     duration: { type: 'number' },
+    placeId: { type: 'string' },
   },
 }
 
@@ -98,7 +100,6 @@ const planSchema = {
     stops: {
       type: 'array',
       minItems: 2,
-      maxItems: 6,
       items: stopSchema,
     },
     transportSegments: {
@@ -108,7 +109,6 @@ const planSchema = {
     rainBackup: {
       type: 'array',
       minItems: 2,
-      maxItems: 6,
       items: stopSchema,
     },
     rainTransportSegments: {
@@ -171,7 +171,6 @@ export const tripPlanSkeletonResponseSchema = {
           stops: {
             type: 'array',
             minItems: 2,
-            maxItems: 6,
             items: skeletonStopSchema,
           },
           transportSegments: {

@@ -1,9 +1,18 @@
 /// <reference types="node" />
 
-import { buildTripPrompt, parseTripPlanSkeletonResponse } from '../src/services/ai/tripPlanPrompt.js'
+import { buildTripPrompt, buildRetryTripSkeletonPrompt, parseTripPlanSkeletonResponse } from '../src/services/ai/tripPlanPrompt.js'
 import { tripPlanSkeletonResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
 import type { GenerateTripPlansRequest } from '../src/services/ai/types.js'
 import { createClient } from '@supabase/supabase-js'
+import {
+  validateStopsWithPlaces,
+  getNearbyPlaceCandidates,
+  formatNearbyRecommendations,
+  type PlacesValidationResult,
+  type NearbyPlaceCandidates,
+  type VerifiedPlaceCandidate,
+} from './_lib/google-places.js'
+import type { Stop, TransportSegment, TripPlan } from '../src/types/trip.js'
 
 type VercelRequest = {
   method?: string
@@ -29,14 +38,36 @@ type RpcResult<T> = PromiseLike<{
   } | null
 }>
 
+type DbPersona = {
+  persona_companion: string | null
+  persona_budget: string | null
+  persona_stamina: string | null
+  persona_diet: string | null
+}
+
 type PointsSupabaseClient = {
   rpc: <T = unknown>(
     fn: string,
     args?: Record<string, unknown>,
   ) => RpcResult<T>
+  from: (table: string) => {
+    select: (columns: string) => {
+      eq: (column: string, value: unknown) => {
+        single: () => Promise<{ data: DbPersona | null; error: { message: string } | null }>
+      }
+    }
+  }
+}
+
+const SYSTEM_DEFAULT_PERSONA = {
+  companion: '情侶 / 約會',
+  budget: '一般',
+  stamina: '普通',
+  diet: '無',
 }
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
+const ROUTES_API_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes'
 const ANALYSIS_COST = 20
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -70,8 +101,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   let supabase: PointsSupabaseClient
+  let userId: string | undefined
   try {
     supabase = createUserScopedSupabaseClient(accessToken)
+    userId = getUserIdFromToken(accessToken)
     const balance = await getAvailablePoints(supabase)
 
     if (balance < ANALYSIS_COST) {
@@ -86,6 +119,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
     return
   }
+
+  // 獲取並合併人設
+  const persona = await getMergedPersona(supabase, userId, request.input)
+
+  // 9D-7: 智慧前置搜尋 (Search-Inject)
+  const nearbyPlaceCandidates = await getNearbyPlaceCandidates(request)
+  const nearbyPlaces = formatNearbyRecommendations(nearbyPlaceCandidates)
 
   res.status(200)
   res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8')
@@ -111,7 +151,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             content: [
               {
                 type: 'input_text',
-                text: buildTripPrompt(request.input),
+                text: buildTripPrompt(request.input, persona, nearbyPlaces),
               },
             ],
           },
@@ -138,6 +178,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const extractor = new PlanExtractor()
     let fullText = ''
     let pointsConsumed = false
+    const validatedPlans: TripPlan[] = []
+    const invalidPlanIds: string[] = []
+    const validationSummaries = new Map<string, string[]>()
 
     const reader = openAiResponse.body.getReader()
     const decoder = new TextDecoder('utf-8')
@@ -159,22 +202,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const plans = extractor.push(delta)
 
         for (const plan of plans) {
-          writeEvent({ event: 'plan', plan })
+          const bias = request.input.location.lat && request.input.location.lng
+            ? { lat: request.input.location.lat, lng: request.input.location.lng }
+            : undefined
 
-          if (!pointsConsumed) {
-            pointsConsumed = true
-            try {
-              await consumeAnalysisPoints(supabase)
-            } catch (error) {
-              writeEvent({
-                event: 'points_warning',
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : '扣點流程失敗，請稍後再試。',
-              })
+          const validation = await validateStopsWithPlaces(plan as TripPlan, bias)
+          const validatedPlan = normalizePlanTotalTime(validation.validatedPlan)
+          const qualityIssues = getPlanQualityIssues(
+            validatedPlan,
+            request.input,
+            validation.issues,
+          )
+          
+          if (qualityIssues.length > 0) {
+            if (!invalidPlanIds.includes(validatedPlan.id)) {
+              invalidPlanIds.push(validatedPlan.id)
             }
+            validationSummaries.set(validatedPlan.id, qualityIssues)
           }
+
+          upsertValidatedPlan(validatedPlans, validatedPlan)
+          writeEvent({ event: 'plan', plan: validatedPlan })
         }
       }
     }
@@ -182,6 +230,141 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let finalResponse
     try {
       finalResponse = parseTripPlanSkeletonResponse(fullText)
+
+      for (const plan of finalResponse.plans) {
+        const bias = request.input.location.lat && request.input.location.lng
+          ? { lat: request.input.location.lat, lng: request.input.location.lng }
+          : undefined
+        const validation = await validateStopsWithPlaces(plan as TripPlan, bias)
+        const validatedPlan = normalizePlanTotalTime(validation.validatedPlan)
+        const qualityIssues = getPlanQualityIssues(
+          validatedPlan,
+          request.input,
+          validation.issues,
+        )
+        upsertValidatedPlan(validatedPlans, validatedPlan)
+
+        if (qualityIssues.length > 0) {
+          if (!invalidPlanIds.includes(validatedPlan.id)) {
+            invalidPlanIds.push(validatedPlan.id)
+          }
+          validationSummaries.set(validatedPlan.id, qualityIssues)
+        } else {
+          validationSummaries.delete(validatedPlan.id)
+        }
+      }
+
+      // 9D-5: 自動重試失效方案
+      if (invalidPlanIds.length > 0) {
+        const retriedPlanIds = new Set<string>()
+        try {
+          const retryPrompt = buildRetryTripSkeletonPrompt(
+            request.input,
+            invalidPlanIds,
+            persona,
+            nearbyPlaces,
+            formatRetryValidationSummaries(invalidPlanIds, validationSummaries),
+          )
+          const retryResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              model: OPENAI_MODEL,
+              messages: [{ role: 'user', content: retryPrompt }],
+              response_format: {
+                type: 'json_schema',
+                json_schema: {
+                  name: 'trip_plan_skeleton_response',
+                  strict: true,
+                  schema: tripPlanSkeletonResponseSchema,
+                },
+              },
+            }),
+          })
+
+          if (retryResponse.ok) {
+            const retryData = (await retryResponse.json()) as {
+              choices: Array<{ message: { content: string } }>
+            }
+            const retryText = retryData.choices[0].message.content
+            const retryParsed = parseTripPlanSkeletonResponse(retryText)
+
+            for (const plan of retryParsed.plans) {
+              if (invalidPlanIds.includes(plan.id)) {
+                const bias = request.input.location.lat && request.input.location.lng
+                  ? { lat: request.input.location.lat, lng: request.input.location.lng }
+                  : undefined
+                const validation = await validateStopsWithPlaces(plan as TripPlan, bias)
+                const validatedPlan = normalizePlanTotalTime(validation.validatedPlan)
+                const qualityIssues = getPlanQualityIssues(
+                  validatedPlan,
+                  request.input,
+                  validation.issues,
+                )
+                retriedPlanIds.add(plan.id)
+                upsertValidatedPlan(validatedPlans, validatedPlan)
+                if (qualityIssues.length > 0) {
+                  validationSummaries.set(plan.id, qualityIssues)
+                } else {
+                  validationSummaries.delete(plan.id)
+                }
+              }
+            }
+          } else {
+            invalidPlanIds.forEach((planId) => {
+              if (!validationSummaries.has(planId)) {
+                validationSummaries.set(planId, ['重試請求失敗'])
+              }
+            })
+          }
+        } catch (error) {
+          console.error('Retry failed:', error)
+          invalidPlanIds.forEach((planId) => {
+            if (!validationSummaries.has(planId)) {
+              validationSummaries.set(planId, ['重試請求失敗'])
+            }
+          })
+        }
+
+        invalidPlanIds.forEach((planId) => {
+          if (!retriedPlanIds.has(planId)) {
+            if (!validationSummaries.has(planId)) {
+              validationSummaries.set(planId, ['重試後仍未取得可驗收方案'])
+            }
+          }
+        })
+      }
+
+      // 用驗證過的 plans 覆寫 finalResponse 裡的內容，確保最終結果一致
+      finalResponse.plans = finalResponse.plans.map((p) => {
+        const validated = validatedPlans.find((vp) => vp.id === p.id)
+        return validated || p
+      })
+
+      finalResponse.plans = await Promise.all(
+        finalResponse.plans.map((plan) =>
+          repairPlanForDelivery(plan, request.input, nearbyPlaceCandidates),
+        ),
+      )
+      validationSummaries.clear()
+
+      if (!pointsConsumed) {
+        pointsConsumed = true
+        try {
+          await consumeAnalysisPoints(supabase)
+        } catch (error) {
+          writeEvent({
+            event: 'points_warning',
+            message:
+              error instanceof Error
+                ? error.message
+                : '扣點流程失敗，請稍後再試。',
+          })
+        }
+      }
     } catch (error) {
       writeEvent({
         event: 'error',
@@ -204,6 +387,564 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
     res.end()
   }
+}
+
+function normalizePlanTotalTime(plan: TripPlan): TripPlan {
+  return {
+    ...plan,
+    totalTime: getPlanActualDuration(plan),
+  }
+}
+
+function upsertValidatedPlan(plans: TripPlan[], nextPlan: TripPlan) {
+  const existingIndex = plans.findIndex((plan) => plan.id === nextPlan.id)
+
+  if (existingIndex >= 0) {
+    plans[existingIndex] = nextPlan
+    return
+  }
+
+  plans.push(nextPlan)
+}
+
+async function repairPlanForDelivery(
+  plan: TripPlan,
+  input: GenerateTripPlansRequest['input'],
+  candidates: NearbyPlaceCandidates,
+): Promise<TripPlan> {
+  const usedPlaceIds = new Set<string>()
+  const repairedStops = plan.stops.map((stop, index) => {
+    const candidate = pickCandidateForStop(stop, index, candidates, usedPlaceIds)
+    if (!candidate) return stop
+
+    usedPlaceIds.add(candidate.placeId)
+    return applyCandidateToStop(stop, candidate)
+  })
+  const expandedStops = expandStopsForLongTrip(repairedStops, input, candidates, usedPlaceIds)
+  const repairedSegments = await repairTransportSegments(
+    plan.transportSegments,
+    expandedStops,
+    plan.transportMode,
+  )
+  const timeRepairedPlan = stretchPlanDurationToCoverage(
+    {
+      ...plan,
+      stops: expandedStops,
+      transportSegments: repairedSegments,
+    },
+    input,
+  )
+
+  return {
+    ...timeRepairedPlan,
+    totalTime: getPlanActualDuration(timeRepairedPlan),
+  }
+}
+
+function pickCandidateForStop(
+  stop: Stop,
+  index: number,
+  candidates: NearbyPlaceCandidates,
+  usedPlaceIds: Set<string>,
+) {
+  const existingCandidate = candidates.allCandidates.find(
+    (candidate) =>
+      candidate.placeId === stop.placeId &&
+      (index !== 0 ||
+        candidates.firstStopCandidates.length === 0 ||
+        candidates.firstStopCandidates.some((first) => first.placeId === candidate.placeId)),
+  )
+
+  if (existingCandidate && !usedPlaceIds.has(existingCandidate.placeId)) {
+    return existingCandidate
+  }
+
+  const pool =
+    index === 0
+      ? candidates.firstStopCandidates.length > 0
+        ? preferNonShortVisitCandidates(candidates.firstStopCandidates)
+        : candidates.allCandidates
+      : getCandidatePoolByStopType(stop, candidates)
+
+  return (
+    pool.find((candidate) => !usedPlaceIds.has(candidate.placeId)) ??
+    candidates.allCandidates.find((candidate) => !usedPlaceIds.has(candidate.placeId)) ??
+    pool[0] ??
+    null
+  )
+}
+
+function preferNonShortVisitCandidates(candidates: VerifiedPlaceCandidate[]) {
+  const nonShortVisitCandidates = candidates.filter(
+    (candidate) => !isShortVisitCandidate(candidate),
+  )
+
+  return nonShortVisitCandidates.length > 0 ? nonShortVisitCandidates : candidates
+}
+
+function getCandidatePoolByStopType(stop: Stop, candidates: NearbyPlaceCandidates) {
+  const basePool =
+    candidates.otherCandidates.length > 0 ? candidates.otherCandidates : candidates.allCandidates
+  const typedPool = basePool.filter((candidate) => {
+    const types = candidate.types ?? []
+    const isShortVisit = isShortVisitCandidate(candidate)
+
+    if (stop.type === 'food') {
+      return types.some((type) =>
+        ['restaurant', 'cafe', 'bakery', 'meal_takeaway', 'food'].includes(type),
+      )
+    }
+
+    return (
+      !isShortVisit &&
+      !types.some((type) =>
+        ['restaurant', 'cafe', 'bakery', 'meal_takeaway'].includes(type),
+      )
+    )
+  })
+
+  return typedPool.length > 0 ? typedPool : basePool
+}
+
+function isShortVisitCandidate(candidate: VerifiedPlaceCandidate) {
+  const text = `${candidate.name} ${candidate.address}`.toLocaleLowerCase('zh-TW')
+  return /(局|署|所|處|公所|辦公|服務中心|銀行|郵局|醫院|診所|公司|分局)/.test(text)
+}
+
+function applyCandidateToStop(stop: Stop, candidate: VerifiedPlaceCandidate): Stop {
+  return {
+    ...stop,
+    name: candidate.name,
+    address: candidate.address,
+    placeId: candidate.placeId,
+    googleMapsUrl: candidate.googleMapsUrl,
+    lat: candidate.lat,
+    lng: candidate.lng,
+  }
+}
+
+function expandStopsForLongTrip(
+  stops: Stop[],
+  input: GenerateTripPlansRequest['input'],
+  candidates: NearbyPlaceCandidates,
+  usedPlaceIds: Set<string>,
+) {
+  const allowedMinutes = getAllowedTripMinutes(input)
+  if (!allowedMinutes) return stops
+
+  const minimumMinutes = Math.ceil(allowedMinutes * getRequiredCoverageRatio(allowedMinutes))
+  const expandedStops = [...stops]
+  const candidatePool = preferNonShortVisitCandidates(
+    candidates.otherCandidates.length > 0 ? candidates.otherCandidates : candidates.allCandidates,
+  )
+
+  while (
+    getMaxPossibleStopDuration(expandedStops) + estimateTransportTotal(expandedStops) <
+    minimumMinutes
+  ) {
+    const nextCandidate = candidatePool.find(
+      (candidate) => !usedPlaceIds.has(candidate.placeId) && !isShortVisitCandidate(candidate),
+    )
+    if (!nextCandidate) break
+
+    usedPlaceIds.add(nextCandidate.placeId)
+    const insertionIndex = Math.max(expandedStops.length - 1, 1)
+    expandedStops.splice(
+      insertionIndex,
+      0,
+      applyCandidateToStop(
+        {
+          id: buildSupplementalStopId(input, expandedStops.length + 1),
+          name: nextCandidate.name,
+          type: inferStopTypeFromCandidate(nextCandidate),
+          description: '',
+          address: nextCandidate.address,
+          duration: getDefaultStopDuration(inferStopTypeFromCandidate(nextCandidate)),
+        },
+        nextCandidate,
+      ),
+    )
+  }
+
+  return expandedStops
+}
+
+function getMaxPossibleStopDuration(stops: Stop[]) {
+  return stops.reduce((total, stop) => total + getMaximumStopDuration(stop), 0)
+}
+
+function estimateTransportTotal(stops: Stop[]) {
+  return Math.max(stops.length - 1, 0) * 18
+}
+
+function buildSupplementalStopId(input: GenerateTripPlansRequest['input'], index: number) {
+  const prefix = input.category === 'other' ? 'main' : input.category
+  return `supplemental-${prefix}-${index}`
+}
+
+function inferStopTypeFromCandidate(candidate: VerifiedPlaceCandidate): Stop['type'] {
+  const types = candidate.types ?? []
+  if (types.some((type) => ['restaurant', 'cafe', 'bakery', 'meal_takeaway', 'food'].includes(type))) {
+    return 'food'
+  }
+
+  return 'main_activity'
+}
+
+function getDefaultStopDuration(type: Stop['type']) {
+  if (type === 'food') return 60
+  if (type === 'ending_or_transition') return 45
+
+  return 75
+}
+
+async function repairTransportSegments(
+  segments: TransportSegment[],
+  stops: Stop[],
+  fallbackMode: TripPlan['transportMode'],
+) {
+  const expectedLength = Math.max(stops.length - 1, 0)
+  const nextSegments = await Promise.all(Array.from({ length: expectedLength }, async (_, index) => {
+    const existing = segments[index]
+    const mode = existing?.mode ?? fallbackMode
+    const routeInfo = await getRouteInfo(stops[index], stops[index + 1], mode)
+
+    return {
+      fromStopId: stops[index].id,
+      toStopId: stops[index + 1].id,
+      mode,
+      publicTransitType: existing?.publicTransitType,
+      duration:
+        routeInfo?.durationMinutes ??
+        estimateSegmentDuration(stops[index], stops[index + 1], mode),
+      label: buildTransportLabel(mode, existing?.publicTransitType, routeInfo?.distanceMeters),
+    }
+  }))
+
+  return nextSegments
+}
+
+async function getRouteInfo(from: Stop, to: Stop, mode: TripPlan['transportMode']) {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY
+  if (
+    !apiKey ||
+    typeof from.lat !== 'number' ||
+    typeof from.lng !== 'number' ||
+    typeof to.lat !== 'number' ||
+    typeof to.lng !== 'number'
+  ) {
+    return null
+  }
+
+  try {
+    const response = await fetch(ROUTES_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters',
+      },
+      body: JSON.stringify({
+        origin: {
+          location: {
+            latLng: { latitude: from.lat, longitude: from.lng },
+          },
+        },
+        destination: {
+          location: {
+            latLng: { latitude: to.lat, longitude: to.lng },
+          },
+        },
+        travelMode: toRoutesTravelMode(mode),
+      }),
+    })
+
+    if (!response.ok) return null
+
+    const data = (await response.json()) as {
+      routes?: Array<{ duration?: string; distanceMeters?: number }>
+    }
+    const route = data.routes?.[0]
+    if (!route) return null
+
+    return {
+      durationMinutes: parseGoogleDurationToMinutes(route.duration),
+      distanceMeters: route.distanceMeters,
+    }
+  } catch {
+    return null
+  }
+}
+
+function toRoutesTravelMode(mode: TripPlan['transportMode']) {
+  if (mode === 'public_transit') return 'TRANSIT'
+  if (mode === 'scooter') return 'TWO_WHEELER'
+
+  return 'DRIVE'
+}
+
+function parseGoogleDurationToMinutes(duration?: string) {
+  const seconds = Number(duration?.replace(/s$/, ''))
+  if (!Number.isFinite(seconds)) return undefined
+
+  return Math.max(1, Math.round(seconds / 60))
+}
+
+function estimateSegmentDuration(from: Stop, to: Stop, mode: TripPlan['transportMode']) {
+  const distanceKm = getStopDistanceKm(from, to)
+
+  if (distanceKm === null) {
+    return mode === 'public_transit' ? 25 : 18
+  }
+
+  const speedByMode: Record<TripPlan['transportMode'], number> = {
+    scooter: 24,
+    car: 28,
+    public_transit: 16,
+  }
+  const bufferByMode: Record<TripPlan['transportMode'], number> = {
+    scooter: 7,
+    car: 10,
+    public_transit: 14,
+  }
+  const minutes = Math.round((distanceKm / speedByMode[mode]) * 60 + bufferByMode[mode])
+
+  return clamp(minutes, mode === 'public_transit' ? 12 : 8, mode === 'public_transit' ? 55 : 45)
+}
+
+function getStopDistanceKm(from: Stop, to: Stop) {
+  if (
+    typeof from.lat !== 'number' ||
+    typeof from.lng !== 'number' ||
+    typeof to.lat !== 'number' ||
+    typeof to.lng !== 'number'
+  ) {
+    return null
+  }
+
+  return calculateDistance(from.lat, from.lng, to.lat, to.lng)
+}
+
+function buildTransportLabel(
+  mode: TripPlan['transportMode'],
+  publicTransitType?: TransportSegment['publicTransitType'],
+  distanceMeters?: number,
+) {
+  const distanceText =
+    typeof distanceMeters === 'number' && distanceMeters > 0
+      ? `約 ${formatDistance(distanceMeters)}`
+      : ''
+
+  if (mode === 'public_transit') {
+    if (publicTransitType === 'walk') return joinTransportLabel('步行轉乘', distanceText)
+    if (publicTransitType === 'metro') return joinTransportLabel('捷運接駁', distanceText)
+    if (publicTransitType === 'bus') return joinTransportLabel('公車接駁', distanceText)
+    if (publicTransitType === 'train') return joinTransportLabel('鐵路接駁', distanceText)
+    return joinTransportLabel('大眾運輸', distanceText)
+  }
+
+  return joinTransportLabel(mode === 'car' ? '開車前往' : '騎車前往', distanceText)
+}
+
+function joinTransportLabel(label: string, distanceText: string) {
+  return distanceText ? `${label}・${distanceText}` : label
+}
+
+function formatDistance(distanceMeters: number) {
+  if (distanceMeters < 1000) return `${Math.round(distanceMeters)} m`
+
+  return `${(distanceMeters / 1000).toFixed(1)} km`
+}
+
+function stretchPlanDurationToCoverage(
+  plan: TripPlan,
+  input: GenerateTripPlansRequest['input'],
+) {
+  const allowedMinutes = getAllowedTripMinutes(input)
+  if (!allowedMinutes || plan.stops.length === 0) return normalizePlanTotalTime(plan)
+
+  const minimumMinutes = Math.ceil(allowedMinutes * getRequiredCoverageRatio(allowedMinutes))
+  const currentMinutes = getPlanActualDuration(plan)
+  const extraMinutes = minimumMinutes - currentMinutes
+
+  if (extraMinutes <= 0) return normalizePlanTotalTime(plan)
+
+  const durations = plan.stops.map((stop) =>
+    clamp(stop.duration, getMinimumStopDuration(stop), getMaximumStopDuration(stop)),
+  )
+  let remainingExtra =
+    minimumMinutes -
+    (durations.reduce((total, duration) => total + duration, 0) +
+      plan.transportSegments.reduce((total, segment) => total + segment.duration, 0))
+  const weights = plan.stops.map(getStopStretchWeight)
+
+  while (remainingExtra > 0) {
+    const candidates = plan.stops
+      .map((stop, index) => ({
+        index,
+        room: getMaximumStopDuration(stop) - durations[index],
+        weight: weights[index],
+      }))
+      .filter((candidate) => candidate.room > 0 && candidate.weight > 0)
+      .sort((left, right) => right.weight - left.weight || right.room - left.room)
+
+    if (candidates.length === 0) break
+
+    for (const candidate of candidates) {
+      if (remainingExtra <= 0) break
+      const addMinutes = Math.min(candidate.room, Math.max(5, candidate.weight * 5), remainingExtra)
+      durations[candidate.index] += addMinutes
+      remainingExtra -= addMinutes
+    }
+  }
+
+  return normalizePlanTotalTime({
+    ...plan,
+    stops: plan.stops.map((stop, index) => ({
+      ...stop,
+      duration: durations[index],
+    })),
+  })
+}
+
+function getMinimumStopDuration(stop: Stop) {
+  if (stop.type === 'food') return 45
+
+  return 30
+}
+
+function getMaximumStopDuration(stop: Stop) {
+  const text = `${stop.name} ${stop.address}`.toLocaleLowerCase('zh-TW')
+
+  if (stop.type === 'food') return 90
+  if (/(局|署|所|處|公所|辦公|服務中心|銀行|郵局|醫院|診所|公司|分局)/.test(text)) {
+    return 45
+  }
+  if (/(市場|商圈|老街|夜市|百貨|購物|mall|outlet)/i.test(text)) return 150
+  if (/(博物館|美術館|展覽|園區|文化|文創|藝術|science|museum)/i.test(text)) return 150
+  if (/(公園|步道|海邊|湖|山|森林|河濱|草地|park)/i.test(text)) return 120
+  if (/(咖啡|書店|茶|甜點|cafe|coffee)/i.test(text)) return 100
+
+  return 90
+}
+
+function getStopStretchWeight(stop: Stop) {
+  const maxDuration = getMaximumStopDuration(stop)
+
+  if (maxDuration <= 45) return 0
+  if (stop.type === 'food') return 1
+  if (maxDuration >= 150) return 4
+  if (maxDuration >= 120) return 3
+
+  return 2
+}
+
+function getPlanQualityIssues(
+  plan: TripPlan,
+  input: GenerateTripPlansRequest['input'],
+  placesIssues: PlacesValidationResult['issues'],
+) {
+  const issues = placesIssues.map((issue) => formatPlacesValidationReason(issue.reason))
+  const allowedMinutes = getAllowedTripMinutes(input)
+
+  if (allowedMinutes) {
+    const actualMinutes = getPlanActualDuration(plan)
+    const minimumMinutes = Math.ceil(allowedMinutes * getRequiredCoverageRatio(allowedMinutes))
+
+    if (actualMinutes < minimumMinutes) {
+      issues.push(
+        `行程時長不足（目前 ${actualMinutes} 分鐘，至少需要 ${minimumMinutes} 分鐘）`,
+      )
+    }
+  }
+
+  return Array.from(new Set(issues))
+}
+
+function formatRetryValidationSummaries(
+  invalidPlanIds: string[],
+  validationSummaries: Map<string, string[]>,
+) {
+  return invalidPlanIds.map((planId) => {
+    const summary = validationSummaries.get(planId)?.join('、') || '未通過品質檢查'
+    return `${getPlanLabel(planId)}：${summary}`
+  })
+}
+
+function getPlanActualDuration(plan: TripPlan) {
+  return (
+    plan.stops.reduce((total, stop) => total + stop.duration, 0) +
+    plan.transportSegments.reduce((total, segment) => total + segment.duration, 0)
+  )
+}
+
+function getAllowedTripMinutes(input: GenerateTripPlansRequest['input']) {
+  const start = parseTimeToMinutes(input.startTime)
+  const end = parseTimeToMinutes(input.endTime)
+
+  if (start === null || end === null) return null
+
+  return end >= start ? end - start : end + 24 * 60 - start
+}
+
+function parseTimeToMinutes(value?: string) {
+  if (!value || !/^\d{2}:\d{2}$/.test(value)) return null
+
+  const [hour, minute] = value.split(':').map(Number)
+  return hour * 60 + minute
+}
+
+function getRequiredCoverageRatio(allowedMinutes: number) {
+  if (allowedMinutes <= 4 * 60) return 0.7
+  if (allowedMinutes <= 8 * 60) return 0.75
+  if (allowedMinutes <= 12 * 60) return 0.8
+
+  return 0.7
+}
+
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const earthRadiusKm = 6371
+  const dLat = toRadians(lat2 - lat1)
+  const dLon = toRadians(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return earthRadiusKm * c
+}
+
+function toRadians(degrees: number) {
+  return (degrees * Math.PI) / 180
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+function getPlanLabel(planId: string) {
+  const planLabelMap: Record<string, string> = {
+    safe: '保守型方案',
+    balanced: '平衡型方案',
+    explore: '探索型方案',
+  }
+
+  return planLabelMap[planId] ?? `方案 ${planId}`
+}
+
+function formatPlacesValidationReason(reason: string) {
+  const labelMap: Record<string, string> = {
+    not_found: '查無此地',
+    low_similarity: '搜尋結果相似度不足',
+    generic_name: '地點名稱過於空泛',
+    first_stop_too_far: '第一站距離起點超過 2 公里',
+    closed: '地點疑似停業',
+    maps_uri_missing: 'Google Maps 官方連結缺失',
+  }
+
+  return labelMap[reason] ?? reason
 }
 
 function extractDeltaFromSseEvent(rawEvent: string): string {
@@ -410,6 +1151,71 @@ async function readOpenAiErrorDetail(response: Response) {
     return data.error?.message ?? ''
   } catch {
     return ''
+  }
+}
+
+function getUserIdFromToken(accessToken: string): string | undefined {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(accessToken.split('.')[1], 'base64').toString(),
+    )
+    return payload.sub
+  } catch {
+    return undefined
+  }
+}
+
+async function getMergedPersona(
+  supabase: PointsSupabaseClient,
+  userId: string | undefined,
+  input: GenerateTripPlansRequest['input'],
+) {
+  let dbPersona: Partial<DbPersona> = {}
+
+  if (userId) {
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('persona_companion, persona_budget, persona_stamina, persona_diet')
+        .eq('id', userId)
+        .single()
+      if (data) {
+        dbPersona = data
+      }
+    } catch {
+      // Ignore DB errors, fallback to defaults
+    }
+  }
+
+  const budgetLabels: Record<string, string> = {
+    budget: '小資',
+    standard: '一般',
+    premium: '輕奢',
+    luxury: '豪華',
+  }
+
+  const companionLabels: Record<string, string> = {
+    date: '情侶 / 約會',
+    relax: '放鬆',
+    explore: '探索',
+    food: '美食',
+    outdoor: '戶外',
+    indoor: '室內',
+    solo: '獨旅',
+    other: '其他',
+  }
+
+  return {
+    companion:
+      companionLabels[input.category] ||
+      dbPersona.persona_companion ||
+      SYSTEM_DEFAULT_PERSONA.companion,
+    budget:
+      budgetLabels[input.budget] ||
+      dbPersona.persona_budget ||
+      SYSTEM_DEFAULT_PERSONA.budget,
+    stamina: dbPersona.persona_stamina || SYSTEM_DEFAULT_PERSONA.stamina,
+    diet: dbPersona.persona_diet || SYSTEM_DEFAULT_PERSONA.diet,
   }
 }
 

@@ -1,0 +1,95 @@
+export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlaces?: string) {
+  const tags = input.tags.map((tag) => tagLabels[tag]).join('、') || '無'
+  const wantsNoFullMeals = input.tags.includes('no_full_meals')
+  const category =
+    input.category === 'other' && input.customCategory
+      ? `其他：${input.customCategory}`
+      : categoryLabels[input.category]
+  const location = [
+    input.location.name ? `地點文字：${input.location.name}` : '',
+    typeof input.location.lat === 'number' && typeof input.location.lng === 'number'
+      ? `座標：${input.location.lat}, ${input.location.lng}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('；')
+
+  const personaContext = persona
+    ? `
+- 使用者人設背景：
+  - 同行對象：${persona.companion || '未指定'}
+  - 預算偏好：${persona.budget || '未指定'}
+  - 體力狀況：${persona.stamina || '未指定'}
+  - 飲食禁忌：${persona.diet || '無'}
+`.trim()
+    : ''
+
+  const nearbyPlacesContext = nearbyPlaces
+    ? `
+- 起點附近的真實地點參考（來自 Google Maps 即時搜尋）：
+${nearbyPlaces}
+
+重要指示：
+1. 第一站（即 stops[0]）必須距離起點 2km 內。請優先從上方「強烈推薦作為第一站（2km 內）」清單中挑選一個景點作為第一站。
+2. 方案中的其餘景點也請盡量從提供的清單中挑選，以確保地點真實性。
+3. 如果清單內地點不足，你也可以使用清單外的知名景點，但請確保其真實存在且位於起點附近區域。
+`.trim()
+    : ''
+
+  return `你是台灣在地行程規劃 AI。請依使用者輸入產生 3 個單日行程「骨架」方案，並回傳符合 schema 的 JSON。此階段只產生可比較的核心路線，不要產生景點 description、雨天備案或交通 label。
+
+使用者輸入：
+- 行程類型：${category}
+- 開始時間：${input.startTime}
+- 結束時間：${input.endTime}
+- 預算：${budgetLabels[input.budget]}
+- 人數：${input.people}
+- 限制條件：${tags}
+- 起點：${location}
+- 正餐偏好：${wantsNoFullMeals ? '使用者勾選不吃正餐，不強制安排正式午餐或晚餐。' : '使用者未勾選不吃正餐，請依行程時間判斷是否安排正式午餐或晚餐。'}
+${personaContext}
+${nearbyPlacesContext}
+
+硬性規則：
+1. 三方案風格：safe 保守、balanced 平衡、explore 探索；主題相同但風格不同。
+2. 先決定一種最適合本次行程的 transportMode，三方案必須統一。
+3. 每 plan 的 transportSegments 長度 = stops.length - 1；fromStopId / toStopId 必須對應相鄰 stop 的 id。
+4. stop.id 僅允許英文、數字、底線、連字號；同一 plan 內不可重複。
+5. 文字長度：title 4-8 字、subtitle 8-18 字、summary 30 字內；皆繁體中文；title 不可塞入多個地名。
+6. stops 類型至少涵蓋 main_activity、food、ending_or_transition，避免同質化。
+7. totalTime 為分鐘、budget 為新台幣元、stop.duration 與 transportSegments.duration 為分鐘。
+8. 若人數 ≥ 5，避開座位少、精緻小巧、不適合團體的店家或活動。
+9. 早餐規則：除非使用者明確要求早餐，否則不要把早餐作為 stop 名稱、主餐或主要餐飲安排。
+10. 午晚餐判定採「任意重疊」：行程與 11:00-13:00 有重疊即涵蓋午餐，與 17:00-19:00 有重疊即涵蓋晚餐。
+    - 未勾選「不吃正餐」時，涵蓋哪餐就在 stops 安排該餐的 food stop，且該 stop 實際停留時段需與該餐時段有重疊，不可把午餐排在 9 點等過早時段。只涵蓋一餐就只排一餐。
+    - 勾選「不吃正餐」時不排正餐，可改咖啡、甜點、點心或輕食。
+11. 時間覆蓋率：實際總分鐘數（所有 stop.duration + 所有交通段 duration）需達：2-4h ≥ 70%、4-8h ≥ 75%、8-12h ≥ 80%、12-24h ≥ 70%。
+    - 可用時間 > 6h 時實際結束不得明顯早於指定結束：8-12h 最多提早 90 分、12-24h 最多提早 180 分。
+    - stops 限 2-6 個；不要硬塞數量或拉長單一停留；時間長但數量已滿時，優先用較完整的主要活動、慢節奏停留、自然用餐或收尾散步貼近時間。
+12. 不要在 summary 要求使用者自行新增停靠站；回傳結果需是可直接比較的完整路線骨架。
+13. 第一站距離起點必須 ≤ 2 km (硬性規則)。
+14. 交通效率建議 (軟性規則)：相鄰站點間交通時間建議 ≤ 30 分鐘；整日累積交通時間建議 ≤ 總行程時長的 25%。
+15. 規劃核心：必須以使用者提供的「起點」為地理中心點往外擴張，優先選擇附近的景點，避免跨區過遠。
+
+JSON 範例（其餘欄位請依 schema）：
+{
+  "plans": [
+    {
+      "id": "safe",
+      "type": "safe",
+      "title": "短標題",
+      "subtitle": "主要地點或亮點副標題",
+      "summary": "一句 30 字以內的繁體中文摘要",
+      "totalTime": 300,
+      "budget": 1200,
+      "transportMode": "scooter",
+      "stops": [
+        { "id": "safe-main-1", "name": "地點名稱", "type": "main_activity", "address": "完整地址", "duration": 90 }
+      ],
+      "transportSegments": [
+        { "fromStopId": "safe-main-1", "toStopId": "safe-main-2", "mode": "scooter", "duration": 18 }
+      ]
+    }
+  ]
+}`.trim()
+}

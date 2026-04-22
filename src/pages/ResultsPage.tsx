@@ -17,9 +17,10 @@ const transportLabels: Record<TransportMode, string> = {
 }
 
 export function ResultsPage() {
-  const { resetAnalysisFlow, setFlowRoute, requestPlanDetails } =
+  const { session, resetAnalysisFlow, setFlowRoute, requestPlanDetails } =
     useAnalysisSession()
   const plans = loadGeneratedPlans()
+  const warnings = session?.status === 'success' ? (session.warnings ?? []) : []
 
   if (plans.length === 0) {
     return (
@@ -43,6 +44,13 @@ export function ResultsPage() {
       </button>
       <p className="page-kicker">AI 已整理三種走法</p>
       <h1 className="page-title">選擇行程方案</h1>
+      {warnings.length > 0 ? (
+        <div className="plan-warning-panel" role="status">
+          {warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </div>
+      ) : null}
       <div className="result-grid">
         {plans.map((plan) => (
           <PlanCard
@@ -66,7 +74,8 @@ function PlanCard({
   plan: TripPlan
   onSelect: (route: string) => void
 }) {
-  const previewStops = plan.stops.slice(0, 3)
+  const stops = plan.stops ?? []
+  const previewStops = stops.slice(0, 3)
   const actualDuration = getPlanActualDuration(plan)
 
   return (
@@ -84,15 +93,15 @@ function PlanCard({
         </div>
         <div>
           <dt>預算</dt>
-          <dd>約 NT$ {plan.budget.toLocaleString('zh-TW')}</dd>
+          <dd>約 NT$ {(plan.budget ?? 0).toLocaleString('zh-TW')}</dd>
         </div>
         <div>
           <dt>交通</dt>
-          <dd>{transportLabels[plan.transportMode]}</dd>
+          <dd>{transportLabels[plan.transportMode] ?? '未指定'}</dd>
         </div>
         <div>
           <dt>停留點</dt>
-          <dd>{plan.stops.length} 個</dd>
+          <dd>{stops.length} 個</dd>
         </div>
       </dl>
 

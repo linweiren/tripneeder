@@ -92,12 +92,16 @@ export function HomePage() {
     !input.customCategory?.trim()
 
   const selectedLocationText = useMemo(() => {
+    if (input.location.name && input.location.lat && input.location.lng) {
+      return `目前位置：${input.location.name}`
+    }
+
     if (input.location.lat && input.location.lng) {
       return `目前座標：${input.location.lat.toFixed(5)}, ${input.location.lng.toFixed(5)}`
     }
 
     return ''
-  }, [input.location.lat, input.location.lng])
+  }, [input.location.name, input.location.lat, input.location.lng])
 
   function updateInput<Value extends keyof TripInput>(
     key: Value,
@@ -116,7 +120,7 @@ export function HomePage() {
     })
   }
 
-  function handleLocate() {
+  async function handleLocate() {
     if (!navigator.geolocation) {
       void dialog.alert({
         title: '無法取得定位',
@@ -129,20 +133,47 @@ export function HomePage() {
     setLocationStatus('')
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
+      async (position) => {
         const lat = position.coords.latitude
         const lng = position.coords.longitude
 
         setInput((current) => ({
           ...current,
           location: {
-            name: current.location.name,
+            ...current.location,
             lat,
             lng,
           },
         }))
-        setLocationStatus('座標抓取成功！')
-        setIsLocating(false)
+
+        setLocationStatus('座標抓取成功，正在反查地名...')
+
+        try {
+          const response = await fetch('/api/geocode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lat, lng }),
+          })
+          const data = await response.json()
+
+          if (data.name) {
+            setInput((current) => ({
+              ...current,
+              location: {
+                ...current.location,
+                name: data.name,
+              },
+            }))
+            setLocationStatus('定位成功！')
+          } else {
+            setLocationStatus('座標抓取成功！')
+          }
+        } catch (error) {
+          console.error('Geocoding failed:', error)
+          setLocationStatus('座標抓取成功！')
+        } finally {
+          setIsLocating(false)
+        }
       },
       () => {
         setIsLocating(false)

@@ -11,6 +11,7 @@ export type AnalysisSession = {
   updatedAt: number
   lastRoute: string
   error?: string
+  warnings?: string[]
   partialPlans?: PartialTripPlan[]
 }
 
