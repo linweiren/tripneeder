@@ -12,6 +12,8 @@ export type Persona = {
   budget?: string
   stamina?: string
   diet?: string
+  transportMode?: TransportMode
+  people?: number
 }
 
 export type GenerateTripPlansRequest = {

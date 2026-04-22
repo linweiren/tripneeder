@@ -44,10 +44,12 @@ import {
 import {
   isFavoriteRecord,
   saveFavoriteRecord,
+  upgradeRecentGeneratedRecord,
 } from '../services/tripRecords/tripRecordService'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import { useAuth } from '../contexts/auth'
 import { useDialog, type DialogContextValue } from '../contexts/dialog'
+import * as pointsService from '../services/points/pointsService'
 
 type OrderMode = 'main' | 'rain'
 type SegmentModeOverrides = Partial<Record<OrderMode, Record<string, TransportMode>>>
@@ -133,6 +135,7 @@ export function DetailPage() {
   const [hasSavedFavorite, setHasSavedFavorite] = useState(false)
   const [isSavingFavorite, setIsSavingFavorite] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
+  const [isRecomputingRoutes, setIsRecomputingRoutes] = useState(false)
   const [candidates, setCandidates] = useState<VerifiedPlaceCandidate[]>([])
   const [replacingStopId, setReplacingStopId] = useState<string | null>(null)
 
@@ -261,6 +264,7 @@ export function DetailPage() {
       setSelectedPlan(updatedPlan)
       updateGeneratedPlan(updatedPlan)
       updateDetailPlan(updatedPlan)
+      await persistRecentPlanUpdate(updatedPlan)
       setReplacingStopId(null)
     } catch (error) {
       void dialog.alert({
@@ -269,6 +273,18 @@ export function DetailPage() {
       })
     } finally {
       setIsEditing(false)
+    }
+  }
+
+  async function persistRecentPlanUpdate(updatedPlan: TripPlan) {
+    if (sourcePage !== 'recent' || !user) {
+      return
+    }
+
+    try {
+      await upgradeRecentGeneratedRecord(updatedPlan, lastInput, user.id)
+    } catch (error) {
+      console.error('Recent record update failed:', error)
     }
   }
 
@@ -485,17 +501,13 @@ export function DetailPage() {
 
     const nextStops = arrayMove(visibleStops, oldIndex, newIndex)
     const nextTransportSegments = getTransportSegments(
-      rawTransportSegments,
+      visibleTransportSegmentsWithOverrides,
       nextStops,
-      baseStops,
+      visibleStops,
       activeTransportMode,
     )
-    const nextSegmentsWithOverrides = applySegmentModeOverrides(
-      nextTransportSegments,
-      segmentModeOverrides[orderMode],
-    )
     const overDoubleSegment = getOverDoubleTransportSegment(
-      nextSegmentsWithOverrides,
+      nextTransportSegments,
       visibleTransportSegmentsWithOverrides,
     )
 
@@ -512,8 +524,36 @@ export function DetailPage() {
 
     setStopOrders((current) => ({
       ...current,
-      [orderMode]: nextStops.map((stop, index) => getStopId(stop, index)),
+      [orderMode]: [],
     }))
+    setSegmentModeOverrides((current) => ({
+      ...current,
+      [orderMode]: {},
+    }))
+    setTransportModeOverrides((current) => {
+      const next = { ...current }
+      delete next[orderMode]
+      return next
+    })
+
+    const updatedPlan: TripPlan = {
+      ...selectedPlan,
+      ...(isRainMode
+        ? {
+            rainBackup: nextStops,
+            rainTransportSegments: nextTransportSegments,
+          }
+        : {
+            stops: nextStops,
+            transportSegments: nextTransportSegments,
+            transportMode: getFirstSegmentMode(nextTransportSegments) ?? activeTransportMode,
+            totalTime: getTotalVisibleDuration(nextStops, nextTransportSegments),
+          }),
+    }
+
+    setSelectedPlan(updatedPlan)
+    updateGeneratedPlan(updatedPlan)
+    updateDetailPlan(updatedPlan)
   }
 
   async function applyGlobalTransportMode(nextMode: TransportMode) {
@@ -609,6 +649,84 @@ export function DetailPage() {
     setOpenSegmentMenuKey(null)
   }
 
+  async function handleRecomputeVisibleRoutes() {
+    if (!selectedPlan || visibleStops.length < 2 || isRecomputingRoutes) {
+      return
+    }
+
+    const confirmed = await dialog.confirm({
+      title: '重新計算交通',
+      message:
+        '這將消耗 2 點點數以取得最新的 Google 導航時間與距離，確定要執行嗎？',
+    })
+
+    if (!confirmed) {
+      return
+    }
+
+    setIsRecomputingRoutes(true)
+    setIsEditing(true)
+    try {
+      await pointsService.consumePoints(2, '交通重算')
+
+      const {
+        transportSegments: nextSegments,
+        totalTime,
+        routesFailed,
+      } = await recomputeTripRoutes(
+        visibleStops,
+        activeTransportMode,
+        visibleTransportSegmentsWithOverrides,
+      )
+
+      const updatedPlan: TripPlan = {
+        ...selectedPlan,
+        ...(isRainMode
+          ? {
+              rainBackup: visibleStops,
+              rainTransportSegments: nextSegments,
+            }
+          : {
+              stops: visibleStops,
+              transportSegments: nextSegments,
+              transportMode: getFirstSegmentMode(nextSegments) ?? activeTransportMode,
+              totalTime,
+            }),
+      }
+
+      setSelectedPlan(updatedPlan)
+      updateGeneratedPlan(updatedPlan)
+      updateDetailPlan(updatedPlan)
+      setStopOrders((current) => ({ ...current, [orderMode]: [] }))
+      setSegmentModeOverrides((current) => ({ ...current, [orderMode]: {} }))
+      setTransportModeOverrides((current) => {
+        const next = { ...current }
+        delete next[orderMode]
+        return next
+      })
+      setOpenSegmentMenuKey(null)
+
+      if (routesFailed) {
+        void dialog.alert({
+          title: '部分交通仍為估算',
+          message:
+            '有些路段暫時沒有取得 Google Routes API 結果，已先保留估算交通時間。',
+        })
+      }
+    } catch (error) {
+      void dialog.alert({
+        title: '交通重算失敗',
+        message:
+          error instanceof Error
+            ? error.message
+            : '目前無法重新計算交通時間，請稍後再試。',
+      })
+    } finally {
+      setIsRecomputingRoutes(false)
+      setIsEditing(false)
+    }
+  }
+
   if (!selectedPlan) {
     return (
       <section className="page">
@@ -655,6 +773,14 @@ export function DetailPage() {
               onClick={() => setIsGlobalTransportMenuOpen((current) => !current)}
             >
               切換
+            </button>
+            <button
+              className="transport-switch-button"
+              type="button"
+              disabled={isRecomputingRoutes || visibleStops.length < 2}
+              onClick={() => void handleRecomputeVisibleRoutes()}
+            >
+              {isRecomputingRoutes ? '重算中' : '重算交通'}
             </button>
             {isGlobalTransportMenuOpen ? (
               <TransportModeMenu
@@ -825,7 +951,7 @@ export function DetailPage() {
                         disabled={isEditing || visibleStops.length <= 2}
                         onClick={() => void handleDeleteStop(getStopId(stop, index))}
                       >
-                        刪掉這站
+                        刪除行程
                       </button>
                       
                       {replacingStopId === getStopId(stop, index) ? (
@@ -1185,7 +1311,8 @@ function applySegmentModeOverrides(
   }
 
   return segments.map((segment) => {
-    const overrideMode = overrides[getSegmentKey(segment)]
+    const overrideMode =
+      overrides[getSegmentKey(segment)] ?? overrides[getReverseSegmentKey(segment)]
 
     return overrideMode ? applyTransportMode(segment, overrideMode) : segment
   })
@@ -1220,7 +1347,7 @@ function applyTransportMode(
     mode: nextMode,
     publicTransitType,
     duration,
-    label: buildTransportFallbackLabel(nextMode, publicTransitType),
+    label: buildTransportFallbackLabel(nextMode, publicTransitType, true),
   }
 }
 
@@ -1316,7 +1443,7 @@ function getBaseTransportSegments(
     toStopId: getStopId(safeStops[index + 1], index + 1),
     mode: fallbackMode,
     duration: estimateLegacyTransportDuration(stop.transport),
-    label: buildTransportFallbackLabel(fallbackMode),
+    label: buildTransportFallbackLabel(fallbackMode, undefined, true),
   }))
 }
 
@@ -1342,18 +1469,46 @@ function buildTransportSegmentsForOrder(
   return safeOrderedStops.slice(0, -1).map((stop, index) => {
     const fromStopId = getStopId(stop, index)
     const toStopId = getStopId(safeOrderedStops[index + 1], index + 1)
+    const slotSegment = safeBaseSegments[index]
     const existingSegment = findReusableTransportSegment(
       safeBaseSegments,
       fromStopId,
       toStopId,
     )
 
-    if (existingSegment) {
+    if (
+      existingSegment?.direction === 'exact' &&
+      slotSegment?.fromStopId === fromStopId &&
+      slotSegment?.toStopId === toStopId
+    ) {
       return {
-        ...existingSegment,
+        ...existingSegment.segment,
         fromStopId,
         toStopId,
       }
+    }
+
+    if (slotSegment) {
+      return markEstimatedSegment({
+        ...slotSegment,
+        fromStopId,
+        toStopId,
+        duration: estimateReorderedTransportDuration(
+          fromStopId,
+          toStopId,
+          originalIndexById,
+          safeBaseSegments,
+          slotSegment.duration || averageDuration,
+        ),
+      })
+    }
+
+    if (existingSegment?.direction === 'reverse') {
+      return markEstimatedSegment({
+        ...existingSegment.segment,
+        fromStopId,
+        toStopId,
+      })
     }
 
     const estimatedDuration = estimateReorderedTransportDuration(
@@ -1369,7 +1524,7 @@ function buildTransportSegmentsForOrder(
       toStopId,
       mode: fallbackMode,
       duration: estimatedDuration,
-      label: buildTransportFallbackLabel(fallbackMode),
+      label: buildTransportFallbackLabel(fallbackMode, undefined, true),
     }
   })
 }
@@ -1379,11 +1534,34 @@ function findReusableTransportSegment(
   fromStopId: string,
   toStopId: string,
 ) {
-  return segments.find(
-    (segment) =>
-      (segment.fromStopId === fromStopId && segment.toStopId === toStopId) ||
-      (segment.fromStopId === toStopId && segment.toStopId === fromStopId),
+  const exactSegment = segments.find(
+    (segment) => segment.fromStopId === fromStopId && segment.toStopId === toStopId,
   )
+
+  if (exactSegment) {
+    return { segment: exactSegment, direction: 'exact' as const }
+  }
+
+  const reverseSegment = segments.find(
+    (segment) => segment.fromStopId === toStopId && segment.toStopId === fromStopId,
+  )
+
+  if (reverseSegment) {
+    return { segment: reverseSegment, direction: 'reverse' as const }
+  }
+
+  return null
+}
+
+function markEstimatedSegment(segment: TransportSegment): TransportSegment {
+  if (segment.label.includes('估算')) {
+    return segment
+  }
+
+  return {
+    ...segment,
+    label: buildTransportFallbackLabel(segment.mode, segment.publicTransitType, true),
+  }
 }
 
 function estimateReorderedTransportDuration(
@@ -1547,6 +1725,10 @@ function getSegmentKey(segment: TransportSegment) {
   return `${segment.fromStopId}->${segment.toStopId}`
 }
 
+function getReverseSegmentKey(segment: TransportSegment) {
+  return `${segment.toStopId}->${segment.fromStopId}`
+}
+
 function buildDirectionsUrl(stop: Stop, mode: TransportMode) {
   const destination = encodeURIComponent(stop.address || stop.name)
   const travelMode =
@@ -1587,20 +1769,23 @@ function getStopId(stop: Stop | undefined, index: number) {
 function buildTransportFallbackLabel(
   mode: TransportMode,
   publicTransitType?: PublicTransitType,
+  isEstimated = false,
 ) {
+  const prefix = isEstimated ? '(估算)' : ''
+
   if (mode === 'public_transit' && publicTransitType) {
-    return `${publicTransitLabels[publicTransitType]}接駁前往`
+    return `${prefix}${publicTransitLabels[publicTransitType]}接駁前往`
   }
 
   if (mode === 'public_transit') {
-    return '大眾運輸前往'
+    return `${prefix}大眾運輸前往`
   }
 
   if (mode === 'scooter') {
-    return '騎車順路前往'
+    return `${prefix}騎車順路前往`
   }
 
-  return '開車順路前往'
+  return `${prefix}開車順路前往`
 }
 
 function cleanTransportSummary(
@@ -1608,6 +1793,12 @@ function cleanTransportSummary(
   mode: TransportMode,
   publicTransitType?: PublicTransitType,
 ) {
+  const trimmed = value.trim()
+
+  if (/約\s*\d+(?:\.\d+)?\s*(?:m|km|公尺|公里)/i.test(trimmed)) {
+    return trimmed.replace(/\s+/g, ' ')
+  }
+
   const cleaned = value
     .replace(/[0-9０-９]+\s*(?:小時|分鐘|分|公里|km|KM)/g, '')
     .replace(/約\s*(?:小時|分鐘|分|公里)?/g, '')

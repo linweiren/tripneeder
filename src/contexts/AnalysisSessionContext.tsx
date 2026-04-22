@@ -10,6 +10,7 @@ import type { TripInput } from '../types/trip'
 import {
   clearGeneratedTripFlow,
   loadGeneratedPlans,
+  loadInputForDetail,
   loadLastTripInput,
   saveGeneratedPlans,
   updateDetailPlan,
@@ -266,7 +267,7 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const getReplacementCandidates = useCallback(async () => {
-    const input = loadLastTripInput()
+    const input = loadInputForDetail() ?? loadLastTripInput()
     if (!input) throw new Error('Missing trip input')
 
     const response = await fetch('/api/get-candidates', {

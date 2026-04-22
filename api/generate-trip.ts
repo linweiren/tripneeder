@@ -44,6 +44,8 @@ type DbPersona = {
   persona_budget: string | null
   persona_stamina: string | null
   persona_diet: string | null
+  persona_transport_mode: TripPlan['transportMode'] | null
+  persona_people: number | null
 }
 
 type PointsSupabaseClient = {
@@ -124,7 +126,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const persona = await getMergedPersona(supabase, userId, request.input)
 
   // 9D-7: 智慧前置搜尋 (Search-Inject)
-  const nearbyPlaceCandidates = await getNearbyPlaceCandidates(request)
+  const nearbyPlaceCandidates = await getNearbyPlaceCandidates({
+    ...request,
+    persona,
+  })
   const nearbyPlaces = formatNearbyRecommendations(nearbyPlaceCandidates)
 
   res.status(200)
@@ -1029,7 +1034,7 @@ async function getMergedPersona(
     try {
       const { data } = await supabase
         .from('profiles')
-        .select('persona_companion, persona_budget, persona_stamina, persona_diet')
+        .select('persona_companion, persona_budget, persona_stamina, persona_diet, persona_transport_mode, persona_people')
         .eq('id', userId)
         .single()
       if (data) {
@@ -1069,6 +1074,8 @@ async function getMergedPersona(
       SYSTEM_DEFAULT_PERSONA.budget,
     stamina: dbPersona.persona_stamina || SYSTEM_DEFAULT_PERSONA.stamina,
     diet: dbPersona.persona_diet || SYSTEM_DEFAULT_PERSONA.diet,
+    transportMode: input.transportMode || dbPersona.persona_transport_mode || undefined,
+    people: input.people || dbPersona.persona_people || 2,
   }
 }
 

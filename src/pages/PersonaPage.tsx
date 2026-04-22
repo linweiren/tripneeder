@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../services/auth/supabaseClient'
+import { initializeUserProfile } from '../services/points/pointsService'
 import { useAuth } from '../contexts/auth'
+import type { TransportMode } from '../types/trip'
+
+const transportModeOptions: Array<{ value: TransportMode; label: string }> = [
+  { value: 'scooter', label: '機車' },
+  { value: 'car', label: '汽車' },
+  { value: 'public_transit', label: '大眾運輸' },
+]
 
 export function PersonaPage() {
   const { user } = useAuth()
@@ -13,6 +21,8 @@ export function PersonaPage() {
   const [companion, setCompanion] = useState('')
   const [budget, setBudget] = useState('')
   const [stamina, setStamina] = useState('')
+  const [transportMode, setTransportMode] = useState<TransportMode | ''>('')
+  const [people, setPeople] = useState<number>(2)
   const [diet, setDiet] = useState('')
 
   useEffect(() => {
@@ -28,9 +38,11 @@ export function PersonaPage() {
       }
 
       try {
+        await initializeUserProfile()
+
         const { data, error } = await supabase
           .from('profiles')
-          .select('persona_companion, persona_budget, persona_stamina, persona_diet')
+          .select('persona_companion, persona_budget, persona_stamina, persona_diet, persona_transport_mode, persona_people')
           .eq('id', user?.id)
           .single()
 
@@ -41,6 +53,8 @@ export function PersonaPage() {
           setCompanion(data.persona_companion || '')
           setBudget(data.persona_budget || '')
           setStamina(data.persona_stamina || '')
+          setTransportMode(data.persona_transport_mode || '')
+          setPeople(data.persona_people || 2)
           setDiet(data.persona_diet || '')
         }
       } catch (error) {
@@ -60,12 +74,16 @@ export function PersonaPage() {
     setIsSaving(true)
     setSaveStatus(null)
     try {
+      await initializeUserProfile()
+
       const { error } = await supabase
         .from('profiles')
         .update({
           persona_companion: companion || null,
           persona_budget: budget || null,
           persona_stamina: stamina || null,
+          persona_transport_mode: transportMode || null,
+          persona_people: people,
           persona_diet: diet || null,
         })
         .eq('id', user.id)
@@ -143,6 +161,37 @@ export function PersonaPage() {
             <option value="弱">弱 (偏好慢節奏)</option>
             <option value="普通">普通</option>
             <option value="強">強 (可以一直走)</option>
+          </select>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="transportMode">常用交通工具</label>
+          <select
+            id="transportMode"
+            value={transportMode}
+            onChange={(e) => setTransportMode(e.target.value as TransportMode | '')}
+          >
+            <option value="">不指定，讓 AI 依行程判斷</option>
+            {transportModeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="people">經常出遊人數</label>
+          <select
+            id="people"
+            value={people}
+            onChange={(e) => setPeople(Number(e.target.value))}
+          >
+            {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => (
+              <option key={value} value={value}>
+                {value} 人
+              </option>
+            ))}
           </select>
         </div>
 

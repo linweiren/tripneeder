@@ -76,7 +76,10 @@ export async function loadRecentRecords(userId: string) {
     return loadRecentTripRecords(userId)
   }
 
-  const records = await loadRemoteTripRecords('recent', userId)
+  const records = mergeRemoteRecentRecordsWithLocalFallback(
+    await loadRemoteTripRecords('recent', userId),
+    userId,
+  )
   setTripRecordCache('recent', userId, records)
 
   return records
@@ -204,6 +207,15 @@ export async function saveRecentGeneratedRecords(
   }
 
   await trimRecentRecords(userId)
+
+  setTripRecordCache(
+    'recent',
+    userId,
+    mergeRemoteRecentRecordsWithLocalFallback(
+      await loadRemoteTripRecords('recent', userId),
+      userId,
+    ),
+  )
 }
 
 export async function upgradeRecentGeneratedRecord(
@@ -243,6 +255,15 @@ export async function upgradeRecentGeneratedRecord(
   if (error) {
     throw new Error('最近生成升級同步失敗，已先保存在本機。')
   }
+
+  setTripRecordCache(
+    'recent',
+    userId,
+    mergeRemoteRecentRecordsWithLocalFallback(
+      await loadRemoteTripRecords('recent', userId),
+      userId,
+    ),
+  )
 }
 
 export async function isFavoriteRecord(plan: TripPlan, userId: string) {
@@ -628,6 +649,16 @@ function mergeRemoteFavoriteRecordsWithPendingLocalRecords(
   )
 
   return mergeTripRecordsByFingerprint(remoteRecords, pendingRecords)
+}
+
+function mergeRemoteRecentRecordsWithLocalFallback(
+  remoteRecords: StoredTripRecord[],
+  userId: string,
+) {
+  return mergeTripRecordsByFingerprint(
+    remoteRecords,
+    loadRecentTripRecords(userId),
+  ).slice(0, MAX_RECENT_RECORDS)
 }
 
 function mergeTripRecordsByFingerprint(

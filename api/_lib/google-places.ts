@@ -1,7 +1,7 @@
 /// <reference types="node" />
 
 import type { TripPlan, Stop, TripInput } from '../../src/types/trip.js'
-import type { GenerateTripPlansRequest } from '../../src/services/ai/types.js'
+import type { GenerateTripPlansRequest, Persona } from '../../src/services/ai/types.js'
 
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY
 const SEARCH_TEXT_URL = 'https://places.googleapis.com/v1/places:searchText'
@@ -76,7 +76,7 @@ interface ValidationContext {
   enforceFirstStopDistance: boolean
 }
 
-function buildSearchQuery(input: TripInput): string {
+function buildSearchQuery(input: TripInput, persona?: Persona): string {
   const city = input.location.name || ''
   const categoryMap: Record<string, string> = {
     date: 'romantic dating spots cafes restaurants',
@@ -98,7 +98,10 @@ function buildSearchQuery(input: TripInput): string {
     no_full_meals: 'light food drinks snacks',
   }
 
-  const baseQuery = (input.category ? categoryMap[input.category] : undefined) || 'attractions'
+  const personaQuery = !input.category && persona?.companion ? persona.companion : ''
+  const baseQuery =
+    (input.category ? categoryMap[input.category] : undefined) ||
+    [personaQuery, 'attractions'].filter(Boolean).join(' ')
   const tagQuery = input.tags.map((tag) => tagMap[tag]).filter(Boolean).join(' ')
 
   return `${city} ${baseQuery} ${tagQuery}`.trim()
@@ -118,7 +121,7 @@ export async function getNearbyPlaceCandidates(
   const input = request.input
   const lat = input.location.lat
   const lng = input.location.lng
-  const queries = buildCandidateSearchQueries(input)
+  const queries = buildCandidateSearchQueries(input, request.persona)
 
   try {
     const results = await Promise.all(
@@ -180,10 +183,10 @@ export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): 
   return sections.join('\n\n')
 }
 
-function buildCandidateSearchQueries(input: TripInput) {
+function buildCandidateSearchQueries(input: TripInput, persona?: Persona) {
   const city = input.location.name || ''
   const queries = [
-    buildSearchQuery(input),
+    buildSearchQuery(input, persona),
     `${city} attractions restaurants cafes`,
     `${city} parks museums landmarks`,
     `${city} local food dessert coffee`,
@@ -511,6 +514,8 @@ async function validateStop(
       address: googlePlace.formattedAddress,
       placeId: googlePlace.id,
       googleMapsUrl: buildGoogleMapsPlaceUrl(googlePlace),
+      lat: googlePlace.location?.latitude,
+      lng: googlePlace.location?.longitude,
     },
   }
 }

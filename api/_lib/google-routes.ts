@@ -184,7 +184,7 @@ export async function repairTransportSegments(
       const mode = existing?.mode ?? fallbackMode
       const { routeInfo, apiFailed } = await getRouteInfo(stops[index], stops[index + 1], mode)
 
-      if (apiFailed) {
+      if (apiFailed || !routeInfo) {
         routesFailed = true
       }
 

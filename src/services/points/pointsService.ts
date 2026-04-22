@@ -102,6 +102,29 @@ export async function getMyPointsBalance(): Promise<number> {
   return data
 }
 
+/**
+ * 扣除使用者點數
+ * @param amount 扣除點數數量
+ * @param reason 扣點原因（顯示在紀錄中）
+ */
+export async function consumePoints(amount: number, reason: string): Promise<void> {
+  if (!supabase) {
+    throw new Error('尚未設定 Supabase，無法執行扣點。')
+  }
+
+  const { error } = await supabase.rpc('consume_points_for_analysis', {
+    cost: amount,
+    reason,
+  })
+
+  if (error) {
+    if (error.message.includes('不足')) {
+      throw new Error('您的點數不足，無法執行此操作。')
+    }
+    throw new Error(error.message || '扣除點數時發生錯誤。')
+  }
+}
+
 export function getTransactionTypeLabel(type: PointTransactionType) {
   const labels: Record<PointTransactionType, string> = {
     initial: '初始點數',

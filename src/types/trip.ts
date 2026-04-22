@@ -38,6 +38,7 @@ export type TripInput = {
   customCategory?: string
   startTime: string
   endTime: string
+  transportMode?: TransportMode
   budget?: BudgetLevel
   people?: number
   tags: TripTag[]

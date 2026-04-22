@@ -5,6 +5,7 @@ import type {
 import type {
   BudgetLevel,
   PlanType,
+  TransportMode,
   TripCategory,
   TripInput,
   TripPlan,
@@ -41,6 +42,12 @@ const tagLabels: Record<TripInput['tags'][number], string> = {
   no_full_meals: '不吃正餐',
 }
 
+const transportModeLabels: Record<TransportMode, string> = {
+  scooter: '機車',
+  car: '汽車',
+  public_transit: '大眾運輸',
+}
+
 export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlaces?: string) {
   const tags = input.tags.map((tag) => tagLabels[tag]).join('、') || '無'
   const wantsNoFullMeals = input.tags.includes('no_full_meals')
@@ -61,7 +68,11 @@ export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlace
     ? budgetLabels[input.budget] 
     : (persona?.budget || '一般')
 
-  const displayPeople = input.people ?? 2
+  const displayPeople = input.people ?? persona?.people ?? 2
+  const preferredTransportMode = input.transportMode || persona?.transportMode
+  const displayTransportMode = preferredTransportMode
+    ? transportModeLabels[preferredTransportMode]
+    : '未指定，請依地點與行程節奏判斷'
 
   const location = [
     input.location.name ? `地點文字：${input.location.name}` : '',
@@ -78,6 +89,8 @@ export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlace
   - 同行對象：${persona.companion || '未指定'}
   - 預算偏好：${persona.budget || '未指定'}
   - 體力狀況：${persona.stamina || '未指定'}
+  - 經常出遊人數：${persona.people ?? 2}
+  - 常用交通工具：${persona.transportMode ? transportModeLabels[persona.transportMode] : '未指定'}
   - 飲食禁忌：${persona.diet || '無'}
 `.trim()
     : ''
@@ -106,6 +119,7 @@ ${nearbyPlaces}
 - 最低實際行程長度：${minimumActualMinutes ?? '未知'} 分鐘（所有 stop.duration + transportSegments.duration 加總）
 - 預算：${displayBudget}
 - 人數：${displayPeople}
+- 交通工具偏好：${displayTransportMode}
 - 限制條件：${tags}
 - 起點：${location}
 - 正餐偏好：${wantsNoFullMeals ? '使用者勾選不吃正餐，不強制安排正式午餐或晚餐。' : '使用者未勾選不吃正餐，請依行程時間判斷是否安排正式午餐或晚餐。'}
@@ -114,7 +128,7 @@ ${nearbyPlacesContext}
 
 硬性規則：
 1. 三方案風格：safe 保守、balanced 平衡、explore 探索；主題相同但風格不同。
-2. 先決定一種最適合本次行程的 transportMode，三方案必須統一。
+2. transportMode：若使用者有指定交通工具偏好，三方案必須使用該 transportMode；若未指定，先決定一種最適合本次行程的 transportMode，三方案必須統一。
 3. 每 plan 的 transportSegments 長度 = stops.length - 1；fromStopId / toStopId 必須對應相鄰 stop 的 id。
 4. stop.id 僅允許英文、數字、底線、連字號；同一 plan 內不可重複。
 5. 文字長度：title 4-8 字、subtitle 8-18 字、summary 30 字內；皆繁體中文；title 不可塞入多個地名。
@@ -157,7 +171,7 @@ JSON 範例（其餘欄位請依 schema）：
 `.trim()
 }
 
-export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona?: Persona) {
+export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona?: Persona, nearbyIndoorPlaces?: string) {
   const tags = input.tags.map((tag) => tagLabels[tag]).join('、') || '無'
   
   const displayCategory =
@@ -171,7 +185,11 @@ export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona
     ? budgetLabels[input.budget] 
     : (persona?.budget || '一般')
 
-  const displayPeople = input.people ?? 2
+  const displayPeople = input.people ?? persona?.people ?? 2
+  const preferredTransportMode = input.transportMode || persona?.transportMode
+  const displayTransportMode = preferredTransportMode
+    ? transportModeLabels[preferredTransportMode]
+    : '未指定'
 
   const personaContext = persona
     ? `
@@ -179,7 +197,20 @@ export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona
   - 同行對象：${persona.companion || '未指定'}
   - 預算偏好：${persona.budget || '未指定'}
   - 體力狀況：${persona.stamina || '未指定'}
+  - 經常出遊人數：${persona.people ?? 2}
+  - 常用交通工具：${persona.transportMode ? transportModeLabels[persona.transportMode] : '未指定'}
   - 飲食禁忌：${persona.diet || '無'}
+`.trim()
+    : ''
+
+  const nearbyPlacesContext = nearbyIndoorPlaces
+    ? `
+- 附近的真實「室內/有遮蔽」地點參考（來自 Google Maps）：
+${nearbyIndoorPlaces}
+
+雨天備案硬性規則：
+1. rainBackup 的所有景點必須從上方「真實室內地點參考」清單挑選，禁止自創、改寫或使用清單外地點。
+2. stop.name 必須逐字複製候選清單的 name；stop.address 必須逐字複製 address；若有 placeId 請原樣填入。
 `.trim()
     : ''
 
@@ -191,9 +222,11 @@ export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona
 - 結束時間：${input.endTime}
 - 預算：${displayBudget}
 - 人數：${displayPeople}
+- 交通工具偏好：${displayTransportMode}
 - 限制條件：${tags}
 - 起點：${input.location.name || '未指定'}
 ${personaContext}
+${nearbyPlacesContext}
 
 骨架方案（JSON）：
 ${JSON.stringify(plan, null, 2)}
@@ -203,9 +236,12 @@ ${JSON.stringify(plan, null, 2)}
 2. 替每個主方案 stop 補 20-50 字繁體中文 description。
 3. transport label 為 4-16 字繁體中文摘要，禁含數字、分鐘、小時、公里。機車 / 汽車描述路線狀態；大眾運輸描述搭乘摘要。mode = public_transit 時請回傳 publicTransitType（bus/metro/train/walk/mixed，混合用 mixed）。
 4. 產生 rainBackup 與 rainTransportSegments；rainBackup 不可覆蓋主方案，但需符合相同時間、預算、餐食與人數限制。
-5. rainBackup 每個 stop 都要有 20-50 字 description；rainTransportSegments 長度 = rainBackup.length - 1。
-6. 不要翻譯、羅馬拼音或改寫任何既有主方案 stop.name / stop.address；若原本是中文就必須維持中文。
-7. 回傳格式只能是 { "plan": ... }，不要多餘文字。
+5. 雨天備案硬性規則：
+   - 景點必須是「室內」或「有遮蔽」的地點。
+   - 儘量讓主方案與雨天備案的對應站點（如第一個景點對第一個備案）地理距離相近。
+6. rainBackup 每個 stop 都要有 20-50 字 description；rainTransportSegments 長度 = rainBackup.length - 1。
+7. 不要翻譯、羅馬拼音或改寫任何既有主方案 stop.name / stop.address；若原本是中文就必須維持中文。
+8. 回傳格式只能是 { "plan": ... }，不要多餘文字。
 `.trim()
 }
 
@@ -271,11 +307,13 @@ export function parseTripPlanDetailsResponse(text: string, skeletonPlan: TripPla
     ...skeletonPlan,
     ...detailedPlan,
     stops: mergeDetailedStops(skeletonPlan.stops, detailedPlan.stops),
+    rainBackup: detailedPlan.rainBackup || [],
     transportMode: skeletonPlan.transportMode,
     transportSegments: mergeDetailedTransportSegments(
       skeletonPlan.transportSegments,
       detailedPlan.transportSegments,
     ),
+    rainTransportSegments: detailedPlan.rainTransportSegments || [],
     isDetailComplete: true,
   }
 }
@@ -360,10 +398,7 @@ function parseTimeToMinutes(value?: string) {
   return hour * 60 + minute
 }
 
-function getRequiredCoverageRatio(allowedMinutes: number) {
-  if (allowedMinutes <= 4 * 60) return 0.7
-  if (allowedMinutes <= 8 * 60) return 0.75
-  if (allowedMinutes <= 12 * 60) return 0.8
-
-  return 0.7
+function getRequiredCoverageRatio(_allowedMinutes: number) {
+  // 統一提升至 85%，確保行程時長符合使用者期望
+  return 0.85
 }

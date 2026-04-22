@@ -7,7 +7,12 @@ import {
 } from '../src/services/ai/tripPlanPrompt.js'
 import { tripPlanDetailsResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
 import type { TripInput, TripPlan } from '../src/types/trip.js'
-import { validateStopsWithPlaces } from './_lib/google-places.js'
+import {
+  validateStopsWithPlaces,
+  getNearbyPlaceCandidates,
+  formatNearbyRecommendations,
+} from './_lib/google-places.js'
+import { repairTransportSegments } from './_lib/google-routes.js'
 
 type VercelRequest = {
   method?: string
@@ -68,6 +73,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const userId = getUserIdFromToken(accessToken)
     const persona = await getMergedPersona(supabase, userId, request.input)
 
+    // 獲取室內地點候選，供雨天備案使用
+    const indoorInput = {
+      ...request.input,
+      tags: [...request.input.tags, 'indoor_first' as const],
+    }
+    const nearbyIndoorCandidates = await getNearbyPlaceCandidates({
+      input: indoorInput,
+      persona,
+    })
+    const nearbyIndoorPlaces = formatNearbyRecommendations(nearbyIndoorCandidates)
+
     const openAiResponse = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: {
@@ -82,7 +98,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             content: [
               {
                 type: 'input_text',
-                text: buildTripDetailsPrompt(request.input, request.plan, persona),
+                text: buildTripDetailsPrompt(
+                  request.input,
+                  request.plan,
+                  persona,
+                  nearbyIndoorPlaces,
+                ),
               },
             ],
           },
@@ -139,14 +160,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : undefined
     const { validatedPlan } = await validateStopsWithPlaces(detailedPlan, bias)
     const stablePlan = preserveMainStopIdentity(validatedPlan, request.plan)
+    const routedPlan = await repairDetailedPlanRoutes(stablePlan)
 
     res.status(200).json({
-      plan: stablePlan,
+      plan: routedPlan,
     })
   } catch (error) {
     res.status(502).json({
       error: error instanceof Error ? error.message : '細節補充失敗，請稍後再試。',
     })
+  }
+}
+
+async function repairDetailedPlanRoutes(plan: TripPlan): Promise<TripPlan> {
+  const [mainRoutes, rainRoutes] = await Promise.all([
+    repairTransportSegments(plan.transportSegments || [], plan.stops || [], plan.transportMode),
+    repairTransportSegments(
+      plan.rainTransportSegments || [],
+      plan.rainBackup || [],
+      plan.transportMode,
+    ),
+  ])
+
+  return {
+    ...plan,
+    totalTime:
+      (plan.stops || []).reduce((total, stop) => total + stop.duration, 0) +
+      mainRoutes.segments.reduce((total, segment) => total + segment.duration, 0),
+    transportSegments: mainRoutes.segments,
+    rainTransportSegments: rainRoutes.segments,
   }
 }
 
@@ -170,6 +212,9 @@ function preserveMainStopIdentity(plan: TripPlan, originalPlan: TripPlan): TripP
         lng: originalStop.lng,
       }
     }),
+    // 確保 rainBackup 與其餘欄位也被包含
+    rainBackup: plan.rainBackup || [],
+    rainTransportSegments: plan.rainTransportSegments || [],
   }
 }
 
@@ -211,6 +256,8 @@ type DbPersona = {
   persona_budget: string | null
   persona_stamina: string | null
   persona_diet: string | null
+  persona_transport_mode: TripPlan['transportMode'] | null
+  persona_people: number | null
 }
 
 async function getMergedPersona(
@@ -225,7 +272,7 @@ async function getMergedPersona(
     try {
       const { data } = await supabase
         .from('profiles')
-        .select('persona_companion, persona_budget, persona_stamina, persona_diet')
+        .select('persona_companion, persona_budget, persona_stamina, persona_diet, persona_transport_mode, persona_people')
         .eq('id', userId)
         .single()
       if (data) {
@@ -265,6 +312,8 @@ async function getMergedPersona(
       SYSTEM_DEFAULT_PERSONA.budget,
     stamina: dbPersona.persona_stamina || SYSTEM_DEFAULT_PERSONA.stamina,
     diet: dbPersona.persona_diet || SYSTEM_DEFAULT_PERSONA.diet,
+    transportMode: input.transportMode || dbPersona.persona_transport_mode || undefined,
+    people: input.people || dbPersona.persona_people || 2,
   }
 }
 

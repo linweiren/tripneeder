@@ -1321,6 +1321,7 @@
 }
 
 .maps-link {
+  cursor: pointer;
   width: fit-content;
   min-height: 40px;
   display: inline-flex;

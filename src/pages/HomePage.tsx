@@ -5,6 +5,7 @@ import { useAnalysisSession } from '../contexts/analysisSession'
 import { useDialog } from '../contexts/dialog'
 import type {
   BudgetLevel,
+  TransportMode,
   TripCategory,
   TripInput,
   TripTag,
@@ -55,11 +56,18 @@ const durationOptions = [
   { value: -1, label: '自訂' },
 ]
 
+const transportModeOptions: Array<{ value: TransportMode; label: string }> = [
+  { value: 'scooter', label: '機車' },
+  { value: 'car', label: '汽車' },
+  { value: 'public_transit', label: '大眾運輸' },
+]
+
 const initialInput: TripInput = {
   category: undefined,
   customCategory: '',
   startTime: '',
   endTime: '',
+  transportMode: undefined,
   budget: undefined,
   people: undefined,
   tags: [],
@@ -154,6 +162,16 @@ export function HomePage() {
 
       return { ...current, tags }
     })
+  }
+
+  function toggleInput<Value extends keyof TripInput>(
+    key: Value,
+    value: TripInput[Value],
+  ) {
+    setInput((current) => ({
+      ...current,
+      [key]: current[key] === value ? undefined : value,
+    }))
   }
 
   async function handleLocate() {
@@ -298,12 +316,9 @@ export function HomePage() {
                   ? '正在整理你的旅行偏好...'
                   : `已完成 ${readyCount} / 3 個方案`}
             </h2>
-            <p>
-              {analysisError ||
-                (readyCount === 0
-                  ? 'AI 正在規劃三種行程風格，請稍等一下。'
-                  : '方案會逐張出現，完成後自動前往結果頁。')}
-            </p>
+            {analysisError ? (
+              <p>{analysisError}</p>
+            ) : null}
           </div>
           {analysisError ? (
             <p className="analysis-no-charge-note">分析失敗不扣除點數</p>
@@ -381,7 +396,7 @@ export function HomePage() {
     <section className="page home-page">
       <div className="home-hero">
         <p className="page-kicker">現場快速排行程</p>
-        <h1 className="page-title">接下來幾小時，想去哪裡走走？</h1>
+        <h1 className="page-title">想去哪走走？</h1>
       </div>
 
       <form className="trip-form" onSubmit={handleSubmit}>
@@ -517,7 +532,12 @@ export function HomePage() {
                       input.category === option.value ? 'chip chip-active' : 'chip'
                     }
                     type="button"
-                    onClick={() => updateInput('category', option.value)}
+                    onClick={() => {
+                      toggleInput('category', option.value)
+                      if (input.category === option.value) {
+                        updateInput('customCategory', '')
+                      }
+                    }}
                   >
                     {option.label}
                   </button>
@@ -538,6 +558,24 @@ export function HomePage() {
             </fieldset>
 
             <fieldset className="form-section">
+              <legend>交通工具偏好</legend>
+              <div className="chip-grid">
+                {transportModeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    className={
+                      input.transportMode === option.value ? 'chip chip-active' : 'chip'
+                    }
+                    type="button"
+                    onClick={() => toggleInput('transportMode', option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="form-section">
               <legend>預算感覺</legend>
               <div className="budget-grid">
                 {budgetOptions.map((option) => (
@@ -549,7 +587,7 @@ export function HomePage() {
                         : 'budget-option'
                     }
                     type="button"
-                    onClick={() => updateInput('budget', option.value)}
+                    onClick={() => toggleInput('budget', option.value)}
                   >
                     <span>{option.label}</span>
                     <small>{option.description}</small>
@@ -563,15 +601,29 @@ export function HomePage() {
               <div className="people-control">
                 <button
                   type="button"
-                  onClick={() => updateInput('people', Math.max(1, (input.people ?? 2) - 1))}
+                  onClick={() =>
+                    updateInput(
+                      'people',
+                      typeof input.people === 'number'
+                        ? input.people <= 1
+                          ? undefined
+                          : input.people - 1
+                        : undefined,
+                    )
+                  }
                 >
                   -
                 </button>
-                <strong>{input.people ?? 2}</strong>
+                <strong>{input.people ?? '未設置'}</strong>
                 <button
                   type="button"
                   onClick={() =>
-                    updateInput('people', Math.min(10, (input.people ?? 2) + 1))
+                    updateInput(
+                      'people',
+                      typeof input.people === 'number'
+                        ? Math.min(10, input.people + 1)
+                        : 1,
+                    )
                   }
                 >
                   +
