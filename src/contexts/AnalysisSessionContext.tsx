@@ -15,6 +15,7 @@ import {
   updateDetailPlan,
   updateGeneratedPlan,
 } from '../utils/tripPlanStorage'
+import type { Stop, TransportSegment, TripPlan } from '../types/trip'
 import {
   AnalysisSessionContext,
   type AnalysisSession,
@@ -264,6 +265,44 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     })()
   }, [])
 
+  const getReplacementCandidates = useCallback(async () => {
+    const input = loadLastTripInput()
+    if (!input) throw new Error('Missing trip input')
+
+    const response = await fetch('/api/get-candidates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input }),
+    })
+
+    if (!response.ok) {
+      throw new Error('無法取得候選地點，請稍後再試。')
+    }
+
+    return response.json()
+  }, [])
+
+  const recomputeTripRoutes = useCallback(
+    async (
+      stops: Stop[],
+      transportMode: TripPlan['transportMode'],
+      transportSegments?: TransportSegment[],
+    ) => {
+      const response = await fetch('/api/recompute-routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stops, transportMode, transportSegments }),
+      })
+
+      if (!response.ok) {
+        throw new Error('交通路線重算失敗，請稍後再試。')
+      }
+
+      return response.json()
+    },
+    [],
+  )
+
   const resetAnalysisFlow = useCallback(() => {
     cancelAnalysis()
     navigate('/')
@@ -312,12 +351,16 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       setFlowRoute,
       planDetailStates,
       requestPlanDetails,
+      getReplacementCandidates,
+      recomputeTripRoutes,
     }),
     [
       cancelAnalysis,
+      getReplacementCandidates,
       isSessionExpired,
       planDetailStates,
       plannerPath,
+      recomputeTripRoutes,
       requestPlanDetails,
       resetAnalysisFlow,
       retryAnalysis,

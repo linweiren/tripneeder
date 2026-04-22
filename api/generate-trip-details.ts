@@ -256,11 +256,11 @@ async function getMergedPersona(
 
   return {
     companion:
-      companionLabels[input.category] ||
+      (input.category ? companionLabels[input.category] : undefined) ||
       dbPersona.persona_companion ||
       SYSTEM_DEFAULT_PERSONA.companion,
     budget:
-      budgetLabels[input.budget] ||
+      (input.budget ? budgetLabels[input.budget] : undefined) ||
       dbPersona.persona_budget ||
       SYSTEM_DEFAULT_PERSONA.budget,
     stamina: dbPersona.persona_stamina || SYSTEM_DEFAULT_PERSONA.stamina,

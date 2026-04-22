@@ -31,12 +31,15 @@ import type {
   TransportMode,
   TransportSegment,
   TripPlan,
+  VerifiedPlaceCandidate,
 } from '../types/trip'
 import {
   loadInputForDetail,
   loadGeneratedPlans,
   loadLastTripInput,
   loadPlanForDetail,
+  updateDetailPlan,
+  updateGeneratedPlan,
 } from '../utils/tripPlanStorage'
 import {
   isFavoriteRecord,
@@ -86,8 +89,13 @@ export function DetailPage() {
   const { planId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
-  const { setFlowRoute, planDetailStates, requestPlanDetails } =
-    useAnalysisSession()
+  const {
+    setFlowRoute,
+    planDetailStates,
+    requestPlanDetails,
+    getReplacementCandidates,
+    recomputeTripRoutes,
+  } = useAnalysisSession()
   const { user } = useAuth()
   const dialog = useDialog()
   const plans = loadGeneratedPlans()
@@ -124,6 +132,10 @@ export function DetailPage() {
   const [favoriteRevision, setFavoriteRevision] = useState(0)
   const [hasSavedFavorite, setHasSavedFavorite] = useState(false)
   const [isSavingFavorite, setIsSavingFavorite] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [candidates, setCandidates] = useState<VerifiedPlaceCandidate[]>([])
+  const [replacingStopId, setReplacingStopId] = useState<string | null>(null)
+
   const detailState = planId ? planDetailStates[planId] : undefined
   const detailCompletionStatus: 'idle' | 'loading' | 'error' =
     detailState?.status === 'loading'
@@ -145,6 +157,120 @@ export function DetailPage() {
   )
 
   const orderMode: OrderMode = isRainMode ? 'rain' : 'main'
+
+  // ... rest of useMemos ...
+
+  async function handleDeleteStop(stopId: string) {
+    if (!selectedPlan) return
+
+    const stopName = baseStops.find((s, i) => getStopId(s, i) === stopId)?.name
+
+    if (
+      !(await dialog.confirm({
+        title: '刪除景點',
+        message: `確定要刪除「${stopName}」嗎？刪除後將重新計算交通時間與總時長。`,
+        confirmLabel: '確認刪除',
+      }))
+    ) {
+      return
+    }
+
+    setIsEditing(true)
+    try {
+      const nextStops = baseStops.filter((s, i) => getStopId(s, i) !== stopId)
+      const { transportSegments: nextSegments, totalTime } = await recomputeTripRoutes(
+        nextStops,
+        activeTransportMode,
+      )
+
+      const updatedPlan: TripPlan = {
+        ...selectedPlan,
+        totalTime,
+        [isRainMode ? 'rainBackup' : 'stops']: nextStops,
+        [isRainMode ? 'rainTransportSegments' : 'transportSegments']: nextSegments,
+      }
+
+      setSelectedPlan(updatedPlan)
+      updateGeneratedPlan(updatedPlan)
+      updateDetailPlan(updatedPlan)
+      
+      // Clear order overrides if any
+      setStopOrders((current) => ({ ...current, [orderMode]: [] }))
+    } catch (error) {
+      void dialog.alert({
+        title: '刪除失敗',
+        message: error instanceof Error ? error.message : '刪除景點時發生錯誤。',
+      })
+    } finally {
+      setIsEditing(false)
+    }
+  }
+
+  async function handleOpenReplaceMenu(stopId: string) {
+    if (!selectedPlan) return
+    setReplacingStopId(stopId)
+    
+    if (candidates.length === 0) {
+      setIsEditing(true)
+      try {
+        const pool = await getReplacementCandidates()
+        setCandidates(pool.allCandidates || [])
+      } catch (error) {
+        void dialog.alert({
+          title: '取得候選失敗',
+          message: error instanceof Error ? error.message : '無法取得替換景點。',
+        })
+      } finally {
+        setIsEditing(false)
+      }
+    }
+  }
+
+  async function handleReplaceStop(stopId: string, candidate: VerifiedPlaceCandidate) {
+    if (!selectedPlan) return
+
+    setIsEditing(true)
+    try {
+      const nextStops = baseStops.map((s, i) => {
+        if (getStopId(s, i) === stopId) {
+          return {
+            ...s,
+            name: candidate.name,
+            address: candidate.address,
+            placeId: candidate.placeId,
+            googleMapsUrl: candidate.googleMapsUrl,
+            lat: candidate.lat,
+            lng: candidate.lng,
+          }
+        }
+        return s
+      })
+
+      const { transportSegments: nextSegments, totalTime } = await recomputeTripRoutes(
+        nextStops,
+        activeTransportMode,
+      )
+
+      const updatedPlan: TripPlan = {
+        ...selectedPlan,
+        totalTime,
+        [isRainMode ? 'rainBackup' : 'stops']: nextStops,
+        [isRainMode ? 'rainTransportSegments' : 'transportSegments']: nextSegments,
+      }
+
+      setSelectedPlan(updatedPlan)
+      updateGeneratedPlan(updatedPlan)
+      updateDetailPlan(updatedPlan)
+      setReplacingStopId(null)
+    } catch (error) {
+      void dialog.alert({
+        title: '替換失敗',
+        message: error instanceof Error ? error.message : '替換景點時發生錯誤。',
+      })
+    } finally {
+      setIsEditing(false)
+    }
+  }
 
   const baseStops = useMemo(() => {
     if (!selectedPlan) {
@@ -543,9 +669,9 @@ export function DetailPage() {
         </div>
       </dl>
 
-      {!selectedPlan.isDetailComplete ? (
-        <div className="detail-completion-panel" role="status" aria-live="polite">
-          {detailCompletionStatus === 'error' ? (
+      {!selectedPlan.isDetailComplete || isEditing ? (
+        <div className={`detail-completion-panel${isEditing ? ' is-editing' : ''}`} role="status" aria-live="polite">
+          {detailCompletionStatus === 'error' && !isEditing ? (
             <>
               <h2>細節補充失敗</h2>
               <p>{detailCompletionError || '細節補充失敗，請稍後再試。'}</p>
@@ -566,9 +692,13 @@ export function DetailPage() {
                   className="detail-completion-spinner"
                   aria-hidden="true"
                 />
-                <h2>正在補完整細節</h2>
+                <h2>{isEditing ? '正在重新計算交通與時程' : '正在補完整細節'}</h2>
               </div>
-              <p>先看路線骨架，景點介紹、雨天備案與交通摘要正在補上。</p>
+              <p>
+                {isEditing 
+                  ? '正在根據地點變動重算最佳路線與預估時間，請稍候。' 
+                  : '先看路線骨架，景點介紹、雨天備案與交通摘要正在補上。'}
+              </p>
               <div
                 className="detail-completion-progress"
                 role="presentation"
@@ -679,6 +809,35 @@ export function DetailPage() {
                     ) : (
                       <span className="maps-link maps-link-disabled">無法導航</span>
                     )}
+                    
+                    <div className="stop-edit-actions">
+                      <button
+                        className="maps-link stop-edit-button"
+                        type="button"
+                        disabled={isEditing}
+                        onClick={() => void handleOpenReplaceMenu(getStopId(stop, index))}
+                      >
+                        換一站
+                      </button>
+                      <button
+                        className="maps-link stop-edit-button stop-delete-button"
+                        type="button"
+                        disabled={isEditing || visibleStops.length <= 2}
+                        onClick={() => void handleDeleteStop(getStopId(stop, index))}
+                      >
+                        刪掉這站
+                      </button>
+                      
+                      {replacingStopId === getStopId(stop, index) ? (
+                        <CandidateReplacementMenu
+                          candidates={candidates}
+                          stopType={stop.type}
+                          usedPlaceIds={new Set(baseStops.map(s => s.placeId).filter(Boolean) as string[])}
+                          onSelect={(candidate) => void handleReplaceStop(getStopId(stop, index), candidate)}
+                          onClose={() => setReplacingStopId(null)}
+                        />
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               </article>
@@ -919,6 +1078,62 @@ function TransportModeMenu({
             {transportLabels[mode]}
           </button>
         ))}
+      </div>
+    </div>
+  )
+}
+
+function CandidateReplacementMenu({
+  candidates,
+  stopType,
+  usedPlaceIds,
+  onSelect,
+  onClose,
+}: {
+  candidates: VerifiedPlaceCandidate[]
+  stopType: StopType
+  usedPlaceIds: Set<string>
+  onSelect: (candidate: VerifiedPlaceCandidate) => void
+  onClose: () => void
+}) {
+  const filtered = useMemo(() => {
+    // 同類型優先，避開已使用的 placeId
+    const typedCandidates = candidates.filter((c) => {
+      if (usedPlaceIds.has(c.placeId)) return false
+      
+      const types = c.types ?? []
+      if (stopType === 'food') {
+        return types.some((t: string) => ['restaurant', 'cafe', 'bakery', 'meal_takeaway', 'food'].includes(t))
+      }
+      return !types.some((t: string) => ['restaurant', 'cafe', 'bakery', 'meal_takeaway'].includes(t))
+    })
+
+    return typedCandidates.length > 0 ? typedCandidates.slice(0, 5) : candidates.filter(c => !usedPlaceIds.has(c.placeId)).slice(0, 5)
+  }, [candidates, stopType, usedPlaceIds])
+
+  return (
+    <div className="candidate-menu" role="dialog" aria-label="選擇替換景點">
+      <div className="candidate-menu-header">
+        <p>選擇替換地點</p>
+        <button type="button" onClick={onClose}>×</button>
+      </div>
+      <div className="candidate-list">
+        {filtered.length === 0 ? (
+          <p className="candidate-empty">暫無合適的替代地點</p>
+        ) : (
+          filtered.map((candidate) => (
+            <button
+              key={candidate.placeId}
+              className="candidate-item"
+              type="button"
+              onClick={() => onSelect(candidate)}
+            >
+              <strong>{candidate.name}</strong>
+              <span>{candidate.address}</span>
+              {candidate.rating ? <small>⭐ {candidate.rating}</small> : null}
+            </button>
+          ))
+        )}
       </div>
     </div>
   )

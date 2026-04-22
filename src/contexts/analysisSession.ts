@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
-import type { TripInput } from '../types/trip'
+import type { Stop, TransportSegment, TripPlan, TripInput } from '../types/trip'
 import type { PartialTripPlan } from '../services/ai/types'
+import type { NearbyPlaceCandidates } from '../../api/_lib/google-places'
 
 export type AnalysisSessionStatus = 'analyzing' | 'success' | 'error'
 
@@ -34,6 +35,16 @@ export type AnalysisSessionContextValue = {
   setFlowRoute: (route: string) => void
   planDetailStates: Record<string, PlanDetailState>
   requestPlanDetails: (planId: string) => void
+  getReplacementCandidates: () => Promise<NearbyPlaceCandidates>
+  recomputeTripRoutes: (
+    stops: Stop[],
+    transportMode: TripPlan['transportMode'],
+    transportSegments?: TransportSegment[],
+  ) => Promise<{
+    transportSegments: TransportSegment[]
+    totalTime: number
+    routesFailed: boolean
+  }>
 }
 
 export const AnalysisSessionContext =

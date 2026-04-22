@@ -1,46 +1,318 @@
-我們正在開發 C:\Users\User\Desktop\tripneeder 專案（TripNeeder，AI 即時行程決策 Web App）。
+你是這個專案的 coding agent，請直接在目前 repo 動工，不要只分析。
 
-請先用 UTF-8 讀取 PROJECT_SPEC.md。這是唯一主規格檔。
+## 專案背景
 
-# 永久規則
-- 全程使用繁體中文回覆。
-- 每個子階段完成後必須先讓使用者驗收，通過才進下一項。
-- 不可擅自跳 phase 或跳子階段。
-- 任何確認後的規格變更都要同步寫進 PROJECT_SPEC.md。
-- UI 細節不清楚時要先問使用者。
-- 本機驗收網址優先 http://localhost:5173/。
-- 不要 reset / checkout / revert 任何現有變更。
-- OpenAI API key 不可放前端；SUPABASE_SERVICE_ROLE_KEY 不可放前端 / client bundle。
+專案名稱：Tripneeder  
+技術：Vite + React + TypeScript + Supabase + Vercel Functions  
+目前分支：dev  
+重要限制：不要切到 main、不要 merge main、不要推 production。main 會觸發發布。
 
-# 目前狀態
-- Phase 1 ~ 9D
-- 可給外部測試的穩定版本：commit bd11d8b（Vercel production READY）。
-- **下一步：Phase 9E**
+產品定位：
+Tripneeder 是「使用者已經在現場 / 附近，快速產生接下來幾小時行程」的工具，不是完整旅遊規劃 AI。主流程應以目前位置、起始時間、可用時長為中心。
 
-# 下一步：Phase 9E 子階段
-前置：使用者完全不會用 Google API，9D-1 教學文件必須非常詳細、可獨立操作。
+目前 9C / 9D 已修好：
+- AI 地點必須由 Google Places 候選與驗證修正。
+- Google Maps 連結應盡量使用真實 placeId / googleMapsUri。
+- 第一站距離起點、地點不存在、停業店、錯誤導航等問題已從根本修正。
+- 長時段行程不應因 stop 上限導致只排短行程。
+- 補完整細節不可把中文地點名稱 / 地址改成英文。
 
-依賴：9B 需先完成（否則沒人設只能用中性預設）。
+請先閱讀：
+- PROJECT_SPEC.md
+- 與本次 phase 相關的 frontend/backend 檔案
 
-* 9E-1　首頁預設「快速模式」：位置輸入 + 時長 chip。
-* 9E-2　時長 chip：`1h` / `2h` / `3h` / `半天 (6h)` / `一天 (10h)` / `自訂`。
-* 9E-3　時間起點 = 目前系統時間；結束 = 起點 + 選定時長。
-* 9E-4　「進階設定」折疊區塊 / toggle：展開可填類型、預算、人數、tags、指定起訖時間。
-* 9E-5　進階表單所有欄位皆選填，不阻擋送出（可以只填位置和時長直接送）。
-* 9E-6　權重規則（**單欄覆寫**）：
-  * 進階表單**有填**的欄位 → 這次使用進階值
-  * 進階表單**沒填**的欄位 → 使用人設值
-  * 人設也沒設 → 使用系統中性預設
-* 9E-7　送出按鈕維持「出發！GO！（扣除 20 點數）」文案。
+常見重要檔案：
+- src/pages/HomePage.tsx
+- src/pages/DetailPage.tsx
+- src/pages/ResultsPage.tsx
+- src/types/trip.ts
+- src/utils/tripTiming.ts
+- src/contexts/AnalysisSessionContext.tsx
+- src/services/ai/proxyTripPlanner.ts
+- src/services/ai/tripPlanPrompt.ts
+- src/services/ai/tripPlanResponseSchema.ts
+- api/generate-trip.ts
+- api/generate-trip-details.ts
+- api/_lib/google-places.ts
+- vite.config.ts
+- PROJECT_SPEC.md
 
-# 後續 Phase 順序（詳細子階段見 SPEC 8.3）
-- 9F：局部編輯（詳情頁刪站 + 換站 API，換站扣 5 點）
-- 9G：時間跨度過大 bug 修復
+本地 Vite API 注意：
+如果新增 Vercel Function endpoint，必須在 vite.config.ts 的 localApiPlugin 手動註冊，否則本地 dev 測不到。
 
-# 關鍵技術事實
-- AI 三方案是單次 API call 產生（非三次），並行化不成立。
-- 模型：gpt-4.1-mini（Responses API）。已驗證換 gpt-4o 沒快且品質較差，不再換模型。
-- 9A 後：第一階段用 NDJSON streaming 回三方案骨架；使用者點詳情才補細節，補細節不扣點。
-- 核心檔案：`api/generate-trip.ts`、`api/generate-trip-details.ts`、`src/services/ai/`、`src/contexts/AnalysisSessionContext.tsx`、`src/pages/HomePage.tsx`、`src/pages/ResultsPage.tsx`、`src/pages/DetailPage.tsx`、`src/types/trip.ts`
+## 本次任務
 
-先讀 PROJECT_SPEC.md（重點讀 8.3、8.5、第 9 章），回覆目前掌握狀態後等使用者下指令再動工。
+Phase：{{PHASE_ID}}  
+標題：{{PHASE_TITLE}}
+
+請依照 PROJECT_SPEC.md 中 {{PHASE_ID}} 的內容實作。  
+如果 SPEC 與現有程式矛盾，請以「產品定位：現場快速排行程」為優先，並在回覆中說明你如何取捨。
+
+## 本次重點
+
+{{PHASE_GOALS}}
+
+## 不要做
+
+{{DO_NOT_DO}}
+
+## 驗收標準
+
+{{ACCEPTANCE_CRITERIA}}
+
+## 工作方式
+
+1. 先確認目前 branch 是 dev，檢查 git status。
+2. 不要 revert 使用者或其他 agent 已有的變更。
+3. 先閱讀 PROJECT_SPEC.md 的 {{PHASE_ID}} 區段與相關程式碼。
+4. 直接實作，不要停在方案分析。
+5. 若需要改資料流、型別、UI、API，請一起補齊，不要只改其中一層。
+6. 完成後執行：
+   - npm run lint
+   - npm run build
+7. 如果有測不到的外部 API，例如 Google Routes API 未啟用，請明確說明 fallback 行為與需要啟用的 API。
+8. 最後回覆：
+   - 修改了哪些檔案
+   - 完成哪些驗收點
+   - 測試結果
+   - 尚未處理或需要我協助的地方
+
+請開始。
+
+
+
+
+
+
+你是這個專案的 coding agent，請直接在目前 repo 動工，不要只分析。
+
+## 專案背景
+
+專案名稱：Tripneeder  
+技術：Vite + React + TypeScript + Supabase + Vercel Functions  
+目前分支：dev  
+重要限制：不要切到 main、不要 merge main、不要推 production。main 會觸發發布。
+
+產品定位：
+Tripneeder 是「使用者已經在現場 / 附近，快速產生接下來幾小時行程」的工具，不是完整旅遊規劃 AI。主流程應以目前位置、起始時間、可用時長為中心。
+
+目前 9C / 9D 已修好：
+- AI 地點必須由 Google Places 候選與驗證修正。
+- Google Maps 連結應盡量使用真實 placeId / googleMapsUri。
+- 第一站距離起點、地點不存在、停業店、錯誤導航等問題已從根本修正。
+- 長時段行程不應因 stop 上限導致只排短行程。
+- 補完整細節不可把中文地點名稱 / 地址改成英文。
+
+請先閱讀：
+- PROJECT_SPEC.md
+- 與本次 phase 相關的 frontend/backend 檔案
+
+常見重要檔案：
+- src/pages/HomePage.tsx
+- src/pages/DetailPage.tsx
+- src/pages/ResultsPage.tsx
+- src/types/trip.ts
+- src/utils/tripTiming.ts
+- src/contexts/AnalysisSessionContext.tsx
+- src/services/ai/proxyTripPlanner.ts
+- src/services/ai/tripPlanPrompt.ts
+- src/services/ai/tripPlanResponseSchema.ts
+- api/generate-trip.ts
+- api/generate-trip-details.ts
+- api/_lib/google-places.ts
+- vite.config.ts
+- PROJECT_SPEC.md
+
+本地 Vite API 注意：
+如果新增 Vercel Function endpoint，必須在 vite.config.ts 的 localApiPlugin 手動註冊，否則本地 dev 測不到。
+
+## 本次任務
+
+Phase：{9F}  
+標題：{局部編輯 + Places / Routes 重算}
+
+請依照 PROJECT_SPEC.md 中 {9F} 的內容實作。  
+如果 SPEC 與現有程式矛盾，請以「產品定位：現場快速排行程」為優先，並在回覆中說明你如何取捨。
+
+## 本次重點
+
+{- 詳情頁刪站 / 換站的方向要以 Places / Routes 重算為核心。
+- 刪站後需重算相鄰交通段、總時長與時間軸。
+- 換站不優先呼叫 AI，應從 Places 候選池找同類型真實地點，避開已使用 placeId。
+- 換站後需用 Routes API 重算前後交通。
+- MVP 不扣點。
+- 刪站 / 換站前需要確認或 undo，避免誤改。}
+
+## 不要做
+
+{- 不要新增 AI 版 api/replace-stop.ts。
+- 不要做換站扣 5 點。
+- 不要只用純前端估算後宣稱是準確交通。
+- 不要在 Routes API 未啟用時假裝已取得 Google 官方距離 / 時間。
+}
+
+## 驗收標準
+
+{- npm run lint 通過。
+- npm run build 通過。
+- 刪站後 totalTime、時間軸、交通段一致。
+- 換站只使用真實 Places 候選。
+- Routes API 可用時使用官方距離 / 時間。
+- Routes API 不可用時 fallback 清楚，不誤導使用者。}
+
+## 工作方式
+
+1. 先確認目前 branch 是 dev，檢查 git status。
+2. 不要 revert 使用者或其他 agent 已有的變更。
+3. 先閱讀 PROJECT_SPEC.md 的 {{PHASE_ID}} 區段與相關程式碼。
+4. 直接實作，不要停在方案分析。
+5. 若需要改資料流、型別、UI、API，請一起補齊，不要只改其中一層。
+6. 完成後執行：
+   - npm run lint
+   - npm run build
+7. 如果有測不到的外部 API，例如 Google Routes API 未啟用，請明確說明 fallback 行為與需要啟用的 API。
+8. 最後回覆：
+   - 修改了哪些檔案
+   - 完成哪些驗收點
+   - 測試結果
+   - 尚未處理或需要我協助的地方
+
+請開始。
+
+
+
+
+
+
+
+
+你每次只要替換這四塊：
+
+{{PHASE_ID}}
+{{PHASE_TITLE}}
+{{PHASE_GOALS}}
+{{DO_NOT_DO}}
+{{ACCEPTANCE_CRITERIA}}
+
+
+
+
+9G-lite 替換區塊
+
+{{PHASE_ID}}
+9G-lite
+
+{{PHASE_TITLE}}
+失敗 / 扣點 / 最近生成一致性收尾驗證
+
+{{PHASE_GOALS}}
+- 確認 OpenAI 失敗時不扣點、不寫最近生成。
+- 確認 Places API key 缺失或 Places API 失敗時，不寫入明顯壞資料。
+- 確認 Routes API 未啟用時，不阻斷生成，但交通資訊標示為估算，不宣稱 Google 官方時間 / 距離。
+- 確認使用者取消、中途 streaming 錯誤、partial plan 都不會造成錯誤扣點或錯誤最近生成。
+- 修掉任何會讓使用者看到「分析失敗但最近生成有資料」的不一致狀況。
+
+{{DO_NOT_DO}}
+- 不要新增大型功能。
+- 不要重做 9C / 9D。
+- 不要把內部錯誤訊息直接丟給使用者。
+- 不要讓失敗結果進入最近生成。
+
+{{ACCEPTANCE_CRITERIA}}
+- npm run lint 通過。
+- npm run build 通過。
+- 失敗不扣點。
+- 失敗不寫最近生成。
+- 使用者取消語意清楚。
+- Routes API 未啟用時可 fallback，但 UI / 文件不誤導。
+
+
+
+
+
+
+
+
+9E 替換區塊
+
+{{PHASE_ID}}
+9E
+
+{{PHASE_TITLE}}
+現場快速模式 On-site Quick Start
+
+{{PHASE_GOALS}}
+- 首頁主流程改成「使用目前位置 + 可用時長」。
+- 目前位置流程的起始時間預設為現在。
+- 時長 chip 支援 1h / 2h / 3h / 半天 6h / 一天 10h / 自訂。
+- 保留手動地點，但降級成「不在現場？改用指定起點」。
+- 指定起點流程必須提供「抵達起點時間 / 從這裡出發時間」，預設現在但可修改。
+- 指定起點不是目的地規劃，只代表從該起點附近開始。
+- 進階設定保留類型、預算、人數、tags、指定起訖時間，但不可阻擋快速送出。
+- 長時段不設 stop 硬上限。
+
+{{DO_NOT_DO}}
+- 不要做完整旅遊規劃模式。
+- 不要把手動輸入地點做成主 CTA。
+- 不要要求使用者一定填完整進階表單。
+- 不要破壞 9C / 9D 已修好的 Places 驗證與地理約束。
+
+{{ACCEPTANCE_CRITERIA}}
+- npm run lint 通過。
+- npm run build 通過。
+- 使用目前位置後，可以只選時長送出。
+- 指定起點時，必須能選起始 / 抵達時間。
+- startTime / endTime 傳入後端正確。
+- 跨日時 UI 有合理顯示。
+
+
+
+
+
+
+
+9F 替換區塊
+
+{{PHASE_ID}}
+9F
+
+{{PHASE_TITLE}}
+局部編輯 + Places / Routes 重算
+
+{{PHASE_GOALS}}
+- 詳情頁刪站 / 換站的方向要以 Places / Routes 重算為核心。
+- 刪站後需重算相鄰交通段、總時長與時間軸。
+- 換站不優先呼叫 AI，應從 Places 候選池找同類型真實地點，避開已使用 placeId。
+- 換站後需用 Routes API 重算前後交通。
+- MVP 不扣點。
+- 刪站 / 換站前需要確認或 undo，避免誤改。
+
+{{DO_NOT_DO}}
+- 不要新增 AI 版 api/replace-stop.ts。
+- 不要做換站扣 5 點。
+- 不要只用純前端估算後宣稱是準確交通。
+- 不要在 Routes API 未啟用時假裝已取得 Google 官方距離 / 時間。
+
+{{ACCEPTANCE_CRITERIA}}
+- npm run lint 通過。
+- npm run build 通過。
+- 刪站後 totalTime、時間軸、交通段一致。
+- 換站只使用真實 Places 候選。
+- Routes API 可用時使用官方距離 / 時間。
+- Routes API 不可用時 fallback 清楚，不誤導使用者。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+我會建議你每次開新聊天室時，先貼「共用提示詞 + 對應替換區塊」。
+其中 9F 最容易牽動大，最好等 9G-lite 和 9E 都穩了再開。

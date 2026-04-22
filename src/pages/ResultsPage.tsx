@@ -46,7 +46,7 @@ export function ResultsPage() {
       <h1 className="page-title">選擇行程方案</h1>
       {warnings.length > 0 ? (
         <div className="plan-warning-panel" role="status">
-          {warnings.map((warning) => (
+          {warnings.map((warning: string) => (
             <p key={warning}>{warning}</p>
           ))}
         </div>

@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import type { TripPlan, Stop, TripInput } from '../../src/types/trip.js'
 import type { GenerateTripPlansRequest } from '../../src/services/ai/types.js'
 
@@ -60,6 +62,7 @@ export interface PlacesValidationResult {
   validatedPlan: TripPlan
   invalidCount: number
   firstStopInvalid: boolean
+  validationPerformed: boolean
   issues: Array<{
     stopId: string
     stopName: string
@@ -95,7 +98,7 @@ function buildSearchQuery(input: TripInput): string {
     no_full_meals: 'light food drinks snacks',
   }
 
-  const baseQuery = categoryMap[input.category] || 'attractions'
+  const baseQuery = (input.category ? categoryMap[input.category] : undefined) || 'attractions'
   const tagQuery = input.tags.map((tag) => tagMap[tag]).filter(Boolean).join(' ')
 
   return `${city} ${baseQuery} ${tagQuery}`.trim()
@@ -521,7 +524,13 @@ export async function validateStopsWithPlaces(
   bias?: { lat: number; lng: number },
 ): Promise<PlacesValidationResult> {
   if (!GOOGLE_PLACES_API_KEY) {
-    return { validatedPlan: plan, invalidCount: 0, firstStopInvalid: false, issues: [] }
+    return {
+      validatedPlan: plan,
+      invalidCount: 0,
+      firstStopInvalid: false,
+      validationPerformed: false,
+      issues: [],
+    }
   }
 
   const mainResults = await Promise.all(
@@ -550,6 +559,7 @@ export async function validateStopsWithPlaces(
     },
     invalidCount: issues.length,
     firstStopInvalid,
+    validationPerformed: true,
     issues,
   }
 }

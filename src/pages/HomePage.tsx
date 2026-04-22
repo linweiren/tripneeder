@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/auth'
 import { useAnalysisSession } from '../contexts/analysisSession'
@@ -46,13 +46,22 @@ const tagOptions: Array<{ value: TripTag; label: string }> = [
   { value: 'no_full_meals', label: '不吃正餐' },
 ]
 
+const durationOptions = [
+  { value: 60, label: '1h' },
+  { value: 120, label: '2h' },
+  { value: 180, label: '3h' },
+  { value: 360, label: '半天 6h' },
+  { value: 600, label: '一天 10h' },
+  { value: -1, label: '自訂' },
+]
+
 const initialInput: TripInput = {
-  category: 'relax',
+  category: undefined,
   customCategory: '',
   startTime: '',
   endTime: '',
-  budget: 'standard',
-  people: 2,
+  budget: undefined,
+  people: undefined,
   tags: [],
   location: {
     name: '',
@@ -78,7 +87,13 @@ export function HomePage() {
   } = useAnalysisSession()
   const { user } = useAuth()
   const dialog = useDialog()
+
   const [input, setInput] = useState<TripInput>(initialInput)
+  const [duration, setDuration] = useState<number>(180) // Default 3h
+  const [useCurrentLocation, setUseCurrentLocation] = useState(true)
+  const [showManualLocation, setShowManualLocation] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  
   const [isLocating, setIsLocating] = useState(false)
   const [locationStatus, setLocationStatus] = useState('')
   const [formError, setFormError] = useState('')
@@ -86,10 +101,24 @@ export function HomePage() {
   const isOtherCategory = input.category === 'other'
   const isAnalysisInProgress = session?.status === 'analyzing'
   const analysisError = session?.status === 'error' ? session.error : ''
-  const shouldShowOtherCategoryError =
-    Boolean(formError) &&
-    input.category === 'other' &&
-    !input.customCategory?.trim()
+  // Initialize start time to now if not set
+  useEffect(() => {
+    if (!input.startTime) {
+      const now = new Date()
+      const hh = String(now.getHours()).padStart(2, '0')
+      const mm = String(Math.floor(now.getMinutes() / 15) * 15).padStart(2, '0')
+      updateInput('startTime', `${hh}:${mm}`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Update endTime whenever startTime or duration changes
+  useEffect(() => {
+    if (input.startTime && duration > 0) {
+      const endTime = addMinutesToTime(input.startTime, duration)
+      updateInput('endTime', endTime)
+    }
+  }, [input.startTime, duration])
 
   const selectedLocationText = useMemo(() => {
     if (input.location.name && input.location.lat && input.location.lng) {
@@ -102,6 +131,13 @@ export function HomePage() {
 
     return ''
   }, [input.location.name, input.location.lat, input.location.lng])
+
+  const isCrossDay = useMemo(() => {
+    if (!input.startTime || !input.endTime) return false
+    const start = parseTimeToMinutes(input.startTime)
+    const end = parseTimeToMinutes(input.endTime)
+    return end < start
+  }, [input.startTime, input.endTime])
 
   function updateInput<Value extends keyof TripInput>(
     key: Value,
@@ -165,12 +201,15 @@ export function HomePage() {
               },
             }))
             setLocationStatus('定位成功！')
+            setUseCurrentLocation(true)
           } else {
             setLocationStatus('座標抓取成功！')
+            setUseCurrentLocation(true)
           }
         } catch (error) {
           console.error('Geocoding failed:', error)
           setLocationStatus('座標抓取成功！')
+          setUseCurrentLocation(true)
         } finally {
           setIsLocating(false)
         }
@@ -205,12 +244,20 @@ export function HomePage() {
       return
     }
 
-    if (!isValidInput(input)) {
+    // If using current location, try to get it if not already available
+    const currentInput = { ...input }
+    if (useCurrentLocation && !input.location.lat) {
+       // Ideally we should have forced location earlier, but let's check
+       setFormError('請先點擊「使用目前位置」取得定位。')
+       return
+    }
+
+    if (!isValidInput(currentInput)) {
       setFormError('請確認必填欄位都已完成，再開始分析行程。')
       return
     }
 
-    await startSessionAnalysis(input)
+    await startSessionAnalysis(currentInput)
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -221,7 +268,7 @@ export function HomePage() {
   async function handleCancelAnalysis() {
     const confirmed = await dialog.confirm({
       title: '取消分析',
-      message: '確定取消嗎？點數已確定扣除。',
+      message: '確定取消嗎？分析未完成前不會扣除點數。',
       confirmLabel: '確認取消',
     })
 
@@ -333,171 +380,245 @@ export function HomePage() {
   return (
     <section className="page home-page">
       <div className="home-hero">
-        <p className="page-kicker">行程規劃</p>
-        <h1 className="page-title">想來點什麼樣的旅行？</h1>
+        <p className="page-kicker">現場快速排行程</p>
+        <h1 className="page-title">接下來幾小時，想去哪裡走走？</h1>
       </div>
 
       <form className="trip-form" onSubmit={handleSubmit}>
+        {/* Step 1: Location Selection */}
         <fieldset className="form-section">
-          <legend>想要哪一種氛圍？</legend>
+          <legend>你在哪裡？</legend>
+          <div className="location-quick-start">
+            <button
+              className={`location-button-large ${useCurrentLocation && input.location.lat ? 'active' : ''}`}
+              type="button"
+              onClick={handleLocate}
+              disabled={isLocating}
+            >
+              {isLocating ? (
+                '定位中...'
+              ) : (
+                <>
+                  <span className="icon">📍</span>
+                  {selectedLocationText || '使用目前位置'}
+                </>
+              )}
+            </button>
+            
+            {locationStatus && !selectedLocationText ? (
+              <p className="location-status-text">{locationStatus}</p>
+            ) : null}
+
+            <button 
+              type="button" 
+              className="toggle-manual-location"
+              onClick={() => {
+                setShowManualLocation(!showManualLocation)
+                if (!showManualLocation) setUseCurrentLocation(false)
+              }}
+            >
+              {showManualLocation ? (
+                <>收起指定起點 ▲</>
+              ) : (
+                <>不在現場？改用指定起點 ▼</>
+              )}
+            </button>
+
+            {showManualLocation && (
+              <div className="manual-location-fields">
+                <label className="field-label">
+                  指定起點名稱
+                  <input
+                    value={input.location.name}
+                    onChange={(event) => {
+                      setInput((current) => ({
+                        ...current,
+                        location: {
+                          name: event.target.value,
+                          lat: undefined,
+                          lng: undefined
+                        },
+                      }))
+                      setUseCurrentLocation(false)
+                    }}
+                    placeholder="例如：台北信義區、駁二、西門町"
+                  />
+                </label>
+                
+                <div className="field-row" style={{ marginTop: '12px' }}>
+                  <TimeSelect
+                    label="出發 / 抵達時間"
+                    value={input.startTime}
+                    onChange={(value) => updateInput('startTime', value)}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </fieldset>
+
+        {/* Step 2: Duration Selection */}
+        <fieldset className="form-section">
+          <legend>想玩多久？</legend>
           <div className="chip-grid">
-            {categoryOptions.map((option) => (
+            {durationOptions.map((option) => (
               <button
-                key={option.value}
+                key={option.label}
                 className={
-                  input.category === option.value ? 'chip chip-active' : 'chip'
+                  duration === option.value ? 'chip chip-active' : 'chip'
                 }
                 type="button"
-                onClick={() => updateInput('category', option.value)}
+                onClick={() => setDuration(option.value)}
               >
                 {option.label}
               </button>
             ))}
           </div>
-          {isOtherCategory ? (
-            <label className="field-label">
-              其他類型
-              <input
-                value={input.customCategory}
-                required
-                aria-invalid={shouldShowOtherCategoryError}
-                aria-describedby={
-                  shouldShowOtherCategoryError ? 'custom-category-error' : undefined
-                }
-                onChange={(event) =>
-                  updateInput('customCategory', event.target.value)
-                }
-                placeholder="例如：想找安靜、有海風、能慢慢走的地方"
-              />
-              {shouldShowOtherCategoryError ? (
-                <p className="field-error" id="custom-category-error">
-                  請簡單描述你想要的旅行類型。
-                </p>
+          
+          <div className="duration-display">
+            預計玩到 <strong>{input.endTime}</strong>
+            {isCrossDay && <span className="cross-day-note"> (明天)</span>}
+          </div>
+
+          {duration === -1 && (
+             <div className="custom-duration-fields">
+                <TimeSelect
+                  label="自訂結束時間"
+                  value={input.endTime}
+                  onChange={(value) => {
+                    updateInput('endTime', value)
+                    setDuration(0) // Set to 0 to stop auto-calculating from duration
+                  }}
+                />
+             </div>
+          )}
+        </fieldset>
+
+        {/* Step 3: Advanced Settings (Collapsed) */}
+        <div className="advanced-toggle-area">
+          <button 
+            type="button" 
+            className="advanced-toggle-button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+          >
+            {showAdvanced ? '收起進階設定 ↑' : '更多偏好設定（類型、預算、人數...） ↓'}
+          </button>
+        </div>
+
+        {showAdvanced && (
+          <div className="advanced-settings-panel">
+            <fieldset className="form-section">
+              <legend>想要哪一種氛圍？</legend>
+              <div className="chip-grid">
+                {categoryOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    className={
+                      input.category === option.value ? 'chip chip-active' : 'chip'
+                    }
+                    type="button"
+                    onClick={() => updateInput('category', option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {isOtherCategory ? (
+                <label className="field-label" style={{ marginTop: '12px' }}>
+                  其他類型
+                  <input
+                    value={input.customCategory}
+                    onChange={(event) =>
+                      updateInput('customCategory', event.target.value)
+                    }
+                    placeholder="例如：想找安靜、有海風、能慢慢走的地方"
+                  />
+                </label>
               ) : null}
-            </label>
-          ) : null}
-        </fieldset>
+            </fieldset>
 
-        <fieldset className="form-section">
-          <legend>今天想怎麼安排時間？</legend>
-          <div className="field-row">
-            <TimeSelect
-              label="從什麼時候開始？"
-              value={input.startTime}
-              onChange={(value) => updateInput('startTime', value)}
-            />
-            <TimeSelect
-              label="想玩到什麼時候？"
-              value={input.endTime}
-              onChange={(value) => updateInput('endTime', value)}
-            />
+            <fieldset className="form-section">
+              <legend>預算感覺</legend>
+              <div className="budget-grid">
+                {budgetOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    className={
+                      input.budget === option.value
+                        ? 'budget-option budget-option-active'
+                        : 'budget-option'
+                    }
+                    type="button"
+                    onClick={() => updateInput('budget', option.value)}
+                  >
+                    <span>{option.label}</span>
+                    <small>{option.description}</small>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="form-section">
+              <legend>幾個人出發？</legend>
+              <div className="people-control">
+                <button
+                  type="button"
+                  onClick={() => updateInput('people', Math.max(1, (input.people ?? 2) - 1))}
+                >
+                  -
+                </button>
+                <strong>{input.people ?? 2}</strong>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateInput('people', Math.min(10, (input.people ?? 2) + 1))
+                  }
+                >
+                  +
+                </button>
+              </div>
+            </fieldset>
+
+            <fieldset className="form-section">
+              <legend>有什麼偏好或限制？</legend>
+              <div className="chip-grid">
+                {tagOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    className={
+                      input.tags.includes(option.value) ? 'chip chip-active' : 'chip'
+                    }
+                    type="button"
+                    onClick={() => toggleTag(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            
+            <fieldset className="form-section">
+              <legend>精確時間設定</legend>
+              <div className="field-row">
+                <TimeSelect
+                  label="開始時間"
+                  value={input.startTime}
+                  onChange={(value) => updateInput('startTime', value)}
+                />
+                <TimeSelect
+                  label="結束時間"
+                  value={input.endTime}
+                  onChange={(value) => {
+                    updateInput('endTime', value)
+                    setDuration(0)
+                  }}
+                />
+              </div>
+            </fieldset>
           </div>
-        </fieldset>
+        )}
 
-        <fieldset className="form-section">
-          <legend>預算感覺</legend>
-          <div className="budget-grid">
-            {budgetOptions.map((option) => (
-              <button
-                key={option.value}
-                className={
-                  input.budget === option.value
-                    ? 'budget-option budget-option-active'
-                    : 'budget-option'
-                }
-                type="button"
-                onClick={() => updateInput('budget', option.value)}
-              >
-                <span>{option.label}</span>
-                <small>{option.description}</small>
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        <fieldset className="form-section">
-          <legend>幾個人出發？</legend>
-          <div className="people-control">
-            <button
-              type="button"
-              onClick={() => updateInput('people', Math.max(1, input.people - 1))}
-            >
-              -
-            </button>
-            <strong>{input.people}</strong>
-            <button
-              type="button"
-              onClick={() =>
-                updateInput('people', Math.min(10, input.people + 1))
-              }
-            >
-              +
-            </button>
-          </div>
-        </fieldset>
-
-        <fieldset className="form-section">
-          <legend>有什麼偏好或限制？</legend>
-          <div className="chip-grid">
-            {tagOptions.map((option) => (
-              <button
-                key={option.value}
-                className={
-                  input.tags.includes(option.value) ? 'chip chip-active' : 'chip'
-                }
-                type="button"
-                onClick={() => toggleTag(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        <fieldset className="form-section">
-          <legend>從哪裡出發？</legend>
-          <div className="location-choice">
-            <div>
-              <button
-                className="location-button"
-                type="button"
-                onClick={handleLocate}
-                disabled={isLocating}
-              >
-                {isLocating ? '定位中...' : '使用目前位置'}
-              </button>
-              {locationStatus ? (
-                <p className="location-success">{locationStatus}</p>
-              ) : null}
-              {selectedLocationText ? (
-                <p className="location-coordinate">{selectedLocationText}</p>
-              ) : null}
-            </div>
-
-            <div className="or-divider">
-              <span>or</span>
-            </div>
-
-            <label className="field-label">
-              輸入地區或地點
-              <input
-                value={input.location.name}
-                onChange={(event) =>
-                  setInput((current) => ({
-                    ...current,
-                    location: {
-                      ...current.location,
-                      name: event.target.value,
-                    },
-                  }))
-                }
-                placeholder="例如：台北信義區、駁二、西門町、我家附近"
-              />
-            </label>
-          </div>
-        </fieldset>
-
-        {formError ? <p className="form-error">{formError}</p> : null}
+        {formError ? <p className="form-error" style={{ marginBottom: '16px' }}>{formError}</p> : null}
 
         <button className="submit-button" type="submit">
           出發！GO！（扣除20點數）
@@ -517,6 +638,7 @@ function TimeSelect({ label, value, onChange }: TimeSelectProps) {
   const [hour = '', minute = ''] = value.split(':')
 
   function updateTime(nextHour: string, nextMinute: string) {
+    if (!nextHour || !nextMinute) return
     onChange(`${nextHour}:${nextMinute}`)
   }
 
@@ -556,23 +678,38 @@ function TimeSelect({ label, value, onChange }: TimeSelectProps) {
 
 function isValidInput(input: TripInput) {
   const hasLocation =
-    input.location.name.trim().length > 0 ||
+    (input.location.name && input.location.name.trim().length > 0) ||
     (typeof input.location.lat === 'number' &&
       typeof input.location.lng === 'number')
 
   return (
-    input.category.length > 0 &&
+    (input.category === undefined || input.category.length > 0) &&
     (input.category !== 'other' ||
       Boolean(input.customCategory && input.customCategory.trim())) &&
     isCompleteTime(input.startTime) &&
     isCompleteTime(input.endTime) &&
-    input.budget.length > 0 &&
-    input.people >= 1 &&
-    input.people <= 10 &&
+    (input.budget === undefined || input.budget.length > 0) &&
+    (input.people === undefined || (input.people >= 1 && input.people <= 10)) &&
     hasLocation
   )
 }
 
 function isCompleteTime(value: string) {
   return /^\d{2}:\d{2}$/.test(value)
+}
+
+function addMinutesToTime(time: string, minutes: number): string {
+  if (!/^\d{2}:\d{2}$/.test(time)) return ''
+  const [h, m] = time.split(':').map(Number)
+  const date = new Date()
+  date.setHours(h, m, 0, 0)
+  date.setMinutes(date.getMinutes() + minutes)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function parseTimeToMinutes(value?: string) {
+  if (!value || !/^\d{2}:\d{2}$/.test(value)) return 0
+
+  const [hour, minute] = value.split(':').map(Number)
+  return hour * 60 + minute
 }

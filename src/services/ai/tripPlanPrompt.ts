@@ -3,7 +3,9 @@ import type {
   Persona,
 } from './types.js'
 import type {
+  BudgetLevel,
   PlanType,
+  TripCategory,
   TripInput,
   TripPlan,
 } from '../../types/trip.js'
@@ -11,7 +13,7 @@ const PLAN_ORDER: PlanType[] = ['safe', 'balanced', 'explore']
 const TRIP_RESPONSE_ERROR =
   '這次 AI 產生的行程資料不夠完整，請重新分析一次。'
 
-const categoryLabels: Record<TripInput['category'], string> = {
+const categoryLabels: Record<TripCategory, string> = {
   date: '約會',
   relax: '放鬆',
   explore: '探索',
@@ -22,7 +24,7 @@ const categoryLabels: Record<TripInput['category'], string> = {
   other: '其他',
 }
 
-const budgetLabels: Record<TripInput['budget'], string> = {
+const budgetLabels: Record<BudgetLevel, string> = {
   budget: '小資',
   standard: '一般',
   premium: '輕奢',
@@ -46,10 +48,21 @@ export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlace
   const minimumActualMinutes = allowedMinutes
     ? Math.ceil(allowedMinutes * getRequiredCoverageRatio(allowedMinutes))
     : null
-  const category =
+  
+  // Use persona values if input values are missing
+  const displayCategory =
     input.category === 'other' && input.customCategory
       ? `其他：${input.customCategory}`
-      : categoryLabels[input.category]
+      : input.category
+        ? categoryLabels[input.category]
+        : (persona?.companion || '放鬆')
+  
+  const displayBudget = input.budget 
+    ? budgetLabels[input.budget] 
+    : (persona?.budget || '一般')
+
+  const displayPeople = input.people ?? 2
+
   const location = [
     input.location.name ? `地點文字：${input.location.name}` : '',
     typeof input.location.lat === 'number' && typeof input.location.lng === 'number'
@@ -75,7 +88,7 @@ export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlace
 ${nearbyPlaces}
 
 重要指示：
-1. 所有 stops（包含 safe、balanced、explore 三方案）只能從上方 Google Maps 候選清單挑選，不可自創、改寫或使用清單外地點。
+1. 所有 stops（包含 safe、balanced、explore 三方案）只能從上方 Google Maps 候選清單挑選，不可自創、改寫 or 使用清單外地點。
 2. stop.name 必須逐字複製候選清單的 name；stop.address 必須逐字複製同一筆候選的 address；若候選資料含 placeId，請原樣填入 stop.placeId。
 3. 第一站（即每個 plan 的 stops[0]）必須從 FIRST_STOP_CANDIDATES_WITHIN_2KM 區塊挑選；若該區塊存在，禁止使用其他區塊作為第一站。
 4. 不可使用「特色小吃」「親民餐廳」「附近餐廳」「咖啡廳」「景點」這類空泛名稱。
@@ -86,13 +99,13 @@ ${nearbyPlaces}
   return `你是台灣在地行程規劃 AI。請依使用者輸入產生 3 個單日行程「骨架」方案，並回傳符合 schema 的 JSON。此階段只產生可比較的核心路線，不要產生景點 description、雨天備案或交通 label。
 
 使用者輸入：
-- 行程類型：${category}
+- 行程類型：${displayCategory}
 - 開始時間：${input.startTime}
 - 結束時間：${input.endTime}
 - 可用行程時間：${allowedMinutes ?? '未知'} 分鐘
 - 最低實際行程長度：${minimumActualMinutes ?? '未知'} 分鐘（所有 stop.duration + transportSegments.duration 加總）
-- 預算：${budgetLabels[input.budget]}
-- 人數：${input.people}
+- 預算：${displayBudget}
+- 人數：${displayPeople}
 - 限制條件：${tags}
 - 起點：${location}
 - 正餐偏好：${wantsNoFullMeals ? '使用者勾選不吃正餐，不強制安排正式午餐或晚餐。' : '使用者未勾選不吃正餐，請依行程時間判斷是否安排正式午餐或晚餐。'}
@@ -146,10 +159,19 @@ JSON 範例（其餘欄位請依 schema）：
 
 export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona?: Persona) {
   const tags = input.tags.map((tag) => tagLabels[tag]).join('、') || '無'
-  const category =
+  
+  const displayCategory =
     input.category === 'other' && input.customCategory
       ? `其他：${input.customCategory}`
-      : categoryLabels[input.category]
+      : input.category
+        ? categoryLabels[input.category]
+        : (persona?.companion || '放鬆')
+  
+  const displayBudget = input.budget 
+    ? budgetLabels[input.budget] 
+    : (persona?.budget || '一般')
+
+  const displayPeople = input.people ?? 2
 
   const personaContext = persona
     ? `
@@ -164,11 +186,11 @@ export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona
   return `你是台灣在地行程規劃 AI。請只替下方單一骨架方案補完整細節，回傳符合 schema 的 JSON。
 
 使用者輸入：
-- 行程類型：${category}
+- 行程類型：${displayCategory}
 - 開始時間：${input.startTime}
 - 結束時間：${input.endTime}
-- 預算：${budgetLabels[input.budget]}
-- 人數：${input.people}
+- 預算：${displayBudget}
+- 人數：${displayPeople}
 - 限制條件：${tags}
 - 起點：${input.location.name || '未指定'}
 ${personaContext}

@@ -34,12 +34,12 @@ export type TripLocation = {
 }
 
 export type TripInput = {
-  category: TripCategory
+  category?: TripCategory
   customCategory?: string
   startTime: string
   endTime: string
-  budget: BudgetLevel
-  people: number
+  budget?: BudgetLevel
+  people?: number
   tags: TripTag[]
   location: TripLocation
 }
@@ -65,6 +65,24 @@ export type TransportSegment = {
   publicTransitType?: PublicTransitType
   duration: number
   label: string
+}
+
+export type VerifiedPlaceCandidate = {
+  name: string
+  address: string
+  placeId: string
+  googleMapsUrl: string
+  distanceKm?: number
+  rating?: number
+  types?: string[]
+  lat?: number
+  lng?: number
+}
+
+export type NearbyPlaceCandidates = {
+  firstStopCandidates: VerifiedPlaceCandidate[]
+  otherCandidates: VerifiedPlaceCandidate[]
+  allCandidates: VerifiedPlaceCandidate[]
 }
 
 export type TripPlan = {

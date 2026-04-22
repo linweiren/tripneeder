@@ -65,6 +65,16 @@ function localApiPlugin(): Plugin {
         const { default: handler } = await import('./api/geocode')
         await handleLocalApiRequest(req, res, handler)
       })
+
+      server.middlewares.use('/api/get-candidates', async (req, res) => {
+        const { default: handler } = await import('./api/get-candidates')
+        await handleLocalApiRequest(req, res, handler)
+      })
+
+      server.middlewares.use('/api/recompute-routes', async (req, res) => {
+        const { default: handler } = await import('./api/recompute-routes')
+        await handleLocalApiRequest(req, res, handler)
+      })
     },
   }
 }

@@ -13,7 +13,7 @@ import {
   type VerifiedPlaceCandidate,
 } from './_lib/google-places.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
-import type { Stop, TripPlan } from '../src/types/trip.js'
+import type { Stop, TransportSegment, TripPlan } from '../src/types/trip.js'
 
 type VercelRequest = {
   method?: string
@@ -61,13 +61,14 @@ type PointsSupabaseClient = {
 }
 
 const SYSTEM_DEFAULT_PERSONA = {
-  companion: '情侶 / 約會',
-  budget: '一般',
-  stamina: '普通',
-  diet: '無',
+  companion: '?�侶 / 約�?',
+  budget: '一??,
+  stamina: '?��?,
+  diet: '??,
 }
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
+const ROUTES_API_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes'
 const ANALYSIS_COST = 20
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -82,12 +83,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const accessToken = getBearerToken(req.headers?.authorization)
 
   if (!request) {
-    res.status(400).json({ error: '行程偏好資料不完整，請回到表單重新送出。' })
+    res.status(400).json({ error: '行�??�好資�?不�??��?請�??�表?��??�送出?? })
     return
   }
 
   if (!accessToken) {
-    res.status(401).json({ error: '請登入以繼續使用本服務。' })
+    res.status(401).json({ error: '請登?�以繼�?使用?��??��? })
     return
   }
 
@@ -95,7 +96,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (!apiKey) {
     res.status(500).json({
-      error: '尚未在 Vercel Environment Variables 設定 OPENAI_API_KEY。',
+      error: '尚未??Vercel Environment Variables 設�? OPENAI_API_KEY??,
     })
     return
   }
@@ -109,21 +110,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (balance < ANALYSIS_COST) {
       res.status(402).json({
-        error: `點數不足。每次分析需要 ${ANALYSIS_COST} 點，目前剩餘 ${balance} 點。`,
+        error: `點數不足?��?次�??��?�?${ANALYSIS_COST} 點�??��??��? ${balance} 點。`,
       })
       return
     }
   } catch (error) {
     res.status(502).json({
-      error: error instanceof Error ? error.message : 'AI 分析失敗，請稍後再試。',
+      error: error instanceof Error ? error.message : 'AI ?��?失�?，�?稍�??�試??,
     })
     return
   }
 
-  // 獲取並合併人設
-  const persona = await getMergedPersona(supabase, userId, request.input)
+  // ?��?並�?併人�?  const persona = await getMergedPersona(supabase, userId, request.input)
 
-  // 9D-7: 智慧前置搜尋 (Search-Inject)
+  // 9D-7: ?�慧?�置?��? (Search-Inject)
   const nearbyPlaceCandidates = await getNearbyPlaceCandidates(request)
   const nearbyPlaces = formatNearbyRecommendations(nearbyPlaceCandidates)
 
@@ -262,7 +262,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      // 9D-5: 自動重試失效方案
+      // 9D-5: ?��??�試失�??��?
       if (invalidPlanIds.length > 0) {
         const retriedPlanIds = new Set<string>()
         try {
@@ -327,7 +327,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           } else {
             invalidPlanIds.forEach((planId) => {
               if (!validationSummaries.has(planId)) {
-                validationSummaries.set(planId, ['重試請求失敗'])
+                validationSummaries.set(planId, ['?�試請�?失�?'])
               }
             })
           }
@@ -335,7 +335,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.error('Retry failed:', error)
           invalidPlanIds.forEach((planId) => {
             if (!validationSummaries.has(planId)) {
-              validationSummaries.set(planId, ['重試請求失敗'])
+              validationSummaries.set(planId, ['?�試請�?失�?'])
             }
           })
         }
@@ -343,14 +343,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         invalidPlanIds.forEach((planId) => {
           if (!retriedPlanIds.has(planId)) {
             if (!validationSummaries.has(planId)) {
-              validationSummaries.set(planId, ['重試後仍未取得可驗收方案'])
+              validationSummaries.set(planId, ['?�試後�??��?得可驗收?��?'])
             }
           }
         })
       }
 
-      // 用驗證過的 plans 覆寫 finalResponse 裡的內容，確保最終結果一致
-      finalResponse.plans = finalResponse.plans.map((p) => {
+      // ?��?證�???plans 覆寫 finalResponse 裡�??�容，確保�?終�??��???      finalResponse.plans = finalResponse.plans.map((p) => {
         const validated = validatedPlans.find((vp) => vp.id === p.id)
         return validated || p
       })
@@ -369,10 +368,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (!finalResponse.warnings) finalResponse.warnings = []
       if (!placesValidationPerformed) {
-        finalResponse.warnings.push('Google Places 驗證未啟用，部分地點資訊可能不夠準確。')
+        finalResponse.warnings.push('Google Places 驗�??��??��??��??��?資�??�能不�?準確??)
       }
       if (routesApiFailed) {
-        finalResponse.warnings.push('Google Routes API 未啟用，交通時間與距離為系統估算值。')
+        finalResponse.warnings.push('Google Routes API ?��??��?交通�??��?距離?�系統估算值�?)
       }
 
       validationSummaries.clear()
@@ -387,7 +386,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             message:
               error instanceof Error
                 ? error.message
-                : '扣點流程失敗，請稍後再試。',
+                : '???流�?失�?，�?稍�??�試??,
           })
         }
       }
@@ -397,7 +396,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         message:
           error instanceof Error
             ? error.message
-            : '這次 AI 產生的行程資料不夠完整，請重新分析一次。',
+            : '?�次 AI ?��??��?程�??��?夠�??��?請�??��??��?次�?,
       })
       res.end()
       return
@@ -409,7 +408,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     writeEvent({
       event: 'error',
       message:
-        error instanceof Error ? error.message : 'AI 分析失敗，請稍後再試。',
+        error instanceof Error ? error.message : 'AI ?��?失�?，�?稍�??�試??,
     })
     res.end()
   }
@@ -537,7 +536,7 @@ function getCandidatePoolByStopType(stop: Stop, candidates: NearbyPlaceCandidate
 
 function isShortVisitCandidate(candidate: VerifiedPlaceCandidate) {
   const text = `${candidate.name} ${candidate.address}`.toLocaleLowerCase('zh-TW')
-  return /(局|署|所|處|公所|辦公|服務中心|銀行|郵局|醫院|診所|公司|分局)/.test(text)
+  return /(局|署|?�|?�|?��?|辦公|?��?中�?|?�行|?��?|?�院|診�?|?�司|?��?)/.test(text)
 }
 
 function applyCandidateToStop(stop: Stop, candidate: VerifiedPlaceCandidate): Stop {
@@ -627,6 +626,189 @@ function getDefaultStopDuration(type: Stop['type']) {
   return 75
 }
 
+  segments: TransportSegment[],
+  stops: Stop[],
+  fallbackMode: TripPlan['transportMode'],
+): Promise<{ segments: TransportSegment[]; routesFailed: boolean }> {
+  const expectedLength = Math.max(stops.length - 1, 0)
+  let routesFailed = false
+
+  const nextSegments = await Promise.all(
+    Array.from({ length: expectedLength }, async (_, index) => {
+      const existing = segments[index]
+      const mode = existing?.mode ?? fallbackMode
+      const { routeInfo, apiFailed } = await getRouteInfo(stops[index], stops[index + 1], mode)
+
+      if (apiFailed) {
+        routesFailed = true
+      }
+
+      const duration =
+        routeInfo?.durationMinutes ?? estimateSegmentDuration(stops[index], stops[index + 1], mode)
+
+      return {
+        fromStopId: stops[index].id,
+        toStopId: stops[index + 1].id,
+        mode,
+        publicTransitType: existing?.publicTransitType,
+        duration,
+        label: buildTransportLabel(
+          mode,
+          existing?.publicTransitType,
+          routeInfo?.distanceMeters,
+          !routeInfo, // isEstimated if no routeInfo returned
+        ),
+      }
+    }),
+  )
+
+  return { segments: nextSegments, routesFailed }
+}
+
+async function getRouteInfo(
+  from: Stop,
+  to: Stop,
+  mode: TripPlan['transportMode'],
+): Promise<{ routeInfo: { durationMinutes?: number; distanceMeters?: number } | null; apiFailed: boolean }> {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY
+  if (
+    !apiKey ||
+    typeof from.lat !== 'number' ||
+    typeof from.lng !== 'number' ||
+    typeof to.lat !== 'number' ||
+    typeof to.lng !== 'number'
+  ) {
+    return { routeInfo: null, apiFailed: !apiKey }
+  }
+
+  try {
+    const response = await fetch(ROUTES_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters',
+      },
+      body: JSON.stringify({
+        origin: {
+          location: {
+            latLng: { latitude: from.lat, longitude: from.lng },
+          },
+        },
+        destination: {
+          location: {
+            latLng: { latitude: to.lat, longitude: to.lng },
+          },
+        },
+        travelMode: toRoutesTravelMode(mode),
+      }),
+    })
+
+    if (!response.ok) {
+      // 403 Forbidden often means API not enabled
+      return { routeInfo: null, apiFailed: response.status === 403 || response.status === 401 }
+    }
+
+    const data = (await response.json()) as {
+      routes?: Array<{ duration?: string; distanceMeters?: number }>
+    }
+    const route = data.routes?.[0]
+    if (!route) return { routeInfo: null, apiFailed: false }
+
+    return {
+      routeInfo: {
+        durationMinutes: parseGoogleDurationToMinutes(route.duration),
+        distanceMeters: route.distanceMeters,
+      },
+      apiFailed: false,
+    }
+  } catch {
+    return { routeInfo: null, apiFailed: true }
+  }
+}
+
+function toRoutesTravelMode(mode: TripPlan['transportMode']) {
+  if (mode === 'public_transit') return 'TRANSIT'
+  if (mode === 'scooter') return 'TWO_WHEELER'
+
+  return 'DRIVE'
+}
+
+function parseGoogleDurationToMinutes(duration?: string) {
+  const seconds = Number(duration?.replace(/s$/, ''))
+  if (!Number.isFinite(seconds)) return undefined
+
+  return Math.max(1, Math.round(seconds / 60))
+}
+
+function estimateSegmentDuration(from: Stop, to: Stop, mode: TripPlan['transportMode']) {
+  const distanceKm = getStopDistanceKm(from, to)
+
+  if (distanceKm === null) {
+    return mode === 'public_transit' ? 25 : 18
+  }
+
+  const speedByMode: Record<TripPlan['transportMode'], number> = {
+    scooter: 24,
+    car: 28,
+    public_transit: 16,
+  }
+  const bufferByMode: Record<TripPlan['transportMode'], number> = {
+    scooter: 7,
+    car: 10,
+    public_transit: 14,
+  }
+  const minutes = Math.round((distanceKm / speedByMode[mode]) * 60 + bufferByMode[mode])
+
+  return clamp(minutes, mode === 'public_transit' ? 12 : 8, mode === 'public_transit' ? 55 : 45)
+}
+
+function getStopDistanceKm(from: Stop, to: Stop) {
+  if (
+    typeof from.lat !== 'number' ||
+    typeof from.lng !== 'number' ||
+    typeof to.lat !== 'number' ||
+    typeof to.lng !== 'number'
+  ) {
+    return null
+  }
+
+  return calculateDistance(from.lat, from.lng, to.lat, to.lng)
+}
+
+function buildTransportLabel(
+  mode: TripPlan['transportMode'],
+  publicTransitType?: TransportSegment['publicTransitType'],
+  distanceMeters?: number,
+  isEstimated?: boolean,
+) {
+  const distanceText =
+    typeof distanceMeters === 'number' && distanceMeters > 0
+      ? `�?${formatDistance(distanceMeters)}`
+      : ''
+  const prefix = isEstimated ? '(估�?)' : ''
+
+  if (mode === 'public_transit') {
+    if (publicTransitType === 'walk') return prefix + joinTransportLabel('步�?轉�?', distanceText)
+    if (publicTransitType === 'metro') return prefix + joinTransportLabel('?��??��?', distanceText)
+    if (publicTransitType === 'bus') return prefix + joinTransportLabel('?��??��?', distanceText)
+    if (publicTransitType === 'train') return prefix + joinTransportLabel('?�路?��?', distanceText)
+    return prefix + joinTransportLabel('大眾?�輸', distanceText)
+  }
+
+  return prefix + joinTransportLabel(mode === 'car' ? '?��??��?' : '騎�??��?', distanceText)
+}
+
+function joinTransportLabel(label: string, distanceText: string) {
+  return distanceText ? `${label}??{distanceText}` : label
+}
+
+function formatDistance(distanceMeters: number) {
+  if (distanceMeters < 1000) return `${Math.round(distanceMeters)} m`
+
+  return `${(distanceMeters / 1000).toFixed(1)} km`
+}
+
 function stretchPlanDurationToCoverage(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
@@ -688,13 +870,13 @@ function getMaximumStopDuration(stop: Stop) {
   const text = `${stop.name} ${stop.address}`.toLocaleLowerCase('zh-TW')
 
   if (stop.type === 'food') return 90
-  if (/(局|署|所|處|公所|辦公|服務中心|銀行|郵局|醫院|診所|公司|分局)/.test(text)) {
+  if (/(局|署|?�|?�|?��?|辦公|?��?中�?|?�行|?��?|?�院|診�?|?�司|?��?)/.test(text)) {
     return 45
   }
-  if (/(市場|商圈|老街|夜市|百貨|購物|mall|outlet)/i.test(text)) return 150
-  if (/(博物館|美術館|展覽|園區|文化|文創|藝術|science|museum)/i.test(text)) return 150
-  if (/(公園|步道|海邊|湖|山|森林|河濱|草地|park)/i.test(text)) return 120
-  if (/(咖啡|書店|茶|甜點|cafe|coffee)/i.test(text)) return 100
+  if (/(市場|?��?|?��?|夜�?|?�貨|購物|mall|outlet)/i.test(text)) return 150
+  if (/(?�物館|美�?館|展覽|?��?|?��?|?�創|?��?|science|museum)/i.test(text)) return 150
+  if (/(?��?|步�?|海�?|湖|山|森�?|河濱|?�地|park)/i.test(text)) return 120
+  if (/(?�啡|?��?|?�|?��?|cafe|coffee)/i.test(text)) return 100
 
   return 90
 }
@@ -724,7 +906,7 @@ function getPlanQualityIssues(
 
     if (actualMinutes < minimumMinutes) {
       issues.push(
-        `行程時長不足（目前 ${actualMinutes} 分鐘，至少需要 ${minimumMinutes} 分鐘）`,
+        `行�??�長不足（目??${actualMinutes} ?��?，至少�?�?${minimumMinutes} ?��?）`,
       )
     }
   }
@@ -737,8 +919,8 @@ function formatRetryValidationSummaries(
   validationSummaries: Map<string, string[]>,
 ) {
   return invalidPlanIds.map((planId) => {
-    const summary = validationSummaries.get(planId)?.join('、') || '未通過品質檢查'
-    return `${getPlanLabel(planId)}：${summary}`
+    const summary = validationSummaries.get(planId)?.join('??) || '?�通�??�質檢查'
+    return `${getPlanLabel(planId)}�?{summary}`
   })
 }
 
@@ -773,28 +955,46 @@ function getRequiredCoverageRatio(allowedMinutes: number) {
   return 0.7
 }
 
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const earthRadiusKm = 6371
+  const dLat = toRadians(lat2 - lat1)
+  const dLon = toRadians(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return earthRadiusKm * c
+}
+
+function toRadians(degrees: number) {
+  return (degrees * Math.PI) / 180
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.round(value)))
 }
 
 function getPlanLabel(planId: string) {
   const planLabelMap: Record<string, string> = {
-    safe: '保守型方案',
-    balanced: '平衡型方案',
-    explore: '探索型方案',
+    safe: '保�??�方�?,
+    balanced: '平衡?�方�?,
+    explore: '?�索?�方�?,
   }
 
-  return planLabelMap[planId] ?? `方案 ${planId}`
+  return planLabelMap[planId] ?? `?��? ${planId}`
 }
 
 function formatPlacesValidationReason(reason: string) {
   const labelMap: Record<string, string> = {
-    not_found: '查無此地',
-    low_similarity: '搜尋結果相似度不足',
-    generic_name: '地點名稱過於空泛',
-    first_stop_too_far: '第一站距離起點超過 2 公里',
-    closed: '地點疑似停業',
-    maps_uri_missing: 'Google Maps 官方連結缺失',
+    not_found: '?�無此地',
+    low_similarity: '?��?結�??�似度�?�?,
+    generic_name: '?��??�稱?�於空�?',
+    first_stop_too_far: '第�?站�??�起點�???2 ?��?',
+    closed: '?��??�似?�業',
+    maps_uri_missing: 'Google Maps 官方???缺失',
   }
 
   return labelMap[reason] ?? reason
@@ -915,7 +1115,7 @@ function createUserScopedSupabaseClient(accessToken: string) {
     process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ''
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('尚未設定 Supabase server-side 環境變數。')
+    throw new Error('尚未設�? Supabase server-side ?��?變數??)
   }
 
   return createClient(supabaseUrl, supabaseAnonKey, {
@@ -936,13 +1136,13 @@ async function getAvailablePoints(
   const { error: initializeError } = await supabase.rpc('initialize_user_profile')
 
   if (initializeError) {
-    throw new Error('無法初始化使用者點數資料，請稍後再試。')
+    throw new Error('?��??��??�使?�者�??��??��?請�?後�?試�?)
   }
 
   const { data, error } = await supabase.rpc('get_my_points_balance')
 
   if (error || typeof data !== 'number') {
-    throw new Error('無法讀取點數餘額，請稍後再試。')
+    throw new Error('?��?讀?��??��?額�?請�?後�?試�?)
   }
 
   return data
@@ -951,15 +1151,15 @@ async function getAvailablePoints(
 async function consumeAnalysisPoints(supabase: PointsSupabaseClient) {
   const { error } = await supabase.rpc('consume_points_for_analysis', {
     cost: ANALYSIS_COST,
-    reason: 'AI 行程分析',
+    reason: 'AI 行�??��?',
   })
 
   if (error) {
     if (error.message.includes('Insufficient points')) {
-      throw new Error('點數不足，請先到點數管理確認餘額。')
+      throw new Error('點數不足，�??�到點數管�?確�?餘�???)
     }
 
-    throw new Error('行程已產生，但扣點流程失敗，請稍後再試。')
+    throw new Error('行�?已產?��?但扣點�?程失?��?請�?後�?試�?)
   }
 }
 
@@ -983,18 +1183,18 @@ async function buildOpenAiErrorMessage(response: Response) {
   const detail = await readOpenAiErrorDetail(response)
 
   if (response.status === 401) {
-    return 'OpenAI API key 無法通過驗證，請確認 Vercel 的 OPENAI_API_KEY。'
+    return 'OpenAI API key ?��??��?驗�?，�?確�? Vercel ??OPENAI_API_KEY??
   }
 
   if (response.status === 429) {
     return detail
-      ? `OpenAI 額度或請求量暫時受限：${detail}`
-      : 'OpenAI 額度或請求量暫時受限，請確認帳戶額度或稍後再試。'
+      ? `OpenAI 額度?��?求�??��??��?�?{detail}`
+      : 'OpenAI 額度?��?求�??��??��?，�?確�?帳戶額度?��?後�?試�?
   }
 
   return detail
-    ? `OpenAI API 呼叫失敗：${detail}`
-    : 'OpenAI API 呼叫失敗，請稍後再試。'
+    ? `OpenAI API ?�叫失�?�?{detail}`
+    : 'OpenAI API ?�叫失�?，�?稍�??�試??
 }
 
 async function readOpenAiErrorDetail(response: Response) {
@@ -1041,21 +1241,21 @@ async function getMergedPersona(
   }
 
   const budgetLabels: Record<string, string> = {
-    budget: '小資',
-    standard: '一般',
+    budget: '小�?',
+    standard: '一??,
     premium: '輕奢',
     luxury: '豪華',
   }
 
   const companionLabels: Record<string, string> = {
-    date: '情侶 / 約會',
-    relax: '放鬆',
-    explore: '探索',
-    food: '美食',
-    outdoor: '戶外',
+    date: '?�侶 / 約�?',
+    relax: '?��?',
+    explore: '?�索',
+    food: '美�?',
+    outdoor: '?��?',
     indoor: '室內',
-    solo: '獨旅',
-    other: '其他',
+    solo: '?��?',
+    other: '?��?',
   }
 
   return {
