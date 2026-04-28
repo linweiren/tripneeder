@@ -164,6 +164,49 @@ export async function getNearbyPlaceCandidates(
   }
 }
 
+export async function resolveLocation(
+  name: string,
+): Promise<{ lat: number; lng: number; formattedName: string } | null> {
+  if (!GOOGLE_PLACES_API_KEY || !name.trim()) return null
+
+  // 策略 1：使用 Geocoding API (對地標與模糊地址辨識度較高)
+  try {
+    const response = await fetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(name)}&key=${GOOGLE_PLACES_API_KEY}&language=zh-TW`
+    )
+    const data = await response.json()
+
+    if (data.status === 'OK' && data.results?.[0]?.geometry?.location) {
+      const result = data.results[0]
+      return {
+        lat: result.geometry.location.lat,
+        lng: result.geometry.location.lng,
+        formattedName: result.formatted_address,
+      }
+    }
+  } catch (error) {
+    console.error('Geocoding resolution failed:', error)
+  }
+
+  // 策略 2：回退到 Places API (若 Geocoding 沒抓到，嘗試 Places Text Search)
+  try {
+    const places = await searchPlaces(name, { maxResultCount: 1 })
+    const place = places[0]
+
+    if (place && place.location) {
+      return {
+        lat: place.location.latitude,
+        lng: place.location.longitude,
+        formattedName: place.displayName.text,
+      }
+    }
+  } catch (error) {
+    console.error('Places resolution failed:', error)
+  }
+
+  return null
+}
+
 export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): string {
   const nearStops = candidates.firstStopCandidates.map(formatCandidateForPrompt)
   const otherStops = candidates.otherCandidates.map(formatCandidateForPrompt)
@@ -184,13 +227,31 @@ export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): 
 }
 
 function buildCandidateSearchQueries(input: TripInput, persona?: Persona) {
-  const city = input.location.name || ''
+  const name = input.location.name || ''
+  const hasCoords = typeof input.location.lat === 'number' && typeof input.location.lng === 'number'
+  
+  // 若有座標，我們可以使用更廣泛的類別搜尋，而不必在地名後面附加關鍵字
+  // 這能避免當起點是特定景點（如「境園農場」）時，搜尋結果被侷限在該景點內
   const queries = [
-    buildSearchQuery(input, persona),
-    `${city} attractions restaurants cafes`,
-    `${city} parks museums landmarks`,
-    `${city} local food dessert coffee`,
+    buildSearchQuery(input, persona), // 原有的偏好搜尋
   ]
+
+  if (hasCoords) {
+    // 座標驅動的廣域搜尋
+    queries.push(
+      '熱門景點 觀光地標 attractions',
+      '特色餐廳 當地美食 restaurants food',
+      '咖啡廳 甜點店 cafe dessert',
+      '公園 戶外休閒 parks outdoor'
+    )
+  } else {
+    // 缺乏座標時，才依賴地名作為前綴
+    queries.push(
+      `${name} attractions restaurants cafes`,
+      `${name} parks museums landmarks`,
+      `${name} local food dessert coffee`
+    )
+  }
 
   return Array.from(new Set(queries.map((query) => query.trim()).filter(Boolean)))
 }

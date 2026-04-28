@@ -10,6 +10,7 @@ import type { TripInput, TripPlan } from '../src/types/trip.js'
 import {
   validateStopsWithPlaces,
   getNearbyPlaceCandidates,
+  resolveLocation,
   formatNearbyRecommendations,
 } from './_lib/google-places.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
@@ -71,6 +72,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const supabase = createUserScopedSupabaseClient(accessToken)
     const userId = getUserIdFromToken(accessToken)
+
+    // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
+    let locationWarning = ''
+    if (
+      (!request.input.location.lat || !request.input.location.lng) &&
+      request.input.location.name
+    ) {
+      const resolved = await resolveLocation(request.input.location.name)
+      if (resolved) {
+        request.input.location = {
+          ...request.input.location,
+          lat: resolved.lat,
+          lng: resolved.lng,
+          name: resolved.formattedName,
+        }
+      } else {
+        // 解析失敗不阻斷，但給予 AI 警告
+        locationWarning = `警告：系統無法精確定位起點「${request.input.location.name}」的經緯度。請 AI 依據您的知識庫為該處補齊雨天備案與詳情。`
+      }
+    }
+
     const persona = await getMergedPersona(supabase, userId, request.input)
 
     // 獲取室內地點候選，供雨天備案使用
@@ -103,6 +125,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   request.plan,
                   persona,
                   nearbyIndoorPlaces,
+                  locationWarning
                 ),
               },
             ],

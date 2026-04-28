@@ -7,6 +7,7 @@ import { createClient } from '@supabase/supabase-js'
 import {
   validateStopsWithPlaces,
   getNearbyPlaceCandidates,
+  resolveLocation,
   formatNearbyRecommendations,
   type PlacesValidationResult,
   type NearbyPlaceCandidates,
@@ -122,6 +123,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
+  // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
+  let locationWarning = ''
+  if (
+    (!request.input.location.lat || !request.input.location.lng) &&
+    request.input.location.name
+  ) {
+    const resolved = await resolveLocation(request.input.location.name)
+    if (resolved) {
+      request.input.location = {
+        ...request.input.location,
+        lat: resolved.lat,
+        lng: resolved.lng,
+        name: resolved.formattedName,
+      }
+    } else {
+      // 解析失敗不阻斷，但給予 AI 警告，讓它知道要靠自己知識規劃
+      locationWarning = `警告：系統無法精確定位起點「${request.input.location.name}」的經緯度。請 AI 依據您的知識庫判斷該地點大約位置，並圍繞該處規劃。若下方「起點附近的真實地點參考」為空，請自由發揮，不受「只能從清單挑選」的限制。`
+    }
+  }
+
   // 獲取並合併人設
   const persona = await getMergedPersona(supabase, userId, request.input)
 
@@ -156,7 +177,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             content: [
               {
                 type: 'input_text',
-                text: buildTripPrompt(request.input, persona, nearbyPlaces),
+                text: buildTripPrompt(request.input, persona, nearbyPlaces, locationWarning),
               },
             ],
           },
@@ -239,7 +260,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let finalResponse
     try {
-      finalResponse = parseTripPlanSkeletonResponse(fullText)
+      try {
+        finalResponse = parseTripPlanSkeletonResponse(fullText)
+      } catch (parseError) {
+        if (validatedPlans.length > 0) {
+          finalResponse = {
+            plans: validatedPlans,
+            warnings: ['部分方案產生不完整，已為您呈現已完成的行程。']
+          }
+        } else {
+          throw parseError
+        }
+      }
 
       for (const plan of finalResponse.plans) {
         const bias = request.input.location.lat && request.input.location.lng
@@ -851,13 +883,10 @@ class PlanExtractor {
 
       if (this.state === 'before_plans') {
         this.preBuf += ch
-        const plansIdx = this.preBuf.indexOf('"plans"')
-        if (plansIdx >= 0) {
-          const bracketIdx = this.preBuf.indexOf('[', plansIdx)
-          if (bracketIdx >= 0) {
-            this.state = 'in_array'
-            this.preBuf = ''
-          }
+        const plansMatch = this.preBuf.match(/"plans"\s*:\s*\[/)
+        if (plansMatch) {
+          this.state = 'in_array'
+          this.preBuf = ''
         }
         continue
       }
