@@ -1,5 +1,6 @@
 /// <reference types="node" />
 
+import https from 'node:https'
 import { createClient } from '@supabase/supabase-js'
 import {
   buildTripDetailsPrompt,
@@ -244,15 +245,19 @@ function preserveMainStopIdentity(plan: TripPlan, originalPlan: TripPlan): TripP
 function createUserScopedSupabaseClient(accessToken: string) {
   const supabaseUrl =
     process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
-  const supabaseAnonKey =
-    process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ''
+  const supabaseServerKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    ''
 
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!supabaseUrl || !supabaseServerKey) {
     throw new Error('尚未設定 Supabase server-side 環境變數。')
   }
 
-  return createClient(supabaseUrl, supabaseAnonKey, {
+  return createClient(supabaseUrl, supabaseServerKey, {
     global: {
+      fetch: createNodeHttpsFetch(),
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
@@ -261,6 +266,66 @@ function createUserScopedSupabaseClient(accessToken: string) {
       persistSession: false,
     },
   })
+}
+
+function createNodeHttpsFetch(): typeof fetch {
+  return async (input, init) => {
+    const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    const method = init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET') ?? 'GET'
+    const headers = new Headers(init?.headers ?? (typeof input === 'object' && 'headers' in input ? input.headers : undefined))
+    const body = init?.body
+
+    return new Promise<Response>((resolve, reject) => {
+      const req = https.request(
+        requestUrl,
+        {
+          method,
+          headers: Object.fromEntries(headers.entries()),
+        },
+        (res) => {
+          const chunks: Buffer[] = []
+          res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+          res.on('end', () => {
+            resolve(
+              new Response(Buffer.concat(chunks), {
+                status: res.statusCode ?? 500,
+                statusText: res.statusMessage ?? '',
+                headers: new Headers(
+                  Object.entries(res.headers).flatMap(([key, value]) =>
+                    value === undefined
+                      ? []
+                      : Array.isArray(value)
+                        ? [[key, value.join(', ')]]
+                        : [[key, value]],
+                  ),
+                ),
+              }),
+            )
+          })
+        },
+      )
+
+      req.on('error', reject)
+
+      if (init?.signal) {
+        init.signal.addEventListener(
+          'abort',
+          () => req.destroy(new Error('The operation was aborted.')),
+          { once: true },
+        )
+      }
+
+      if (typeof body === 'string' || body instanceof Uint8Array) {
+        req.write(body)
+      } else if (body == null) {
+        // no-op
+      } else {
+        req.write(String(body))
+      }
+
+      req.end()
+    })
+  }
 }
 
 function getUserIdFromToken(accessToken: string): string | undefined {

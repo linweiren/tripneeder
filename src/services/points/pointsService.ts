@@ -5,6 +5,7 @@ export type UserProfile = {
   email: string
   display_name: string | null
   points_balance: number
+  has_received_initial_points: boolean
   created_at: string
   updated_at: string
 }

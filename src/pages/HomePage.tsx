@@ -8,6 +8,7 @@ import type {
   TransportMode,
   TripCategory,
   TripInput,
+  TripLocation,
   TripTag,
 } from '../types/trip'
 import {
@@ -83,6 +84,8 @@ const hourOptions = Array.from({ length: 24 }, (_, index) =>
 )
 
 const minuteOptions = ['00', '15', '30', '45']
+const FAST_LOCATION_TARGET_ACCURACY_METERS = 300
+const MAX_ACCEPTABLE_LOCATION_ACCURACY_METERS = 1200
 
 export function HomePage() {
   const navigate = useNavigate()
@@ -109,6 +112,39 @@ export function HomePage() {
   const isOtherCategory = input.category === 'other'
   const isAnalysisInProgress = session?.status === 'analyzing'
   const analysisError = session?.status === 'error' ? session.error : ''
+
+  // Preference summary for the advanced toggle button
+  const preferenceSummary = useMemo(() => {
+    const parts: string[] = []
+    
+    // Location
+    if (input.location.name) {
+      parts.push(input.location.name)
+    } else if (input.location.lat) {
+      parts.push('目前位置')
+    }
+
+    // Category
+    if (input.category) {
+      const cat = categoryOptions.find(o => o.value === input.category)
+      parts.push(cat?.label || '')
+    }
+
+    // Budget
+    if (input.budget) {
+      const b = budgetOptions.find(o => o.value === input.budget)
+      parts.push(b?.label || '')
+    }
+
+    // People
+    if (input.people) {
+      parts.push(`${input.people}人`)
+    }
+
+    if (parts.length === 0) return ''
+    return `(已設: ${parts.join(', ')})`
+  }, [input.location, input.category, input.budget, input.people])
+
   // Initialize start time to now if not set
   useEffect(() => {
     if (!input.startTime) {
@@ -174,76 +210,143 @@ export function HomePage() {
     }))
   }
 
-  async function handleLocate() {
+  /**
+   * Refactored handleLocate to return the final location object.
+   * This allows calling it from startAnalysis and waiting for the result.
+   */
+  async function handleLocate(): Promise<TripLocation | null> {
     if (!navigator.geolocation) {
       void dialog.alert({
         title: '無法取得定位',
         message: '無法取得您的定位！請檢查權限設定。',
       })
-      return
+      return null
     }
 
     setIsLocating(true)
     setLocationStatus('')
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const lat = position.coords.latitude
-        const lng = position.coords.longitude
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const lat = position.coords.latitude
+          const lng = position.coords.longitude
+          const initialLocation: TripLocation = { lat, lng, name: '' }
 
-        setInput((current) => ({
-          ...current,
-          location: {
-            ...current.location,
-            lat,
-            lng,
-          },
-        }))
+          // Optimization: Resolve immediately once we have coordinates
+          // to unblock the UI (e.g. show points confirmation)
+          resolve(initialLocation)
+          
+          setLocationStatus('座標抓取成功，正在背景查詢地名...')
 
-        setLocationStatus('座標抓取成功，正在反查地名...')
+          try {
+            const response = await fetch('/api/geocode', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ lat, lng }),
+            })
+            const data = await response.json()
 
-        try {
-          const response = await fetch('/api/geocode', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lat, lng }),
-          })
-          const data = await response.json()
-
-          if (data.name) {
-            setInput((current) => ({
-              ...current,
-              location: {
-                ...current.location,
-                name: data.name,
-              },
-            }))
-            setLocationStatus('定位成功！')
-            setUseCurrentLocation(true)
-          } else {
+            if (data.name) {
+              setInput(prev => ({
+                ...prev,
+                location: { ...prev.location, lat, lng, name: data.name }
+              }))
+              setLocationStatus('定位成功！')
+            } else {
+              setLocationStatus('座標抓取成功！')
+            }
+          } catch (error) {
+            console.error('Geocoding failed:', error)
             setLocationStatus('座標抓取成功！')
+          } finally {
+            setIsLocating(false)
             setUseCurrentLocation(true)
           }
-        } catch (error) {
-          console.error('Geocoding failed:', error)
-          setLocationStatus('座標抓取成功！')
-          setUseCurrentLocation(true)
-        } finally {
+        },
+        () => {
           setIsLocating(false)
-        }
-      },
-      () => {
-        setIsLocating(false)
-        void dialog.alert({
-          title: '無法取得定位',
-          message: '無法取得您的定位！請檢查權限設定。',
+          void dialog.alert({
+            title: '無法取得定位',
+            message: '無法取得您的定位！請檢查權限設定。',
+          })
+          resolve(null)
+        },
+        {
+          enableHighAccuracy: false, // Much faster for most mobile devices
+          timeout: 6000,             // Shorter timeout
+        },
+      )
+    })
+  }
+
+  async function handleLocatePreferred(): Promise<TripLocation | null> {
+    if (!navigator.geolocation) {
+      return handleLocate()
+    }
+
+    setIsLocating(true)
+    setLocationStatus('')
+
+    try {
+      const position = await getBestAvailablePosition()
+      const lat = position.coords.latitude
+      const lng = position.coords.longitude
+      const accuracy = Math.round(position.coords.accuracy)
+      const location: TripLocation = { lat, lng, name: '' }
+
+      setInput((current) => ({
+        ...current,
+        location: {
+          ...current.location,
+          lat,
+          lng,
+        },
+      }))
+      setUseCurrentLocation(true)
+      setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺，正在查詢地名...`)
+
+      try {
+        const response = await fetch('/api/geocode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat, lng }),
         })
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-      },
-    )
+        const data = await response.json()
+
+        if (data.name) {
+          location.name = data.name
+          setInput((current) => ({
+            ...current,
+            location: {
+              ...current.location,
+              lat,
+              lng,
+              name: data.name,
+            },
+          }))
+          setLocationStatus(`定位成功，精度約 ${accuracy} 公尺`)
+        } else {
+          setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺`)
+        }
+      } catch (error) {
+        console.error('Geocoding failed:', error)
+        setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺`)
+      }
+
+      return location
+    } catch (error) {
+      void dialog.alert({
+        title: '無法取得定位',
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : '無法取得您的定位，請檢查定位權限後再試一次。',
+      })
+      return null
+    } finally {
+      setIsLocating(false)
+    }
   }
 
   async function startAnalysis() {
@@ -262,20 +365,40 @@ export function HomePage() {
       return
     }
 
-    // If using current location, try to get it if not already available
-    const currentInput = { ...input }
-    if (useCurrentLocation && !input.location.lat) {
-       // Ideally we should have forced location earlier, but let's check
-       setFormError('請先點擊「使用目前位置」取得定位。')
-       return
+    let currentInput = { ...input }
+
+    // Logic: If no location is set, try to auto-locate first
+    const hasLocationData = 
+      (input.location.name && input.location.name.trim().length > 0) || 
+      (input.location.lat && input.location.lng)
+
+    if (!hasLocationData) {
+      const autoLocation = await handleLocatePreferred()
+      if (!autoLocation) {
+        setFormError('無法取得定位，請進入進階設定手動輸入地點。')
+        setShowAdvanced(true)
+        return
+      }
+      currentInput.location = autoLocation
     }
 
     if (!isValidInput(currentInput)) {
       setFormError('請確認必填欄位都已完成，再開始分析行程。')
+      setShowAdvanced(true)
       return
     }
 
-    await startSessionAnalysis(currentInput)
+    // Confirmation dialog for points
+    const confirmed = await dialog.confirm({
+      title: '確認生成行程',
+      message: '將使用 20 點數 生成完整行程方案 (包含路線與最佳安排)',
+      confirmLabel: '確認並扣點',
+      cancelLabel: '我再想想'
+    })
+
+    if (confirmed) {
+      await startSessionAnalysis(currentInput)
+    }
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -400,79 +523,7 @@ export function HomePage() {
       </div>
 
       <form className="trip-form" onSubmit={handleSubmit}>
-        {/* Step 1: Location Selection */}
-        <fieldset className="form-section">
-          <legend>你在哪裡？</legend>
-          <div className="location-quick-start">
-            <button
-              className={`location-button-large ${useCurrentLocation && input.location.lat ? 'active' : ''}`}
-              type="button"
-              onClick={handleLocate}
-              disabled={isLocating}
-            >
-              {isLocating ? (
-                '定位中...'
-              ) : (
-                <>
-                  <span className="icon">📍</span>
-                  {selectedLocationText || '使用目前位置'}
-                </>
-              )}
-            </button>
-            
-            {locationStatus && !selectedLocationText ? (
-              <p className="location-status-text">{locationStatus}</p>
-            ) : null}
-
-            <button 
-              type="button" 
-              className="toggle-manual-location"
-              onClick={() => {
-                setShowManualLocation(!showManualLocation)
-                if (!showManualLocation) setUseCurrentLocation(false)
-              }}
-            >
-              {showManualLocation ? (
-                <>收起指定起點 ▲</>
-              ) : (
-                <>不在現場？改用指定起點 ▼</>
-              )}
-            </button>
-
-            {showManualLocation && (
-              <div className="manual-location-fields">
-                <label className="field-label">
-                  指定起點名稱
-                  <input
-                    value={input.location.name}
-                    onChange={(event) => {
-                      setInput((current) => ({
-                        ...current,
-                        location: {
-                          name: event.target.value,
-                          lat: undefined,
-                          lng: undefined
-                        },
-                      }))
-                      setUseCurrentLocation(false)
-                    }}
-                    placeholder="例如：台北信義區、駁二、西門町"
-                  />
-                </label>
-                
-                <div className="field-row" style={{ marginTop: '12px' }}>
-                  <TimeSelect
-                    label="出發 / 抵達時間"
-                    value={input.startTime}
-                    onChange={(value) => updateInput('startTime', value)}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </fieldset>
-
-        {/* Step 2: Duration Selection */}
+        {/* Step 1: Duration Selection (Main View) */}
         <fieldset className="form-section">
           <legend>想玩多久？</legend>
           <div className="chip-grid">
@@ -509,19 +560,93 @@ export function HomePage() {
           )}
         </fieldset>
 
-        {/* Step 3: Advanced Settings (Collapsed) */}
+        {formError ? <p className="form-error" style={{ marginBottom: '16px' }}>{formError}</p> : null}
+
+        <button 
+          className="submit-button" 
+          type="submit" 
+          disabled={isLocating}
+        >
+          {isLocating ? '正在取得定位...' : '出發！GO！'}
+        </button>
+
+        {/* Step 2: Advanced Settings (Collapsed) */}
         <div className="advanced-toggle-area">
           <button 
             type="button" 
             className="advanced-toggle-button"
             onClick={() => setShowAdvanced(!showAdvanced)}
           >
-            {showAdvanced ? '收起進階設定 ↑' : '更多偏好設定（類型、預算、人數...） ↓'}
+            {showAdvanced ? '收起進階設定 ↑' : `更多偏好設定 ${preferenceSummary} ↓`}
           </button>
         </div>
 
         {showAdvanced && (
           <div className="advanced-settings-panel">
+            {/* Moved Location Selection here */}
+            <fieldset className="form-section">
+              <legend>你在哪裡？</legend>
+              <div className="location-quick-start">
+                <button
+                  className={`location-button-large ${useCurrentLocation && input.location.lat ? 'active' : ''}`}
+                  type="button"
+                  onClick={handleLocatePreferred}
+                  disabled={isLocating}
+                >
+                  {isLocating ? (
+                    '定位中...'
+                  ) : (
+                    <>
+                      <span className="icon">📍</span>
+                      {selectedLocationText || '使用目前位置'}
+                    </>
+                  )}
+                </button>
+                
+                {locationStatus && !selectedLocationText ? (
+                  <p className="location-status-text">{locationStatus}</p>
+                ) : null}
+
+                <button 
+                  type="button" 
+                  className="toggle-manual-location"
+                  onClick={() => {
+                    setShowManualLocation(!showManualLocation)
+                    if (!showManualLocation) setUseCurrentLocation(false)
+                  }}
+                >
+                  {showManualLocation ? (
+                    <>收起指定起點 ▲</>
+                  ) : (
+                    <>不在現場？改用指定起點 ▼</>
+                  )}
+                </button>
+
+                {showManualLocation && (
+                  <div className="manual-location-fields">
+                    <label className="field-label">
+                      指定起點名稱
+                      <input
+                        value={input.location.name}
+                        onChange={(event) => {
+                          setInput((current) => ({
+                            ...current,
+                            location: {
+                              name: event.target.value,
+                              lat: undefined,
+                              lng: undefined
+                            },
+                          }))
+                          setUseCurrentLocation(false)
+                        }}
+                        placeholder="例如：台北信義區、駁二、西門町"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            </fieldset>
+
             <fieldset className="form-section">
               <legend>想要哪一種氛圍？</legend>
               <div className="chip-grid">
@@ -669,12 +794,6 @@ export function HomePage() {
             </fieldset>
           </div>
         )}
-
-        {formError ? <p className="form-error" style={{ marginBottom: '16px' }}>{formError}</p> : null}
-
-        <button className="submit-button" type="submit">
-          出發！GO！（扣除20點數）
-        </button>
       </form>
     </section>
   )
@@ -764,4 +883,64 @@ function parseTimeToMinutes(value?: string) {
 
   const [hour, minute] = value.split(':').map(Number)
   return hour * 60 + minute
+}
+
+async function getBestAvailablePosition() {
+  let bestPosition: GeolocationPosition | null = null
+  let lastError: Error | null = null
+
+  const attempts: Array<
+    PositionOptions & {
+      acceptAccuracyMeters?: number
+    }
+  > = [
+    {
+      enableHighAccuracy: true,
+      timeout: 5000,
+      maximumAge: 15000,
+      acceptAccuracyMeters: FAST_LOCATION_TARGET_ACCURACY_METERS,
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
+      acceptAccuracyMeters: MAX_ACCEPTABLE_LOCATION_ACCURACY_METERS,
+    },
+    {
+      enableHighAccuracy: false,
+      timeout: 5000,
+      maximumAge: 30000,
+    },
+  ]
+
+  for (const attempt of attempts) {
+    try {
+      const position = await getCurrentPosition(attempt)
+
+      if (!bestPosition || position.coords.accuracy < bestPosition.coords.accuracy) {
+        bestPosition = position
+      }
+
+      if (
+        typeof attempt.acceptAccuracyMeters === 'number' &&
+        position.coords.accuracy <= attempt.acceptAccuracyMeters
+      ) {
+        return position
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('定位失敗')
+    }
+  }
+
+  if (bestPosition) {
+    return bestPosition
+  }
+
+  throw lastError ?? new Error('無法取得定位')
+}
+
+function getCurrentPosition(options: PositionOptions) {
+  return new Promise<GeolocationPosition>((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, options)
+  })
 }

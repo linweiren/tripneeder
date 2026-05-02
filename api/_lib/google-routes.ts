@@ -1,5 +1,6 @@
 /// <reference types="node" />
 
+import https from 'node:https'
 import type { Stop, TransportMode, TransportSegment } from '../../src/types/trip.js'
 
 const ROUTES_API_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes'
@@ -21,7 +22,7 @@ export async function getRouteInfo(
   }
 
   try {
-    const response = await fetch(ROUTES_API_URL, {
+    const response = await googleRoutesFetch(ROUTES_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -64,6 +65,54 @@ export async function getRouteInfo(
   } catch {
     return { routeInfo: null, apiFailed: true }
   }
+}
+
+function googleRoutesFetch(url: string, init?: RequestInit) {
+  return new Promise<Response>((resolve, reject) => {
+    const headers = new Headers(init?.headers)
+    const body = init?.body
+    const req = https.request(
+      url,
+      {
+        method: init?.method ?? 'GET',
+        headers: Object.fromEntries(headers.entries()),
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+        res.on('end', () => {
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status: res.statusCode ?? 500,
+              statusText: res.statusMessage ?? '',
+              headers: new Headers(
+                Object.entries(res.headers).flatMap(([key, value]) =>
+                  value === undefined
+                    ? []
+                    : Array.isArray(value)
+                      ? [[key, value.join(', ')]]
+                      : [[key, value]],
+                ),
+              ),
+            }),
+          )
+        })
+      },
+    )
+
+    req.setTimeout(15000, () => {
+      req.destroy(new Error('Google Routes request timed out'))
+    })
+    req.on('error', reject)
+
+    if (typeof body === 'string' || body instanceof Uint8Array) {
+      req.write(body)
+    } else if (body != null) {
+      req.write(String(body))
+    }
+
+    req.end()
+  })
 }
 
 function toRoutesTravelMode(mode: TransportMode) {

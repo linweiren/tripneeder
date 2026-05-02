@@ -1,5 +1,6 @@
 /// <reference types="node" />
 
+import https from 'node:https'
 import type { TripPlan, Stop, TripInput } from '../../src/types/trip.js'
 import type { GenerateTripPlansRequest, Persona } from '../../src/services/ai/types.js'
 
@@ -30,6 +31,19 @@ interface GooglePlace {
 
 interface GooglePlacesResponse {
   places?: GooglePlace[]
+}
+
+type GoogleGeocodeResponse = {
+  status?: string
+  results?: Array<{
+    formatted_address: string
+    geometry?: {
+      location?: {
+        lat: number
+        lng: number
+      }
+    }
+  }>
 }
 
 export type VerifiedPlaceCandidate = {
@@ -171,16 +185,17 @@ export async function resolveLocation(
 
   // 策略 1：使用 Geocoding API (對地標與模糊地址辨識度較高)
   try {
-    const response = await fetch(
+    const response = await googleFetch(
       `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(name)}&key=${GOOGLE_PLACES_API_KEY}&language=zh-TW`
     )
-    const data = await response.json()
+    const data = (await response.json()) as GoogleGeocodeResponse
 
     if (data.status === 'OK' && data.results?.[0]?.geometry?.location) {
       const result = data.results[0]
+      const location = result.geometry!.location!
       return {
-        lat: result.geometry.location.lat,
-        lng: result.geometry.location.lng,
+        lat: location.lat,
+        lng: location.lng,
         formattedName: result.formatted_address,
       }
     }
@@ -307,7 +322,7 @@ async function searchPlaces(
 ): Promise<GooglePlace[]> {
   if (!GOOGLE_PLACES_API_KEY) return []
 
-  const response = await fetch(SEARCH_TEXT_URL, {
+  const response = await googleFetch(SEARCH_TEXT_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -338,7 +353,7 @@ async function searchPlaces(
 async function getPlaceById(placeId: string): Promise<GooglePlace | null> {
   if (!GOOGLE_PLACES_API_KEY || !placeId.trim()) return null
 
-  const response = await fetch(`${PLACE_DETAILS_URL}/${encodeURIComponent(placeId)}?languageCode=zh-TW`, {
+  const response = await googleFetch(`${PLACE_DETAILS_URL}/${encodeURIComponent(placeId)}?languageCode=zh-TW`, {
     headers: {
       'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
       'X-Goog-FieldMask': PLACES_FIELD_MASK,
@@ -348,6 +363,54 @@ async function getPlaceById(placeId: string): Promise<GooglePlace | null> {
   if (!response.ok) return null
 
   return (await response.json()) as GooglePlace
+}
+
+function googleFetch(url: string, init?: RequestInit) {
+  return new Promise<Response>((resolve, reject) => {
+    const headers = new Headers(init?.headers)
+    const body = init?.body
+    const req = https.request(
+      url,
+      {
+        method: init?.method ?? 'GET',
+        headers: Object.fromEntries(headers.entries()),
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+        res.on('end', () => {
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status: res.statusCode ?? 500,
+              statusText: res.statusMessage ?? '',
+              headers: new Headers(
+                Object.entries(res.headers).flatMap(([key, value]) =>
+                  value === undefined
+                    ? []
+                    : Array.isArray(value)
+                      ? [[key, value.join(', ')]]
+                      : [[key, value]],
+                ),
+              ),
+            }),
+          )
+        })
+      },
+    )
+
+    req.setTimeout(15000, () => {
+      req.destroy(new Error('Google API request timed out'))
+    })
+    req.on('error', reject)
+
+    if (typeof body === 'string' || body instanceof Uint8Array) {
+      req.write(body)
+    } else if (body != null) {
+      req.write(String(body))
+    }
+
+    req.end()
+  })
 }
 
 async function searchPlace(

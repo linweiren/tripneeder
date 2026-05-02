@@ -430,7 +430,9 @@
 }
 
 .submit-button {
-  width: min(280px, 100%);
+  width: fit-content;
+  min-width: 140px;
+  padding: 10px 32px;
   color: #fffaf2;
   background: #5f5548;
   border-color: #5f5548;
@@ -2080,7 +2082,8 @@
   .loading-actions .secondary-button,
   .dialog-actions .submit-button,
   .dialog-actions .secondary-button {
-    width: 100%;
+    width: fit-content;
+    min-width: 120px;
   }
 
   .dialog-backdrop {
@@ -2287,7 +2290,7 @@
 }
 
 .persona-form .submit-button {
-  width: min(280px, 100%);
+  /* Inherit global submit-button styles */
 }
 
 .save-status-msg {

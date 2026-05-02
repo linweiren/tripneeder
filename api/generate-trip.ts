@@ -1,5 +1,6 @@
 /// <reference types="node" />
 
+import https from 'node:https'
 import { buildTripPrompt, buildRetryTripSkeletonPrompt, parseTripPlanSkeletonResponse } from '../src/services/ai/tripPlanPrompt.js'
 import { tripPlanSkeletonResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
 import type { GenerateTripPlansRequest } from '../src/services/ai/types.js'
@@ -103,7 +104,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  let supabase: PointsSupabaseClient
+  let supabase: any
   let userId: string | undefined
   try {
     supabase = createUserScopedSupabaseClient(accessToken)
@@ -162,7 +163,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const openAiResponse = await fetch('https://api.openai.com/v1/responses', {
+    const openAiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -171,23 +172,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body: JSON.stringify({
         model: OPENAI_MODEL,
         stream: true,
-        input: [
+        messages: [
           {
             role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: buildTripPrompt(request.input, persona, nearbyPlaces, locationWarning),
-              },
-            ],
+            content: buildPromptWithGroundingRules(
+              buildTripPrompt(request.input, persona, nearbyPlaces, locationWarning),
+              Boolean(nearbyPlaces),
+            ),
           },
         ],
-        text: {
-          format: {
-            type: 'json_schema',
+        temperature: 0.2,
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
             name: 'trip_plan_response',
             schema: tripPlanSkeletonResponseSchema,
-            strict: false,
+            strict: true,
           },
         },
       }),
@@ -234,7 +234,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             ? { lat: request.input.location.lat, lng: request.input.location.lng }
             : undefined
 
-          const validation = await validateStopsWithPlaces(plan as TripPlan, bias)
+          const groundedPlan = applyCandidateGroundingToPlan(
+            plan as TripPlan,
+            nearbyPlaceCandidates,
+          )
+          const validation = await validateStopsWithPlaces(groundedPlan, bias)
           if (!validation.validationPerformed) {
             placesValidationPerformed = false
           }
@@ -258,7 +262,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    let finalResponse
+    if (sseBuffer.trim()) {
+      const delta = extractDeltaFromSseEvent(sseBuffer)
+      if (delta) {
+        fullText += delta
+        const plans = extractor.push(delta)
+
+        for (const plan of plans) {
+          const bias = request.input.location.lat && request.input.location.lng
+            ? { lat: request.input.location.lat, lng: request.input.location.lng }
+            : undefined
+
+          const groundedPlan = applyCandidateGroundingToPlan(
+            plan as TripPlan,
+            nearbyPlaceCandidates,
+          )
+          const validation = await validateStopsWithPlaces(groundedPlan, bias)
+          if (!validation.validationPerformed) {
+            placesValidationPerformed = false
+          }
+          const validatedPlan = normalizePlanTotalTime(validation.validatedPlan)
+          const qualityIssues = getPlanQualityIssues(
+            validatedPlan,
+            request.input,
+            validation.issues,
+          )
+
+          if (qualityIssues.length > 0) {
+            if (!invalidPlanIds.includes(validatedPlan.id)) {
+              invalidPlanIds.push(validatedPlan.id)
+            }
+            validationSummaries.set(validatedPlan.id, qualityIssues)
+          }
+
+          upsertValidatedPlan(validatedPlans, validatedPlan)
+          writeEvent({ event: 'plan', plan: validatedPlan })
+        }
+      }
+    }
+
+    let finalResponse: any
     try {
       try {
         finalResponse = parseTripPlanSkeletonResponse(fullText)
@@ -273,11 +316,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
+      if (!finalResponse || !Array.isArray(finalResponse.plans)) {
+        finalResponse = { plans: validatedPlans || [], warnings: [] }
+      }
+
       for (const plan of finalResponse.plans) {
         const bias = request.input.location.lat && request.input.location.lng
           ? { lat: request.input.location.lat, lng: request.input.location.lng }
           : undefined
-        const validation = await validateStopsWithPlaces(plan as TripPlan, bias)
+        const groundedPlan = applyCandidateGroundingToPlan(
+          plan as TripPlan,
+          nearbyPlaceCandidates,
+        )
+        const validation = await validateStopsWithPlaces(groundedPlan, bias)
         if (!validation.validationPerformed) {
           placesValidationPerformed = false
         }
@@ -316,12 +367,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${apiKey}`,
             },
-            body: JSON.stringify({
-              model: OPENAI_MODEL,
-              messages: [{ role: 'user', content: retryPrompt }],
-              response_format: {
-                type: 'json_schema',
-                json_schema: {
+          body: JSON.stringify({
+            model: OPENAI_MODEL,
+            messages: [
+              {
+                role: 'user',
+                content: buildPromptWithGroundingRules(retryPrompt, Boolean(nearbyPlaces)),
+              },
+            ],
+            temperature: 0.2,
+            response_format: {
+              type: 'json_schema',
+              json_schema: {
                   name: 'trip_plan_skeleton_response',
                   strict: true,
                   schema: tripPlanSkeletonResponseSchema,
@@ -342,7 +399,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const bias = request.input.location.lat && request.input.location.lng
                   ? { lat: request.input.location.lat, lng: request.input.location.lng }
                   : undefined
-                const validation = await validateStopsWithPlaces(plan as TripPlan, bias)
+                const groundedPlan = applyCandidateGroundingToPlan(
+                  plan as TripPlan,
+                  nearbyPlaceCandidates,
+                )
+                const validation = await validateStopsWithPlaces(groundedPlan, bias)
                 if (!validation.validationPerformed) {
                   placesValidationPerformed = false
                 }
@@ -387,13 +448,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // 用驗證過的 plans 覆寫 finalResponse 裡的內容，確保最終結果一致
-      finalResponse.plans = finalResponse.plans.map((p) => {
+      finalResponse.plans = (finalResponse.plans || []).map((p: any) => {
         const validated = validatedPlans.find((vp) => vp.id === p.id)
         return validated || p
       })
 
       finalResponse.plans = await Promise.all(
-        finalResponse.plans.map(async (plan) => {
+        (finalResponse.plans || []).map(async (plan: any) => {
           const { plan: repaired, routesFailed } = await repairPlanForDelivery(
             plan,
             request.input,
@@ -470,23 +531,68 @@ function upsertValidatedPlan(plans: TripPlan[], nextPlan: TripPlan) {
   plans.push(nextPlan)
 }
 
+function buildPromptWithGroundingRules(prompt: string, hasNearbyPlaces: boolean) {
+  const groundingRules = hasNearbyPlaces
+    ? `
+
+Hard constraints for real places:
+- Use the injected Google place candidates as the source of truth.
+- Every stop must include a non-empty "name", "address", and "placeId".
+- Copy "name", "address", and "placeId" exactly from one injected candidate. Do not paraphrase or invent venue names.
+- When FIRST_STOP_CANDIDATES_WITHIN_2KM exists, stops[0] must come from that section.
+- If a candidate list is provided but seems imperfect, still choose from that list instead of fabricating a place.
+- Return JSON only. No markdown. No commentary.
+`.trim()
+    : ''
+
+  return groundingRules ? `${prompt}\n\n${groundingRules}` : prompt
+}
+
+function applyCandidateGroundingToPlan(
+  plan: TripPlan,
+  candidates: NearbyPlaceCandidates,
+): TripPlan {
+  return {
+    ...plan,
+    stops: (plan.stops ?? []).map((stop, index) =>
+      groundStopWithCandidate(stop, index, candidates),
+    ),
+    rainBackup: (plan.rainBackup ?? []).map((stop, index) =>
+      groundStopWithCandidate(stop, index, candidates),
+    ),
+  }
+}
+
+function groundStopWithCandidate(
+  stop: Stop,
+  index: number,
+  candidates: NearbyPlaceCandidates,
+) {
+  const candidate = findMatchingCandidateForStop(stop, index, candidates)
+  return candidate ? applyCandidateToStop(stop, candidate) : stop
+}
+
 async function repairPlanForDelivery(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
   const usedPlaceIds = new Set<string>()
-  const repairedStops = plan.stops.map((stop, index) => {
-    const candidate = pickCandidateForStop(stop, index, candidates, usedPlaceIds)
-    if (!candidate) return stop
-
-    usedPlaceIds.add(candidate.placeId)
-    return applyCandidateToStop(stop, candidate)
-  })
+  const repairedStops = plan.stops.map((stop, index) =>
+    ensureStopHasVerifiedPlace(stop, index, candidates, usedPlaceIds),
+  )
   const expandedStops = expandStopsForLongTrip(repairedStops, input, candidates, usedPlaceIds)
   const { segments: repairedSegments, routesFailed } = await repairTransportSegments(
     plan.transportSegments,
     expandedStops,
+    plan.transportMode,
+  )
+  const repairedRainBackup = (plan.rainBackup ?? []).map((stop, index) =>
+    ensureStopHasVerifiedPlace(stop, index, candidates, usedPlaceIds),
+  )
+  const { segments: repairedRainSegments } = await repairTransportSegments(
+    plan.rainTransportSegments ?? [],
+    repairedRainBackup,
     plan.transportMode,
   )
   const timeRepairedPlan = stretchPlanDurationToCoverage(
@@ -494,6 +600,8 @@ async function repairPlanForDelivery(
       ...plan,
       stops: expandedStops,
       transportSegments: repairedSegments,
+      rainBackup: repairedRainBackup,
+      rainTransportSegments: repairedRainSegments,
     },
     input,
   )
@@ -507,19 +615,31 @@ async function repairPlanForDelivery(
   }
 }
 
+function ensureStopHasVerifiedPlace(
+  stop: Stop,
+  index: number,
+  candidates: NearbyPlaceCandidates,
+  usedPlaceIds: Set<string>,
+) {
+  if (stop.placeId && stop.address && stop.googleMapsUrl) {
+    usedPlaceIds.add(stop.placeId)
+    return stop
+  }
+
+  const candidate = pickCandidateForStop(stop, index, candidates, usedPlaceIds)
+  if (!candidate) return stop
+
+  usedPlaceIds.add(candidate.placeId)
+  return applyCandidateToStop(stop, candidate)
+}
+
 function pickCandidateForStop(
   stop: Stop,
   index: number,
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
 ) {
-  const existingCandidate = candidates.allCandidates.find(
-    (candidate) =>
-      candidate.placeId === stop.placeId &&
-      (index !== 0 ||
-        candidates.firstStopCandidates.length === 0 ||
-        candidates.firstStopCandidates.some((first) => first.placeId === candidate.placeId)),
-  )
+  const existingCandidate = findMatchingCandidateForStop(stop, index, candidates)
 
   if (existingCandidate && !usedPlaceIds.has(existingCandidate.placeId)) {
     return existingCandidate
@@ -538,6 +658,60 @@ function pickCandidateForStop(
     pool[0] ??
     null
   )
+}
+
+function findMatchingCandidateForStop(
+  stop: Stop,
+  index: number,
+  candidates: NearbyPlaceCandidates,
+) {
+  const pool =
+    index === 0 && candidates.firstStopCandidates.length > 0
+      ? candidates.firstStopCandidates
+      : candidates.allCandidates
+
+  if (stop.placeId) {
+    const placeIdMatch = pool.find((candidate) => candidate.placeId === stop.placeId)
+    if (placeIdMatch) return placeIdMatch
+  }
+
+  const stopName = normalizeStopSearchText(stop.name)
+  const stopAddress = normalizeStopSearchText(stop.address)
+
+  let bestCandidate: VerifiedPlaceCandidate | null = null
+  let bestScore = 0
+
+  for (const candidate of pool) {
+    const candidateName = normalizeStopSearchText(candidate.name)
+    const candidateAddress = normalizeStopSearchText(candidate.address)
+    const exactNameScore = stopName && stopName === candidateName ? 1 : 0
+    const exactAddressScore = stopAddress && stopAddress === candidateAddress ? 0.9 : 0
+    const partialNameScore =
+      stopName && candidateName && (candidateName.includes(stopName) || stopName.includes(candidateName))
+        ? 0.7
+        : 0
+    const partialAddressScore =
+      stopAddress &&
+      candidateAddress &&
+      (candidateAddress.includes(stopAddress) || stopAddress.includes(candidateAddress))
+        ? 0.55
+        : 0
+    const score = Math.max(exactNameScore, exactAddressScore, partialNameScore, partialAddressScore)
+
+    if (score > bestScore) {
+      bestCandidate = candidate
+      bestScore = score
+    }
+  }
+
+  return bestScore >= 0.7 ? bestCandidate : null
+}
+
+function normalizeStopSearchText(value?: string) {
+  return (value ?? '')
+    .toLocaleLowerCase('zh-TW')
+    .replace(/[^a-z0-9\u4e00-\u9fff]/g, '')
+    .trim()
 }
 
 function preferNonShortVisitCandidates(candidates: VerifiedPlaceCandidate[]) {
@@ -839,32 +1013,65 @@ function formatPlacesValidationReason(reason: string) {
 
 function extractDeltaFromSseEvent(rawEvent: string): string {
   const lines = rawEvent.split('\n')
-  let dataPayload = ''
+  const payloads: string[] = []
 
   for (const line of lines) {
     if (line.startsWith('data:')) {
-      dataPayload += line.slice(5).trimStart()
+      const payload = line.slice(5).trimStart()
+      if (payload) {
+        payloads.push(payload)
+      }
     }
   }
 
-  if (!dataPayload || dataPayload === '[DONE]') {
-    return ''
-  }
+  let text = ''
 
-  try {
-    const parsed = JSON.parse(dataPayload) as {
-      type?: string
-      delta?: string
+  for (const dataPayload of payloads) {
+    if (!dataPayload || dataPayload === '[DONE]') {
+      continue
     }
 
-    if (parsed.type === 'response.output_text.delta' && typeof parsed.delta === 'string') {
-      return parsed.delta
+    try {
+      const parsed = JSON.parse(dataPayload) as {
+        choices?: Array<{
+          delta?: {
+            content?:
+              | string
+              | Array<{
+                  type?: string
+                  text?: string
+                }>
+          }
+          message?: {
+            content?: string
+          }
+        }>
+      }
+
+      const choice = parsed.choices?.[0]
+      const delta = choice?.delta?.content
+
+      if (typeof delta === 'string') {
+        text += delta
+        continue
+      }
+
+      if (Array.isArray(delta)) {
+        text += delta
+          .map((part) => (part?.type === 'text' || typeof part?.text === 'string' ? part.text ?? '' : ''))
+          .join('')
+        continue
+      }
+
+      if (typeof choice?.message?.content === 'string') {
+        text += choice.message.content
+      }
+    } catch {
+      // Ignore unparseable SSE frames.
     }
-  } catch {
-    // Ignore unparseable SSE frames.
   }
 
-  return ''
+  return text
 }
 
 class PlanExtractor {
@@ -942,18 +1149,26 @@ class PlanExtractor {
   }
 }
 
-function createUserScopedSupabaseClient(accessToken: string) {
+function createUserScopedSupabaseClient(accessToken: string): any {
   const supabaseUrl =
     process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
-  const supabaseAnonKey =
-    process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ''
+  const supabaseServerKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    ''
 
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('尚未設定 Supabase server-side 環境變數。')
+  if (!supabaseUrl || !supabaseServerKey) {
+    console.error('Missing Supabase environment variables:', {
+      url: !!supabaseUrl,
+      key: !!supabaseServerKey,
+    })
+    throw new Error('伺服器設定不完整 (Supabase 設定缺失)，請聯絡管理員。')
   }
 
-  return createClient(supabaseUrl, supabaseAnonKey, {
+  return createClient(supabaseUrl, supabaseServerKey, {
     global: {
+      fetch: createNodeHttpsFetch(),
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
@@ -961,25 +1176,98 @@ function createUserScopedSupabaseClient(accessToken: string) {
     auth: {
       persistSession: false,
     },
-  }) as unknown as PointsSupabaseClient
+  })
 }
 
 async function getAvailablePoints(
-  supabase: PointsSupabaseClient,
+  supabase: any,
 ): Promise<number> {
+  // Try to initialize, ignore if already exists (though RPC handles conflict)
   const { error: initializeError } = await supabase.rpc('initialize_user_profile')
 
   if (initializeError) {
-    throw new Error('無法初始化使用者點數資料，請稍後再試。')
+    console.error('RPC initialize_user_profile failed:', initializeError)
+    if (isFetchFailedError(initializeError)) {
+      throw new Error('無法連線到點數服務，剛剛可能是網路中斷或 Supabase 暫時無回應，請再試一次。')
+    }
+    throw new Error(`無法初始化使用者點數資料: ${initializeError.message}`)
   }
 
   const { data, error } = await supabase.rpc('get_my_points_balance')
 
   if (error || typeof data !== 'number') {
-    throw new Error('無法讀取點數餘額，請稍後再試。')
+    console.error('RPC get_my_points_balance failed:', error)
+    if (isFetchFailedError(error)) {
+      throw new Error('無法連線到點數服務，剛剛可能是網路中斷或 Supabase 暫時無回應，請再試一次。')
+    }
+    throw new Error(`無法讀取點數餘額: ${error?.message || '未知錯誤'}`)
   }
 
   return data
+}
+
+function isFetchFailedError(error: { message?: string } | null | undefined) {
+  return typeof error?.message === 'string' && /fetch failed/i.test(error.message)
+}
+
+function createNodeHttpsFetch(): typeof fetch {
+  return async (input, init) => {
+    const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    const method = init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET') ?? 'GET'
+    const headers = new Headers(init?.headers ?? (typeof input === 'object' && 'headers' in input ? input.headers : undefined))
+    const body = init?.body
+
+    return new Promise<Response>((resolve, reject) => {
+      const req = https.request(
+        requestUrl,
+        {
+          method,
+          headers: Object.fromEntries(headers.entries()),
+        },
+        (res) => {
+          const chunks: Buffer[] = []
+          res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+          res.on('end', () => {
+            resolve(
+              new Response(Buffer.concat(chunks), {
+                status: res.statusCode ?? 500,
+                statusText: res.statusMessage ?? '',
+                headers: new Headers(
+                  Object.entries(res.headers).flatMap(([key, value]) =>
+                    value === undefined
+                      ? []
+                      : Array.isArray(value)
+                        ? [[key, value.join(', ')]]
+                        : [[key, value]],
+                  ),
+                ),
+              }),
+            )
+          })
+        },
+      )
+
+      req.on('error', reject)
+
+      if (init?.signal) {
+        init.signal.addEventListener(
+          'abort',
+          () => req.destroy(new Error('The operation was aborted.')),
+          { once: true },
+        )
+      }
+
+      if (typeof body === 'string' || body instanceof Uint8Array) {
+        req.write(body)
+      } else if (body == null) {
+        // no-op
+      } else {
+        req.write(String(body))
+      }
+
+      req.end()
+    })
+  }
 }
 
 async function consumeAnalysisPoints(supabase: PointsSupabaseClient) {
