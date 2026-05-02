@@ -519,27 +519,54 @@ export function HomePage() {
     <section className="page home-page">
       <div className="home-hero">
         <p className="page-kicker">現場快速排行程</p>
-        <h1 className="page-title">想去哪走走？</h1>
+        <h1 className="page-title">想在這玩多久？</h1>
       </div>
 
       <form className="trip-form" onSubmit={handleSubmit}>
         {/* Step 1: Duration Selection (Main View) */}
-        <fieldset className="form-section">
-          <legend>想玩多久？</legend>
-          <div className="chip-grid">
-            {durationOptions.map((option) => (
-              <button
-                key={option.label}
-                className={
-                  duration === option.value ? 'chip chip-active' : 'chip'
-                }
-                type="button"
-                onClick={() => setDuration(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
+        <fieldset className="form-section duration-section" aria-label="想玩多久">
+          <div className="chip-grid duration-chip-grid">
+            <div className="duration-chip-row duration-chip-row-three">
+              {durationOptions.slice(0, 3).map((option) => (
+                <button
+                  key={option.label}
+                  className={
+                    duration === option.value ? 'chip chip-active' : 'chip'
+                  }
+                  type="button"
+                  onClick={() => setDuration(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="duration-chip-row duration-chip-row-two">
+              {durationOptions.slice(3, 5).map((option) => (
+                <button
+                  key={option.label}
+                  className={
+                    duration === option.value ? 'chip chip-active' : 'chip'
+                  }
+                  type="button"
+                  onClick={() => setDuration(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
+          <button
+            className={
+              duration === -1
+                ? 'custom-duration-toggle custom-duration-toggle-active'
+                : 'custom-duration-toggle'
+            }
+            type="button"
+            aria-pressed={duration === -1}
+            onClick={() => setDuration(-1)}
+          >
+            自訂結束時間
+          </button>
           
           <div className="duration-display">
             預計玩到 <strong>{input.endTime}</strong>
@@ -563,11 +590,11 @@ export function HomePage() {
         {formError ? <p className="form-error" style={{ marginBottom: '16px' }}>{formError}</p> : null}
 
         <button 
-          className="submit-button" 
+          className="submit-button home-submit-button" 
           type="submit" 
           disabled={isLocating}
         >
-          {isLocating ? '正在取得定位...' : '出發！GO！'}
+          {isLocating ? '正在取得定位...' : '立即出發'}
         </button>
 
         {/* Step 2: Advanced Settings (Collapsed) */}
