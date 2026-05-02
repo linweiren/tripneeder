@@ -138,7 +138,7 @@
 }
 
 .home-page {
-  gap: 30px;
+  gap: 0;
 }
 
 .home-hero {
@@ -198,6 +198,31 @@
   justify-self: center;
 }
 
+.home-trip-form {
+  min-height: calc(100dvh - 150px);
+  display: flex;
+  flex-direction: column;
+  padding-top: 0;
+}
+
+.home-top-panel {
+  display: grid;
+  gap: 40px;
+  padding-top: 40px;
+}
+
+.home-bottom-panel {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  margin-top: auto;
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+}
+
+.home-bottom-panel .advanced-toggle-area {
+  margin: 8px 0 0;
+}
+
 .form-section {
   display: grid;
   gap: 18px;
@@ -215,6 +240,8 @@
 
 .duration-section {
   gap: 12px;
+  padding: 0;
+  border-top: 0;
 }
 
 .form-section legend {
@@ -1988,6 +2015,10 @@
     padding-top: 0;
   }
 
+  .duration-section {
+    padding: 0;
+  }
+
   .field-row,
   .location-choice {
     grid-template-columns: 1fr;
@@ -2230,7 +2261,7 @@
   }
 
   .home-page {
-    gap: 24px;
+    gap: 0;
   }
 
   .brand {

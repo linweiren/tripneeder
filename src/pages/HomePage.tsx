@@ -517,95 +517,99 @@ export function HomePage() {
 
   return (
     <section className="page home-page">
-      <div className="home-hero">
-        <p className="page-kicker">現場快速排行程</p>
-        <h1 className="page-title">想在這玩多久？</h1>
-      </div>
-
-      <form className="trip-form" onSubmit={handleSubmit}>
-        {/* Step 1: Duration Selection (Main View) */}
-        <fieldset className="form-section duration-section" aria-label="想玩多久">
-          <div className="chip-grid duration-chip-grid">
-            <div className="duration-chip-row duration-chip-row-three">
-              {durationOptions.slice(0, 3).map((option) => (
-                <button
-                  key={option.label}
-                  className={
-                    duration === option.value ? 'chip chip-active' : 'chip'
-                  }
-                  type="button"
-                  onClick={() => setDuration(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <div className="duration-chip-row duration-chip-row-two">
-              {durationOptions.slice(3, 5).map((option) => (
-                <button
-                  key={option.label}
-                  className={
-                    duration === option.value ? 'chip chip-active' : 'chip'
-                  }
-                  type="button"
-                  onClick={() => setDuration(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+      <form className="trip-form home-trip-form" onSubmit={handleSubmit}>
+        <div className="home-top-panel">
+          <div className="home-hero">
+            <p className="page-kicker">現場快速排行程</p>
+            <h1 className="page-title">想在這玩多久？</h1>
           </div>
-          <button
-            className={
-              duration === -1
-                ? 'custom-duration-toggle custom-duration-toggle-active'
-                : 'custom-duration-toggle'
-            }
-            type="button"
-            aria-pressed={duration === -1}
-            onClick={() => setDuration(-1)}
-          >
-            自訂結束時間
-          </button>
-          
+
+          {/* Step 1: Duration Selection (Main View) */}
+          <fieldset className="form-section duration-section" aria-label="想玩多久">
+            <div className="chip-grid duration-chip-grid">
+              <div className="duration-chip-row duration-chip-row-three">
+                {durationOptions.slice(0, 3).map((option) => (
+                  <button
+                    key={option.label}
+                    className={
+                      duration === option.value ? 'chip chip-active' : 'chip'
+                    }
+                    type="button"
+                    onClick={() => setDuration(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <div className="duration-chip-row duration-chip-row-two">
+                {durationOptions.slice(3, 5).map((option) => (
+                  <button
+                    key={option.label}
+                    className={
+                      duration === option.value ? 'chip chip-active' : 'chip'
+                    }
+                    type="button"
+                    onClick={() => setDuration(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              className={
+                duration === -1
+                  ? 'custom-duration-toggle custom-duration-toggle-active'
+                  : 'custom-duration-toggle'
+              }
+              type="button"
+              aria-pressed={duration === -1}
+              onClick={() => setDuration(-1)}
+            >
+              自訂結束時間
+            </button>
+
+            {duration === -1 && (
+               <div className="custom-duration-fields">
+                  <TimeSelect
+                    label="自訂結束時間"
+                    value={input.endTime}
+                    onChange={(value) => {
+                      updateInput('endTime', value)
+                      setDuration(0) // Set to 0 to stop auto-calculating from duration
+                    }}
+                  />
+               </div>
+            )}
+          </fieldset>
+        </div>
+
+        <div className="home-bottom-panel">
           <div className="duration-display">
             預計玩到 <strong>{input.endTime}</strong>
             {isCrossDay && <span className="cross-day-note"> (明天)</span>}
           </div>
 
-          {duration === -1 && (
-             <div className="custom-duration-fields">
-                <TimeSelect
-                  label="自訂結束時間"
-                  value={input.endTime}
-                  onChange={(value) => {
-                    updateInput('endTime', value)
-                    setDuration(0) // Set to 0 to stop auto-calculating from duration
-                  }}
-                />
-             </div>
-          )}
-        </fieldset>
+          {formError ? <p className="form-error" style={{ marginBottom: '16px' }}>{formError}</p> : null}
 
-        {formError ? <p className="form-error" style={{ marginBottom: '16px' }}>{formError}</p> : null}
-
-        <button 
-          className="submit-button home-submit-button" 
-          type="submit" 
-          disabled={isLocating}
-        >
-          {isLocating ? '正在取得定位...' : '立即出發'}
-        </button>
-
-        {/* Step 2: Advanced Settings (Collapsed) */}
-        <div className="advanced-toggle-area">
           <button 
-            type="button" 
-            className="advanced-toggle-button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="submit-button home-submit-button" 
+            type="submit" 
+            disabled={isLocating}
           >
-            {showAdvanced ? '收起進階設定 ↑' : `更多偏好設定 ${preferenceSummary} ↓`}
+            {isLocating ? '正在取得定位...' : '立即出發'}
           </button>
+
+          {/* Step 2: Advanced Settings (Collapsed) */}
+          <div className="advanced-toggle-area">
+            <button 
+              type="button" 
+              className="advanced-toggle-button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+            >
+              {showAdvanced ? '收起進階設定 ↑' : `更多偏好設定 ${preferenceSummary} ↓`}
+            </button>
+          </div>
         </div>
 
         {showAdvanced && (
