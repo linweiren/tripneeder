@@ -208,7 +208,7 @@
 .home-top-panel {
   display: grid;
   gap: 40px;
-  padding-top: 40px;
+  padding-top: 20px;
 }
 
 .home-bottom-panel {
