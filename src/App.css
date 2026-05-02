@@ -543,6 +543,7 @@
 
 .trip-loading {
   width: min(820px, 100%);
+  padding-top: 20px;
 }
 
 .loading-panel {

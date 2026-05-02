@@ -428,8 +428,6 @@ export function HomePage() {
 
     return (
       <section className="page trip-loading">
-        <p className="page-kicker">正在準備分析</p>
-        <h1 className="page-title">想來點什麼樣的旅行？</h1>
         <div className="loading-panel" role="status" aria-live="polite">
           <div>
             <h2>
