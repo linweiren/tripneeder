@@ -2202,7 +2202,17 @@
   }
 
   .dialog-actions {
-    flex-direction: column-reverse;
+    width: 100%;
+    flex-direction: row;
+    gap: 10px;
+  }
+
+  .dialog-actions .submit-button,
+  .dialog-actions .secondary-button {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    justify-content: center;
   }
 
   .detail-action-row .action-strip .submit-button {
