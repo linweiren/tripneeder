@@ -231,7 +231,17 @@ async function updateRemoteFavoriteRecords(prev: TripPlan, next: TripPlan, input
   }
 }
 
-async function saveRemoteFavoriteRecord({ plan, input, userId, planFingerprint }: any) {
+async function saveRemoteFavoriteRecord({
+  plan,
+  input,
+  userId,
+  planFingerprint,
+}: {
+  plan: TripPlan
+  input: TripInput | null
+  userId: string
+  planFingerprint: string
+}) {
   const { data: existing } = await supabase!.from('trip_records').select('id,kind,plan,input,plan_fingerprint,created_at')
     .eq('user_id', userId).eq('kind', 'favorite').eq('plan_fingerprint', planFingerprint).maybeSingle<TripRecordRow>()
   if (existing) return mapTripRecordRow(existing)
@@ -253,7 +263,7 @@ function mapTripRecordRow(row: TripRecordRow): StoredTripRecord {
   return { id: row.id, plan: row.plan, input: row.input, createdAt: row.created_at }
 }
 
-function getTripRecordCache(kind: TripRecordKind, userId: string) {
+function getTripRecordCache(kind: TripRecordKind, userId: string): StoredTripRecord[] | null {
   const cacheKey = getTripRecordCacheKey(kind, userId)
   const memoryCache = getCacheContainer().get(cacheKey)
   if (memoryCache) return memoryCache
@@ -272,7 +282,7 @@ function getTripRecordCacheKey(kind: TripRecordKind, userId: string) {
   return `${kind}:${userId}`
 }
 
-function loadSessionTripRecordCache(cacheKey: string) {
+function loadSessionTripRecordCache(cacheKey: string): StoredTripRecord[] | null {
   const rawCache = sessionStorage.getItem(`${RECORD_CACHE_STORAGE_KEY}.${cacheKey}`)
   try { return rawCache ? JSON.parse(rawCache) : null } catch { return null }
 }

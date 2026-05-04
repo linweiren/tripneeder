@@ -1,4 +1,4 @@
-import type { Stop, TransportSegment, TripInput, TripPlan } from '../types/trip'
+import type { TripInput, TripPlan } from '../types/trip'
 
 // Session Storage Keys (當前分析流程)
 const TRIP_PLANS_STORAGE_KEY = 'tripneeder.generatedPlans'
@@ -50,7 +50,11 @@ export function clearGeneratedTripFlow() {
 
 export function savePlanForDetail(plan: TripPlan, input: TripInput | null) {
   sessionStorage.setItem(DETAIL_PLAN_STORAGE_KEY, JSON.stringify(plan))
-  if (input) sessionStorage.setItem(DETAIL_INPUT_STORAGE_KEY, JSON.stringify(input))
+  if (input) {
+    sessionStorage.setItem(DETAIL_INPUT_STORAGE_KEY, JSON.stringify(input))
+  } else {
+    sessionStorage.removeItem(DETAIL_INPUT_STORAGE_KEY)
+  }
 }
 
 export function updateDetailPlan(nextPlan: TripPlan) {

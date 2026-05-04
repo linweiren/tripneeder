@@ -12,6 +12,7 @@ import {
   loadGeneratedPlans,
   loadInputForDetail,
   loadLastTripInput,
+  loadPlanForDetail,
   saveGeneratedPlans,
   updateDetailPlan,
   updateGeneratedPlan,
@@ -179,9 +180,18 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
   const requestPlanDetails = useCallback((planId: string) => {
     if (!planId) return
 
-    const currentPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
+    const generatedPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
+    const detailPlan = loadPlanForDetail(planId)
+    const currentPlan = detailPlan || generatedPlan
 
     if (!currentPlan) {
+      setPlanDetailStates((prev) => ({
+        ...prev,
+        [planId]: {
+          status: 'error',
+          error: '找不到這個方案資料，請回到最近生成後重新開啟。',
+        },
+      }))
       return
     }
 
@@ -195,9 +205,18 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    const input = loadLastTripInput()
+    const lastInput = loadLastTripInput()
+    const detailInput = loadInputForDetail()
+    const input = detailInput || lastInput
 
     if (!input) {
+      setPlanDetailStates((prev) => ({
+        ...prev,
+        [planId]: {
+          status: 'error',
+          error: '找不到當初產生這個方案的偏好資料，無法自動補完整細節。',
+        },
+      }))
       return
     }
 
@@ -230,16 +249,6 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
         updateGeneratedPlan(response.plan)
         updateDetailPlan(response.plan)
 
-        if (userId) {
-          try {
-            await upgradeRecentGeneratedRecord(response.plan, input, userId)
-          } catch {
-            // The upgraded plan is already persisted locally; remote sync will retry later.
-          }
-        }
-
-        if (controller.signal.aborted) return
-
         setPlanDetailStates((prev) => ({
           ...prev,
           [planId]: { status: 'complete', completedAt: getTimestamp() },
@@ -247,6 +256,12 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
         window.dispatchEvent(
           new CustomEvent('tripneeder:planDetailComplete', { detail: { planId } }),
         )
+
+        if (userId) {
+          void upgradeRecentGeneratedRecord(response.plan, input, userId).catch(() => {
+            // The upgraded plan is already persisted locally; remote sync will retry later.
+          })
+        }
       } catch (error) {
         if (controller.signal.aborted) return
 

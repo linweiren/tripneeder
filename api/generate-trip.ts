@@ -3,7 +3,10 @@
 import https from 'node:https'
 import { buildTripPrompt, buildRetryTripSkeletonPrompt, parseTripPlanSkeletonResponse } from '../src/services/ai/tripPlanPrompt.js'
 import { tripPlanSkeletonResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
-import type { GenerateTripPlansRequest } from '../src/services/ai/types.js'
+import type {
+  GenerateTripPlansRequest,
+  GenerateTripPlansResponse,
+} from '../src/services/ai/types.js'
 import { createClient } from '@supabase/supabase-js'
 import {
   validateStopsWithPlaces,
@@ -104,7 +107,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  let supabase: any
+  let supabase: PointsSupabaseClient
   let userId: string | undefined
   try {
     supabase = createUserScopedSupabaseClient(accessToken)
@@ -301,7 +304,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    let finalResponse: any
+    let finalResponse: GenerateTripPlansResponse
     try {
       try {
         finalResponse = parseTripPlanSkeletonResponse(fullText)
@@ -448,13 +451,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // 用驗證過的 plans 覆寫 finalResponse 裡的內容，確保最終結果一致
-      finalResponse.plans = (finalResponse.plans || []).map((p: any) => {
+      finalResponse.plans = (finalResponse.plans || []).map((p: TripPlan) => {
         const validated = validatedPlans.find((vp) => vp.id === p.id)
         return validated || p
       })
 
       finalResponse.plans = await Promise.all(
-        (finalResponse.plans || []).map(async (plan: any) => {
+        (finalResponse.plans || []).map(async (plan: TripPlan) => {
           const { plan: repaired, routesFailed } = await repairPlanForDelivery(
             plan,
             request.input,
@@ -1149,7 +1152,7 @@ class PlanExtractor {
   }
 }
 
-function createUserScopedSupabaseClient(accessToken: string): any {
+function createUserScopedSupabaseClient(accessToken: string): PointsSupabaseClient {
   const supabaseUrl =
     process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
   const supabaseServerKey =
@@ -1176,11 +1179,11 @@ function createUserScopedSupabaseClient(accessToken: string): any {
     auth: {
       persistSession: false,
     },
-  })
+  }) as unknown as PointsSupabaseClient
 }
 
 async function getAvailablePoints(
-  supabase: any,
+  supabase: PointsSupabaseClient,
 ): Promise<number> {
   // Try to initialize, ignore if already exists (though RPC handles conflict)
   const { error: initializeError } = await supabase.rpc('initialize_user_profile')
