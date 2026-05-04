@@ -1,5 +1,6 @@
 /// <reference types="node" />
 
+import https from 'node:https'
 import { createClient } from '@supabase/supabase-js'
 import {
   buildTripDetailsPrompt,
@@ -10,6 +11,7 @@ import type { TripInput, TripPlan } from '../src/types/trip.js'
 import {
   validateStopsWithPlaces,
   getNearbyPlaceCandidates,
+  resolveLocation,
   formatNearbyRecommendations,
 } from './_lib/google-places.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
@@ -71,6 +73,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const supabase = createUserScopedSupabaseClient(accessToken)
     const userId = getUserIdFromToken(accessToken)
+
+    // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
+    let locationWarning = ''
+    if (
+      (!request.input.location.lat || !request.input.location.lng) &&
+      request.input.location.name
+    ) {
+      const resolved = await resolveLocation(request.input.location.name)
+      if (resolved) {
+        request.input.location = {
+          ...request.input.location,
+          lat: resolved.lat,
+          lng: resolved.lng,
+          name: resolved.formattedName,
+        }
+      } else {
+        // 解析失敗不阻斷，但給予 AI 警告
+        locationWarning = `警告：系統無法精確定位起點「${request.input.location.name}」的經緯度。請 AI 依據您的知識庫為該處補齊雨天備案與詳情。`
+      }
+    }
+
     const persona = await getMergedPersona(supabase, userId, request.input)
 
     // 獲取室內地點候選，供雨天備案使用
@@ -103,6 +126,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   request.plan,
                   persona,
                   nearbyIndoorPlaces,
+                  locationWarning
                 ),
               },
             ],
@@ -221,15 +245,19 @@ function preserveMainStopIdentity(plan: TripPlan, originalPlan: TripPlan): TripP
 function createUserScopedSupabaseClient(accessToken: string) {
   const supabaseUrl =
     process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
-  const supabaseAnonKey =
-    process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ''
+  const supabaseServerKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    ''
 
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!supabaseUrl || !supabaseServerKey) {
     throw new Error('尚未設定 Supabase server-side 環境變數。')
   }
 
-  return createClient(supabaseUrl, supabaseAnonKey, {
+  return createClient(supabaseUrl, supabaseServerKey, {
     global: {
+      fetch: createNodeHttpsFetch(),
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
@@ -238,6 +266,66 @@ function createUserScopedSupabaseClient(accessToken: string) {
       persistSession: false,
     },
   })
+}
+
+function createNodeHttpsFetch(): typeof fetch {
+  return async (input, init) => {
+    const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    const method = init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET') ?? 'GET'
+    const headers = new Headers(init?.headers ?? (typeof input === 'object' && 'headers' in input ? input.headers : undefined))
+    const body = init?.body
+
+    return new Promise<Response>((resolve, reject) => {
+      const req = https.request(
+        requestUrl,
+        {
+          method,
+          headers: Object.fromEntries(headers.entries()),
+        },
+        (res) => {
+          const chunks: Buffer[] = []
+          res.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+          res.on('end', () => {
+            resolve(
+              new Response(Buffer.concat(chunks), {
+                status: res.statusCode ?? 500,
+                statusText: res.statusMessage ?? '',
+                headers: new Headers(
+                  Object.entries(res.headers).flatMap(([key, value]) =>
+                    value === undefined
+                      ? []
+                      : Array.isArray(value)
+                        ? [[key, value.join(', ')]]
+                        : [[key, value]],
+                  ),
+                ),
+              }),
+            )
+          })
+        },
+      )
+
+      req.on('error', reject)
+
+      if (init?.signal) {
+        init.signal.addEventListener(
+          'abort',
+          () => req.destroy(new Error('The operation was aborted.')),
+          { once: true },
+        )
+      }
+
+      if (typeof body === 'string' || body instanceof Uint8Array) {
+        req.write(body)
+      } else if (body == null) {
+        // no-op
+      } else {
+        req.write(String(body))
+      }
+
+      req.end()
+    })
+  }
 }
 
 function getUserIdFromToken(accessToken: string): string | undefined {

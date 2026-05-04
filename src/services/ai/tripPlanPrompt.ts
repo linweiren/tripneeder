@@ -48,7 +48,7 @@ const transportModeLabels: Record<TransportMode, string> = {
   public_transit: '大眾運輸',
 }
 
-export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlaces?: string) {
+export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlaces?: string, locationWarning?: string) {
   const tags = input.tags.map((tag) => tagLabels[tag]).join('、') || '無'
   const wantsNoFullMeals = input.tags.includes('no_full_meals')
   const allowedMinutes = getAllowedTripMinutes(input)
@@ -107,7 +107,10 @@ ${nearbyPlaces}
 4. 不可使用「特色小吃」「親民餐廳」「附近餐廳」「咖啡廳」「景點」這類空泛名稱。
 5. 若候選清單沒有適合的地點，也不要補入清單外地點；請改用清單內較接近需求的地點組合。
 `.trim()
-    : ''
+    : `
+- 警告：目前無法取得起點附近的即時地點清單。
+- 指示：請完全依據您的內部知識庫，為該起點規劃合理的真實地點行程。請確保地點名稱與地址正確。
+`.trim()
 
   return `你是台灣在地行程規劃 AI。請依使用者輸入產生 3 個單日行程「骨架」方案，並回傳符合 schema 的 JSON。此階段只產生可比較的核心路線，不要產生景點 description、雨天備案或交通 label。
 
@@ -122,6 +125,7 @@ ${nearbyPlaces}
 - 交通工具偏好：${displayTransportMode}
 - 限制條件：${tags}
 - 起點：${location}
+${locationWarning ? `- ${locationWarning}` : ''}
 - 正餐偏好：${wantsNoFullMeals ? '使用者勾選不吃正餐，不強制安排正式午餐或晚餐。' : '使用者未勾選不吃正餐，請依行程時間判斷是否安排正式午餐或晚餐。'}
 ${personaContext}
 ${nearbyPlacesContext}
@@ -143,9 +147,10 @@ ${nearbyPlacesContext}
     - 可用時間 > 6h 時實際結束不得明顯早於指定結束：8-12h 最多提早 90 分、12-24h 最多提早 180 分。
     - stops 不設硬性上限；時間越長可安排越多站，避免把單一 stop.duration 拉到不合理長度。
 12. 不要在 summary 要求使用者自行新增停靠站；回傳結果需是可直接比較的完整路線骨架。
-13. 第一站距離起點必須 ≤ 2 km (硬性規則)。
+13. 第一站距離起點必須 ≤ 2 km (若有經緯度座標時為硬性規則)。
 14. 交通效率建議 (軟性規則)：相鄰站點間交通時間建議 ≤ 30 分鐘；整日累積交通時間建議 ≤ 總行程時長的 25%。
 15. 規劃核心：必須以使用者提供的「起點」為地理中心點往外擴張，優先選擇附近的景點，避免跨區過遠。
+16. 禁止重複：在同一個方案（plan）中，禁止重複安排同一個地點。每個 stop 的名稱與地址必須是唯一的，不可讓使用者在不同時間點回到同一個地方。
 
 JSON 範例（其餘欄位請依 schema）：
 {
@@ -171,7 +176,7 @@ JSON 範例（其餘欄位請依 schema）：
 `.trim()
 }
 
-export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona?: Persona, nearbyIndoorPlaces?: string) {
+export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona?: Persona, nearbyIndoorPlaces?: string, locationWarning?: string) {
   const tags = input.tags.map((tag) => tagLabels[tag]).join('、') || '無'
   
   const displayCategory =
@@ -202,9 +207,8 @@ export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona
   - 飲食禁忌：${persona.diet || '無'}
 `.trim()
     : ''
-
-  const nearbyPlacesContext = nearbyIndoorPlaces
-    ? `
+const nearbyPlacesContext = nearbyIndoorPlaces
+  ? `
 - 附近的真實「室內/有遮蔽」地點參考（來自 Google Maps）：
 ${nearbyIndoorPlaces}
 
@@ -212,7 +216,10 @@ ${nearbyIndoorPlaces}
 1. rainBackup 的所有景點必須從上方「真實室內地點參考」清單挑選，禁止自創、改寫或使用清單外地點。
 2. stop.name 必須逐字複製候選清單的 name；stop.address 必須逐字複製 address；若有 placeId 請原樣填入。
 `.trim()
-    : ''
+  : `
+- 警告：目前無法取得起點附近的即時室內地點清單。
+- 指示：請完全依據您的內部知識庫，為該起點規劃合理的真實室內景點作為雨天備案。
+`.trim()
 
   return `你是台灣在地行程規劃 AI。請只替下方單一骨架方案補完整細節，回傳符合 schema 的 JSON。
 
@@ -225,6 +232,7 @@ ${nearbyIndoorPlaces}
 - 交通工具偏好：${displayTransportMode}
 - 限制條件：${tags}
 - 起點：${input.location.name || '未指定'}
+${locationWarning ? `- ${locationWarning}` : ''}
 ${personaContext}
 ${nearbyPlacesContext}
 

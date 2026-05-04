@@ -1,11 +1,9 @@
 # Logs
-logs
+logs/
 *.log
+.*.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 
 .env
 .env.*
@@ -16,9 +14,9 @@ dist-ssr
 *.local
 
 # Editor directories and files
-.vscode/*
+.vscode/
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
@@ -26,4 +24,10 @@ dist-ssr
 *.sln
 *.sw?
 
+# AI/Agent local leftovers
 .claude/
+.gemini/
+
+# Local testing
+tests/data/
+tests/output/

@@ -138,7 +138,7 @@
 }
 
 .home-page {
-  gap: 30px;
+  gap: 0;
 }
 
 .home-hero {
@@ -198,6 +198,31 @@
   justify-self: center;
 }
 
+.home-trip-form {
+  min-height: calc(100dvh - 150px);
+  display: flex;
+  flex-direction: column;
+  padding-top: 0;
+}
+
+.home-top-panel {
+  display: grid;
+  gap: 40px;
+  padding-top: 20px;
+}
+
+.home-bottom-panel {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  margin-top: auto;
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+}
+
+.home-bottom-panel .advanced-toggle-area {
+  margin: 8px 0 0;
+}
+
 .form-section {
   display: grid;
   gap: 18px;
@@ -213,6 +238,12 @@
   padding-top: 0;
 }
 
+.duration-section {
+  gap: 12px;
+  padding: 0;
+  border-top: 0;
+}
+
 .form-section legend {
   padding: 0;
   color: #332f27;
@@ -225,6 +256,34 @@
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.duration-chip-grid {
+  display: grid;
+  flex-wrap: initial;
+  gap: 10px;
+  width: 100%;
+}
+
+.duration-chip-row {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.duration-chip-row-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.duration-chip-row-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.duration-chip-row .chip {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+  text-align: center;
 }
 
 .chip,
@@ -269,6 +328,33 @@
 .secondary-button:hover {
   border-color: rgba(115, 94, 70, 0.36);
   transform: translateY(-1px);
+}
+
+.custom-duration-toggle {
+  justify-self: end;
+  max-width: 100%;
+  margin-top: -2px;
+  padding: 0;
+  color: #7a7163;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: right;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+.custom-duration-toggle:hover,
+.custom-duration-toggle-active {
+  color: #423d34;
 }
 
 .budget-option {
@@ -430,11 +516,23 @@
 }
 
 .submit-button {
-  width: min(280px, 100%);
+  width: fit-content;
+  min-width: 140px;
+  padding: 10px 32px;
   color: #fffaf2;
   background: #5f5548;
   border-color: #5f5548;
   font-weight: 800;
+}
+
+.home-submit-button {
+  min-height: 58px;
+  min-width: 175px;
+  padding: 13px 40px;
+  border-radius: 10px;
+  letter-spacing: 2px;
+  font-size: 20px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
 }
 
 .secondary-button {
@@ -445,6 +543,7 @@
 
 .trip-loading {
   width: min(820px, 100%);
+  padding-top: 20px;
 }
 
 .loading-panel {
@@ -1917,6 +2016,10 @@
     padding-top: 0;
   }
 
+  .duration-section {
+    padding: 0;
+  }
+
   .field-row,
   .location-choice {
     grid-template-columns: 1fr;
@@ -2080,7 +2183,8 @@
   .loading-actions .secondary-button,
   .dialog-actions .submit-button,
   .dialog-actions .secondary-button {
-    width: 100%;
+    width: fit-content;
+    min-width: 120px;
   }
 
   .dialog-backdrop {
@@ -2099,7 +2203,17 @@
   }
 
   .dialog-actions {
-    flex-direction: column-reverse;
+    width: 100%;
+    flex-direction: row;
+    gap: 10px;
+  }
+
+  .dialog-actions .submit-button,
+  .dialog-actions .secondary-button {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    justify-content: center;
   }
 
   .detail-action-row .action-strip .submit-button {
@@ -2158,7 +2272,7 @@
   }
 
   .home-page {
-    gap: 24px;
+    gap: 0;
   }
 
   .brand {
@@ -2287,7 +2401,7 @@
 }
 
 .persona-form .submit-button {
-  width: min(280px, 100%);
+  /* Inherit global submit-button styles */
 }
 
 .save-status-msg {
@@ -2389,18 +2503,15 @@
 }
 
 .duration-display {
-  margin-top: 12px;
-  padding: 12px;
-  background: rgba(128, 108, 84, 0.08);
-  border-radius: 8px;
+  margin-top: 4px;
   color: #5e594f;
-  font-size: 16px;
+  font-size: 15px;
   text-align: center;
 }
 
 .duration-display strong {
   color: #2d2b26;
-  font-size: 20px;
+  font-size: 18px;
   margin: 0 4px;
 }
 
@@ -2425,19 +2536,21 @@
 }
 
 .advanced-toggle-button {
-  padding: 8px 16px;
+  padding: 0;
   color: #7a7163;
-  background: rgba(255, 252, 246, 0.6);
-  border: 1px solid rgba(96, 86, 72, 0.18);
-  border-radius: 20px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   font-size: 14px;
   font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .advanced-toggle-button:hover {
-  background: rgba(128, 108, 84, 0.12);
+  background: transparent;
   color: #2d2b26;
 }
 

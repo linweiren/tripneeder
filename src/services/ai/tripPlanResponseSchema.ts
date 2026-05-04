@@ -1,35 +1,35 @@
 const stopSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['id', 'name', 'type', 'description', 'address', 'duration'],
+  required: ['id', 'name', 'type', 'description', 'address', 'duration', 'placeId'],
   properties: {
-    id: { type: 'string' },
-    name: { type: 'string' },
+    id: { type: 'string', minLength: 1 },
+    name: { type: 'string', minLength: 1 },
     type: {
       type: 'string',
       enum: ['main_activity', 'food', 'ending_or_transition'],
     },
     description: { type: 'string' },
-    address: { type: 'string' },
+    address: { type: 'string', minLength: 1 },
     duration: { type: 'number' },
-    placeId: { type: 'string' },
+    placeId: { type: 'string', minLength: 1 },
   },
 }
 
 const skeletonStopSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['id', 'name', 'type', 'address', 'duration'],
+  required: ['id', 'name', 'type', 'address', 'duration', 'placeId'],
   properties: {
-    id: { type: 'string' },
-    name: { type: 'string' },
+    id: { type: 'string', minLength: 1 },
+    name: { type: 'string', minLength: 1 },
     type: {
       type: 'string',
       enum: ['main_activity', 'food', 'ending_or_transition'],
     },
-    address: { type: 'string' },
+    address: { type: 'string', minLength: 1 },
     duration: { type: 'number' },
-    placeId: { type: 'string' },
+    placeId: { type: 'string', minLength: 1 },
   },
 }
 

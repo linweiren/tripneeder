@@ -1,73 +1,44 @@
-# React + TypeScript + Vite
+# TripNeeder
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+AI 即時行程決策工具。核心場景為「使用者已經在現場，快速規劃接下來幾小時行程」。
 
-Currently, two official plugins are available:
+## 🚀 快速啟動
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. **安裝依賴**：
+   ```bash
+   npm install
+   ```
+2. **啟動開發伺服器**：
+   ```bash
+   npm run dev
+   ```
+   存取 `http://localhost:5173`。
 
-## React Compiler
+## 🛠️ 技術架構
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **前端**：Vite + React + TypeScript + React Router
+- **後端**：Vercel Functions (API) + OpenAI API
+- **資料庫/認證**：Supabase (Google 登入)
+- **快取策略**：本地優先 (Optimistic UI) + 背景背景雲端同步
 
-## Expanding the ESLint configuration
+## 🔑 環境變數 (.env)
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+需設定以下環境變數才能正常運行 AI 與雲端同步：
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
+OPENAI_API_KEY=...
+GOOGLE_PLACES_API_KEY=...
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 📖 開發規範
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- **單一真相來源**：主規格與進體進度以 `PROJECT_SPEC.md` 為準。
+- **本地優先**：行程紀錄優先讀取 `sessionStorage` 與記憶體快取，異步同步至 Supabase。
+- **分支管理**：開發請在 `dev` 分支進行。`main` 分支推播會自動部署至 Vercel Production。
+- **測試**：本地測試腳本存放在 `tests/` 資料夾。
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## 📦 部署
+
+專案連接至 Vercel。`git push origin main` 觸發正式站部署。

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../services/auth/supabaseClient'
-import { initializeUserProfile } from '../services/points/pointsService'
+import { initializeUserProfile, getCachedUserProfile } from '../services/points/pointsService'
 import { useAuth } from '../contexts/auth'
 import type { TransportMode } from '../types/trip'
 
@@ -14,16 +14,19 @@ const transportModeOptions: Array<{ value: TransportMode; label: string }> = [
 export function PersonaPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
-  const [isLoading, setIsLoading] = useState(true)
+
+  // 1. 初始化 state 時優先從快取讀取，達成極速顯示
+  const cachedProfile = getCachedUserProfile()
+  const [isLoading, setIsLoading] = useState(!cachedProfile)
   const [isSaving, setIsSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-  const [companion, setCompanion] = useState('')
-  const [budget, setBudget] = useState('')
-  const [stamina, setStamina] = useState('')
-  const [transportMode, setTransportMode] = useState<TransportMode | ''>('')
-  const [people, setPeople] = useState<number>(2)
-  const [diet, setDiet] = useState('')
+  const [companion, setCompanion] = useState(cachedProfile?.persona_companion || '')
+  const [budget, setBudget] = useState(cachedProfile?.persona_budget || '')
+  const [stamina, setStamina] = useState(cachedProfile?.persona_stamina || '')
+  const [transportMode, setTransportMode] = useState<TransportMode | ''>(cachedProfile?.persona_transport_mode || '')
+  const [people, setPeople] = useState<number>(cachedProfile?.persona_people || 2)
+  const [diet, setDiet] = useState(cachedProfile?.persona_diet || '')
 
   useEffect(() => {
     if (!user) {
@@ -38,27 +41,17 @@ export function PersonaPage() {
       }
 
       try {
-        await initializeUserProfile()
-
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('persona_companion, persona_budget, persona_stamina, persona_diet, persona_transport_mode, persona_people')
-          .eq('id', user?.id)
-          .single()
-
-        if (error) throw error
-
-        if (data) {
-          // 確保回顯時的值能對上 <option> 的 value
-          setCompanion(data.persona_companion || '')
-          setBudget(data.persona_budget || '')
-          setStamina(data.persona_stamina || '')
-          setTransportMode(data.persona_transport_mode || '')
-          setPeople(data.persona_people || 2)
-          setDiet(data.persona_diet || '')
-        }
+        // 背景更新資料並同步到 state
+        const profile = await initializeUserProfile()
+        
+        setCompanion(profile.persona_companion || '')
+        setBudget(profile.persona_budget || '')
+        setStamina(profile.persona_stamina || '')
+        setTransportMode(profile.persona_transport_mode || '')
+        setPeople(profile.persona_people || 2)
+        setDiet(profile.persona_diet || '')
       } catch (error) {
-        console.error('載入人設失敗:', error)
+        console.error('載入人設背景更新失敗:', error)
       } finally {
         setIsLoading(false)
       }
@@ -74,8 +67,7 @@ export function PersonaPage() {
     setIsSaving(true)
     setSaveStatus(null)
     try {
-      await initializeUserProfile()
-
+      // 儲存至資料庫
       const { error } = await supabase
         .from('profiles')
         .update({
@@ -85,13 +77,16 @@ export function PersonaPage() {
           persona_transport_mode: transportMode || null,
           persona_people: people,
           persona_diet: diet || null,
+          updated_at: new Date().toISOString()
         })
         .eq('id', user.id)
 
       if (error) throw error
-      setSaveStatus({ type: 'success', message: '儲存成功！' })
+
+      // 儲存成功後重新同步全域快取
+      await initializeUserProfile()
       
-      // 3秒後移除成功訊息
+      setSaveStatus({ type: 'success', message: '儲存成功！' })
       setTimeout(() => setSaveStatus(null), 3000)
     } catch (error: unknown) {
       console.error('儲存人設失敗:', error)
