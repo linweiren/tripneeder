@@ -11,7 +11,7 @@ export type UserProfile = {
   persona_stamina: string | null
   persona_diet: string | null
   persona_transport_mode: 'scooter' | 'car' | 'public_transit' | null
-  persona_people: number
+  persona_people: number | null
   created_at: string
   updated_at: string
 }
