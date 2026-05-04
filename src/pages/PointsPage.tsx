@@ -5,6 +5,7 @@ import { useDialog } from '../contexts/dialog'
 import {
   getTransactionTypeLabel,
   loadPointsSnapshot,
+  getCachedPointsSnapshot,
   type PointsSnapshot,
 } from '../services/points/pointsService'
 import {
@@ -17,9 +18,12 @@ export function PointsPage() {
   const dialog = useDialog()
   const { user, isAuthLoading } = useAuth()
   const hasPromptedLoginRef = useRef(false)
-  const [pointsSnapshot, setPointsSnapshot] = useState<PointsSnapshot | null>(null)
+
+  // 1. 初始化優先使用快取
+  const [pointsSnapshot, setPointsSnapshot] = useState<PointsSnapshot | null>(() => getCachedPointsSnapshot())
   const [pointsError, setPointsError] = useState('')
-  const [isPointsLoading, setIsPointsLoading] = useState(false)
+  const [isPointsLoading, setIsPointsLoading] = useState(!getCachedPointsSnapshot())
+  
   const visiblePointsSnapshot =
     pointsSnapshot?.profile.id === user?.id ? pointsSnapshot : null
 
@@ -49,7 +53,10 @@ export function PointsPage() {
     let isMounted = true
 
     async function loadPoints() {
-      setIsPointsLoading(true)
+      // 只有在完全沒資料時才顯示主 loading
+      if (!pointsSnapshot) {
+        setIsPointsLoading(true)
+      }
       setPointsError('')
 
       try {
@@ -89,18 +96,22 @@ export function PointsPage() {
       <div className="points-panel">
         <p className="plan-type">目前帳號</p>
         <h2>{user.email ?? '已登入使用者'}</h2>
-        {isPointsLoading ? <p>正在讀取點數...</p> : null}
+        
+        {/* 背景更新時顯示一個小的提示或 spinner，不再阻擋整個畫面 */}
+        {isPointsLoading && !visiblePointsSnapshot ? <p>正在讀取點數...</p> : null}
+        
         {pointsError ? (
           <p className="points-error">
-            {pointsError} 請確認已在 Supabase 執行
-            `supabase/migrations/001_points_schema.sql`。
+            {pointsError}
           </p>
         ) : null}
+
         {visiblePointsSnapshot ? (
           <>
             <div className="points-balance-card">
               <span>目前點數</span>
               <strong>{visiblePointsSnapshot.profile.points_balance}</strong>
+              {isPointsLoading && <small style={{ display: 'block', fontSize: '12px', color: '#666' }}>更新中...</small>}
             </div>
 
             <div className="points-history">

@@ -1,11 +1,15 @@
 import type { Stop, TransportSegment, TripInput, TripPlan } from '../types/trip'
 
+// Session Storage Keys (當前分析流程)
 const TRIP_PLANS_STORAGE_KEY = 'tripneeder.generatedPlans'
 const TRIP_INPUT_STORAGE_KEY = 'tripneeder.lastInput'
 const DETAIL_PLAN_STORAGE_KEY = 'tripneeder.detailPlan'
 const DETAIL_INPUT_STORAGE_KEY = 'tripneeder.detailInput'
+
+// Local Storage Keys (持久化快取，需帶 userId)
 const RECENT_PLANS_STORAGE_KEY = 'tripneeder.recentPlans'
 const FAVORITE_PLANS_STORAGE_KEY = 'tripneeder.favoritePlans'
+
 export const MAX_RECENT_RECORDS = 12
 
 export type StoredTripRecord = {
@@ -15,372 +19,148 @@ export type StoredTripRecord = {
   createdAt: string
 }
 
-export function saveGeneratedPlans(
-  plans: TripPlan[],
-  input?: TripInput,
-  ownerId?: string,
-) {
+// --- 當前生成流程管理 ---
+
+export function saveGeneratedPlans(plans: TripPlan[], input?: TripInput, ownerId?: string) {
   sessionStorage.setItem(TRIP_PLANS_STORAGE_KEY, JSON.stringify(plans))
-
-  if (input) {
-    sessionStorage.setItem(TRIP_INPUT_STORAGE_KEY, JSON.stringify(input))
-  }
-
-  if (input) {
-    saveRecentGeneratedPlans(plans, input, ownerId)
-  }
+  if (input) sessionStorage.setItem(TRIP_INPUT_STORAGE_KEY, JSON.stringify(input))
+  if (input) saveRecentGeneratedPlans(plans, input, ownerId!)
 }
 
 export function updateGeneratedPlan(nextPlan: TripPlan) {
   const plans = loadGeneratedPlans()
-  const nextPlans = plans.map((plan) =>
-    plan.id === nextPlan.id ? nextPlan : plan,
-  )
-
-  if (nextPlans.some((plan) => plan.id === nextPlan.id)) {
-    sessionStorage.setItem(TRIP_PLANS_STORAGE_KEY, JSON.stringify(nextPlans))
-  }
+  const nextPlans = plans.map(p => p.id === nextPlan.id ? nextPlan : p)
+  sessionStorage.setItem(TRIP_PLANS_STORAGE_KEY, JSON.stringify(nextPlans))
 }
 
-export function loadGeneratedPlans() {
-  const rawPlans = sessionStorage.getItem(TRIP_PLANS_STORAGE_KEY)
-
-  if (!rawPlans) {
-    return []
-  }
-
-  try {
-    return JSON.parse(rawPlans) as TripPlan[]
-  } catch {
-    return []
-  }
+export function loadGeneratedPlans(): TripPlan[] {
+  const raw = sessionStorage.getItem(TRIP_PLANS_STORAGE_KEY)
+  try { return raw ? JSON.parse(raw) : [] } catch { return [] }
 }
 
-export function loadLastTripInput() {
-  const rawInput = sessionStorage.getItem(TRIP_INPUT_STORAGE_KEY)
-
-  if (!rawInput) {
-    return null
-  }
-
-  try {
-    return JSON.parse(rawInput) as TripInput
-  } catch {
-    return null
-  }
+export function loadLastTripInput(): TripInput | null {
+  const raw = sessionStorage.getItem(TRIP_INPUT_STORAGE_KEY)
+  try { return raw ? JSON.parse(raw) : null } catch { return null }
 }
 
 export function clearGeneratedTripFlow() {
-  sessionStorage.removeItem(TRIP_PLANS_STORAGE_KEY)
-  sessionStorage.removeItem(TRIP_INPUT_STORAGE_KEY)
-  sessionStorage.removeItem(DETAIL_PLAN_STORAGE_KEY)
-  sessionStorage.removeItem(DETAIL_INPUT_STORAGE_KEY)
+  [TRIP_PLANS_STORAGE_KEY, TRIP_INPUT_STORAGE_KEY, DETAIL_PLAN_STORAGE_KEY, DETAIL_INPUT_STORAGE_KEY]
+    .forEach(key => sessionStorage.removeItem(key))
 }
 
 export function savePlanForDetail(plan: TripPlan, input: TripInput | null) {
   sessionStorage.setItem(DETAIL_PLAN_STORAGE_KEY, JSON.stringify(plan))
-
-  if (input) {
-    sessionStorage.setItem(DETAIL_INPUT_STORAGE_KEY, JSON.stringify(input))
-  } else {
-    sessionStorage.removeItem(DETAIL_INPUT_STORAGE_KEY)
-  }
+  if (input) sessionStorage.setItem(DETAIL_INPUT_STORAGE_KEY, JSON.stringify(input))
 }
 
 export function updateDetailPlan(nextPlan: TripPlan) {
-  const currentPlan = loadPlanForDetail(nextPlan.id)
-
-  if (currentPlan) {
-    sessionStorage.setItem(DETAIL_PLAN_STORAGE_KEY, JSON.stringify(nextPlan))
-  }
+  sessionStorage.setItem(DETAIL_PLAN_STORAGE_KEY, JSON.stringify(nextPlan))
 }
 
-export function loadPlanForDetail(planId?: string) {
-  const rawPlan = sessionStorage.getItem(DETAIL_PLAN_STORAGE_KEY)
-
-  if (!rawPlan) {
-    return null
-  }
-
+export function loadPlanForDetail(planId?: string): TripPlan | null {
+  const raw = sessionStorage.getItem(DETAIL_PLAN_STORAGE_KEY)
   try {
-    const plan = JSON.parse(rawPlan) as TripPlan
-
-    return !planId || plan.id === planId ? plan : null
-  } catch {
-    return null
-  }
+    const plan = raw ? JSON.parse(raw) as TripPlan : null
+    return !planId || plan?.id === planId ? plan : null
+  } catch { return null }
 }
 
-export function loadInputForDetail() {
-  const rawInput = sessionStorage.getItem(DETAIL_INPUT_STORAGE_KEY)
-
-  if (!rawInput) {
-    return null
-  }
-
-  try {
-    return JSON.parse(rawInput) as TripInput
-  } catch {
-    return null
-  }
+export function loadInputForDetail(): TripInput | null {
+  const raw = sessionStorage.getItem(DETAIL_INPUT_STORAGE_KEY)
+  try { return raw ? JSON.parse(raw) : null } catch { return null }
 }
 
-export function loadRecentTripRecords(ownerId?: string) {
-  return loadStoredTripRecords(getOwnerStorageKey(RECENT_PLANS_STORAGE_KEY, ownerId))
+// --- 持久化紀錄管理 (本地快取) ---
+
+export function loadRecentTripRecords(userId: string) {
+  return loadStoredTripRecords(`${RECENT_PLANS_STORAGE_KEY}.${userId}`)
 }
 
-export function loadFavoriteTripRecords(ownerId?: string) {
-  return loadStoredTripRecords(
-    getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId),
+export function loadFavoriteTripRecords(userId: string) {
+  return loadStoredTripRecords(`${FAVORITE_PLANS_STORAGE_KEY}.${userId}`)
+}
+
+export function saveFavoriteTripRecords(records: StoredTripRecord[], userId: string) {
+  localStorage.setItem(`${FAVORITE_PLANS_STORAGE_KEY}.${userId}`, JSON.stringify(records))
+}
+
+export function saveFavoriteTrip(plan: TripPlan, input: TripInput | null, userId: string) {
+  const key = `${FAVORITE_PLANS_STORAGE_KEY}.${userId}`
+  const records = loadFavoriteTripRecords(userId)
+  const fingerprint = createPlanFingerprint(plan)
+  
+  const existing = records.find(r => createPlanFingerprint(r.plan) === fingerprint)
+  if (existing) return existing
+
+  const next = createStoredTripRecord(plan, input)
+  localStorage.setItem(key, JSON.stringify([next, ...records]))
+  return next
+}
+
+export function removeFavoriteTrip(recordId: string, userId: string) {
+  const key = `${FAVORITE_PLANS_STORAGE_KEY}.${userId}`
+  const next = loadFavoriteTripRecords(userId).filter(r => r.id !== recordId)
+  localStorage.setItem(key, JSON.stringify(next))
+}
+
+export function updateRecentTripRecordPlan(nextPlan: TripPlan, input: TripInput | null, userId: string) {
+  const key = `${RECENT_PLANS_STORAGE_KEY}.${userId}`
+  const next = loadRecentTripRecords(userId).map(r => 
+    r.plan.id === nextPlan.id ? { ...r, plan: nextPlan, input: input ?? r.input } : r
   )
+  localStorage.setItem(key, JSON.stringify(next))
 }
 
-export function updateRecentTripRecordPlan(
-  nextPlan: TripPlan,
-  input: TripInput | null,
-  ownerId?: string,
-) {
-  const storageKey = getOwnerStorageKey(RECENT_PLANS_STORAGE_KEY, ownerId)
-  const records = loadRecentTripRecords(ownerId)
-  const nextRecords = records.map((record) =>
-    record.plan.id === nextPlan.id &&
-    (!input || !record.input || isSameTripInput(record.input, input))
-      ? {
-          ...record,
-          plan: nextPlan,
-          input: input ?? record.input,
-        }
-      : record,
-  )
-
-  localStorage.setItem(storageKey, JSON.stringify(nextRecords))
-  return nextRecords
-}
-
-export function updateFavoriteTripRecordPlan(
-  nextPlan: TripPlan,
-  input: TripInput | null,
-  ownerId?: string,
-  previousPlan?: TripPlan,
-) {
-  const storageKey = getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId)
-  const records = loadFavoriteTripRecords(ownerId)
-  const previousFingerprint = previousPlan
-    ? createPlanFingerprint(previousPlan)
-    : null
+export function updateFavoriteTripRecordPlan(nextPlan: TripPlan, input: TripInput | null, userId: string, previousPlan?: TripPlan) {
+  const key = `${FAVORITE_PLANS_STORAGE_KEY}.${userId}`
+  const prevFingerprint = previousPlan ? createPlanFingerprint(previousPlan) : null
   const nextFingerprint = createPlanFingerprint(nextPlan)
-  const nextRecords = mergeRecordsByFingerprint(
-    records.map((record) => {
-      const recordFingerprint = createPlanFingerprint(record.plan)
-      const matchesPreviousPlan =
-        Boolean(previousPlan) && record.plan.id === previousPlan?.id
-      const matchesFingerprint =
-        recordFingerprint === previousFingerprint ||
-        recordFingerprint === nextFingerprint
 
-      if (!matchesPreviousPlan && !matchesFingerprint) {
-        return record
-      }
-
-      return {
-        ...record,
-        plan: nextPlan,
-        input: input ?? record.input,
-      }
-    }),
-  )
-
-  localStorage.setItem(storageKey, JSON.stringify(nextRecords))
-  return nextRecords
+  const next = loadFavoriteTripRecords(userId).map(r => {
+    const rFingerprint = createPlanFingerprint(r.plan)
+    if (r.plan.id === previousPlan?.id || rFingerprint === prevFingerprint || rFingerprint === nextFingerprint) {
+      return { ...r, plan: nextPlan, input: input ?? r.input }
+    }
+    return r
+  })
+  localStorage.setItem(key, JSON.stringify(next))
 }
 
-export function saveFavoriteTripRecords(
-  records: StoredTripRecord[],
-  ownerId?: string,
-) {
-  localStorage.setItem(
-    getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId),
-    JSON.stringify(records),
-  )
-}
-
-export function saveFavoriteTrip(
-  plan: TripPlan,
-  input: TripInput | null,
-  ownerId?: string,
-) {
-  const storageKey = getOwnerStorageKey(FAVORITE_PLANS_STORAGE_KEY, ownerId)
-  const records = loadFavoriteTripRecords(ownerId)
-  const planFingerprint = createPlanFingerprint(plan)
-  const existingRecord = records.find(
-    (record) => createPlanFingerprint(record.plan) === planFingerprint,
-  )
-
-  if (existingRecord) {
-    return existingRecord
-  }
-
-  const nextRecord = createStoredTripRecord(plan, input)
-
-  localStorage.setItem(storageKey, JSON.stringify([nextRecord, ...records]))
-
-  return nextRecord
-}
-
-export function isFavoriteTripPlan(plan: TripPlan, ownerId?: string) {
-  const planFingerprint = createPlanFingerprint(plan)
-
-  return loadFavoriteTripRecords(ownerId).some(
-    (record) => createPlanFingerprint(record.plan) === planFingerprint,
-  )
-}
-
-export function removeFavoriteTrip(recordId: string, ownerId?: string) {
-  const records = loadFavoriteTripRecords(ownerId).filter(
-    (record) => record.id !== recordId,
-  )
-
-  saveFavoriteTripRecords(records, ownerId)
-}
+// --- 工具函數 ---
 
 export function createPlanFingerprint(plan: TripPlan) {
-  const stops = Array.isArray(plan.stops) ? plan.stops : []
-  const transportSegments = Array.isArray(plan.transportSegments)
-    ? plan.transportSegments
-    : []
-  const rainBackup = Array.isArray(plan.rainBackup) ? plan.rainBackup : []
-  const rainTransportSegments = Array.isArray(plan.rainTransportSegments)
-    ? plan.rainTransportSegments
-    : []
-
   return JSON.stringify({
     title: plan.title,
     subtitle: plan.subtitle,
     summary: plan.summary,
     budget: plan.budget,
     transportMode: plan.transportMode,
-    stops: stops.map(normalizeStopForFingerprint),
-    transportSegments: transportSegments.map(normalizeSegmentForFingerprint),
-    rainBackup: rainBackup.map(normalizeStopForFingerprint),
-    rainTransportSegments: rainTransportSegments.map(
-      normalizeSegmentForFingerprint,
-    ),
+    stops: (plan.stops || []).map(s => ({ name: s.name, type: s.type, address: s.address })),
+    transportSegments: (plan.transportSegments || []).map(ts => ({ mode: ts.mode, duration: ts.duration })),
   })
 }
 
-function normalizeStopForFingerprint(stop: Stop) {
-  return {
-    id: stop.id,
-    name: stop.name,
-    type: stop.type,
-    description: stop.description,
-    address: stop.address,
-    duration: stop.duration,
-    googleMapsUrl: stop.googleMapsUrl,
-  }
+function saveRecentGeneratedPlans(plans: TripPlan[], input: TripInput, userId: string) {
+  const key = `${RECENT_PLANS_STORAGE_KEY}.${userId}`
+  const prev = loadRecentTripRecords(userId)
+  const next = plans.map(p => createStoredTripRecord(p, input))
+  localStorage.setItem(key, JSON.stringify([...next, ...prev].slice(0, MAX_RECENT_RECORDS)))
 }
 
-function normalizeSegmentForFingerprint(segment: TransportSegment) {
-  return {
-    fromStopId: segment.fromStopId,
-    toStopId: segment.toStopId,
-    mode: segment.mode,
-    publicTransitType: segment.publicTransitType,
-    duration: segment.duration,
-  }
-}
-
-function saveRecentGeneratedPlans(
-  plans: TripPlan[],
-  input: TripInput,
-  ownerId?: string,
-) {
-  const storageKey = getOwnerStorageKey(RECENT_PLANS_STORAGE_KEY, ownerId)
-  const records = loadRecentTripRecords(ownerId)
-  const nextRecords = plans.map((plan) => createStoredTripRecord(plan, input))
-
-  localStorage.setItem(
-    storageKey,
-    JSON.stringify([...nextRecords, ...records].slice(0, MAX_RECENT_RECORDS)),
-  )
-}
-
-function mergeRecordsByFingerprint(records: StoredTripRecord[]) {
-  const recordByFingerprint = new Map<string, StoredTripRecord>()
-
-  for (const record of records) {
-    recordByFingerprint.set(createPlanFingerprint(record.plan), record)
-  }
-
-  return Array.from(recordByFingerprint.values()).sort(
-    (left, right) =>
-      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
-  )
-}
-
-function getOwnerStorageKey(storageKey: string, ownerId?: string) {
-  return ownerId ? `${storageKey}.${ownerId}` : storageKey
-}
-
-function isSameTripInput(left: TripInput, right: TripInput) {
-  return JSON.stringify(left) === JSON.stringify(right)
-}
-
-function loadStoredTripRecords(storageKey: string) {
-  const rawRecords = localStorage.getItem(storageKey)
-
-  if (!rawRecords) {
-    return []
-  }
-
+function loadStoredTripRecords(key: string): StoredTripRecord[] {
+  const raw = localStorage.getItem(key)
   try {
-    const records = JSON.parse(rawRecords) as StoredTripRecord[]
-
-    return Array.isArray(records)
-      ? records
-          .filter(isStoredTripRecord)
-          .sort(
-            (left, right) =>
-              new Date(right.createdAt).getTime() -
-              new Date(left.createdAt).getTime(),
-          )
-      : []
-  } catch {
-    return []
-  }
+    const records = raw ? JSON.parse(raw) as StoredTripRecord[] : []
+    return Array.isArray(records) ? records.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) : []
+  } catch { return [] }
 }
 
-function createStoredTripRecord(
-  plan: TripPlan,
-  input: TripInput | null,
-): StoredTripRecord {
+function createStoredTripRecord(plan: TripPlan, input: TripInput | null): StoredTripRecord {
   const createdAt = new Date().toISOString()
-  const randomId =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-
   return {
-    id: `${createdAt}-${plan.id}-${randomId}`,
+    id: `${createdAt}-${plan.id}-${Math.random().toString(16).slice(2)}`,
     plan,
     input,
     createdAt,
   }
-}
-
-function isStoredTripRecord(value: unknown): value is StoredTripRecord {
-  if (!isRecord(value)) {
-    return false
-  }
-
-  return (
-    typeof value.id === 'string' &&
-    isRecord(value.plan) &&
-    (value.input === null || isRecord(value.input)) &&
-    typeof value.createdAt === 'string'
-  )
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
 }

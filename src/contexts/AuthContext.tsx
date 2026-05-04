@@ -5,7 +5,7 @@ import {
   isSupabaseConfigured,
   supabase,
 } from '../services/auth/supabaseClient'
-import { initializeUserProfile } from '../services/points/pointsService'
+import { prepareTripRecordsForUser } from '../services/tripRecords/tripRecordService'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -13,92 +13,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!supabase) {
+      setIsAuthLoading(false)
       return
     }
 
     let isMounted = true
     const authClient = supabase
 
-    async function initializeAuthSession() {
-      const redirectCode = new URLSearchParams(window.location.search).get(
-        'code',
-      )
-
-      if (redirectCode) {
-        const { error } = await authClient.auth.exchangeCodeForSession(
-          redirectCode,
-        )
-
-        if (!error) {
-          window.history.replaceState(null, '', window.location.pathname)
-        }
-      }
-
-      return authClient.auth.getSession()
-    }
-
-    initializeAuthSession()
-      .then(({ data }) => {
+    // 核心邏輯：初始化 Session 並設定監聽器
+    async function initializeAuth() {
+      try {
+        const { data } = await authClient.auth.getSession()
         if (isMounted) {
           setUser(data.session?.user ?? null)
         }
-      })
-      .finally(() => {
+      } catch (error) {
+        console.error('Auth initialization error:', error)
+      } finally {
+        if (isMounted) setIsAuthLoading(false)
+      }
+    }
+
+    initializeAuth()
+
+    const { data: { subscription } } = authClient.auth.onAuthStateChange(
+      (_event, session: Session | null) => {
         if (isMounted) {
+          setUser(session?.user ?? null)
           setIsAuthLoading(false)
         }
-      })
-
-    const { data } = authClient.auth.onAuthStateChange(
-      (_event, session: Session | null) => {
-        setUser(session?.user ?? null)
-        setIsAuthLoading(false)
       },
     )
 
     return () => {
       isMounted = false
-      data.subscription.unsubscribe()
+      subscription.unsubscribe()
     }
   }, [])
 
+  // 當 User 確定存在時，才執行預載
   useEffect(() => {
-    if (!user) {
-      return
-    }
-
-    void initializeUserProfile().catch(() => {
-      // Points schema may not be installed yet during local setup.
-    })
+    if (!user) return
+    void prepareTripRecordsForUser(user.id).catch(() => {})
   }, [user])
 
   const signInWithGoogle = useCallback(async () => {
-    if (!supabase) {
-      throw new Error('尚未設定 Supabase，請先補上登入設定。')
-    }
-
+    if (!supabase) throw new Error('尚未設定 Supabase')
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: window.location.origin,
-      },
+      options: { redirectTo: window.location.origin },
     })
-
-    if (error) {
-      throw error
-    }
+    if (error) throw error
   }, [])
 
   const signOut = useCallback(async () => {
-    if (!supabase) {
-      return
-    }
-
+    if (!supabase) return
     const { error } = await supabase.auth.signOut()
-
-    if (error) {
-      throw error
-    }
+    if (error) throw error
   }, [])
 
   const value = useMemo(
