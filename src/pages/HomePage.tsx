@@ -365,7 +365,7 @@ export function HomePage() {
       return
     }
 
-    let currentInput = { ...input }
+    const currentInput = { ...input }
 
     // Logic: If no location is set, try to auto-locate first
     const hasLocationData = 

@@ -84,7 +84,7 @@ export function PointsPage() {
     return () => {
       isMounted = false
     }
-  }, [user])
+  }, [pointsSnapshot, user])
 
   if (!user) {
     return <section className="page" />
