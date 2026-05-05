@@ -1,17 +1,11 @@
 import { useNavigate } from 'react-router-dom'
 import { useDialog } from '../contexts/dialog'
-import type { PlanType, TransportMode } from '../types/trip'
+import type { TransportMode } from '../types/trip'
 import { getPlanActualDuration } from '../utils/tripTiming'
 import {
   savePlanForDetail,
   type StoredTripRecord,
 } from '../utils/tripPlanStorage'
-
-const planLabels: Record<PlanType, string> = {
-  safe: '保守型',
-  balanced: '平衡型',
-  explore: '探索型',
-}
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -39,7 +33,13 @@ export function TripRecordList({
 
   function openRecord(record: StoredTripRecord) {
     savePlanForDetail(record.plan, record.input)
-    navigate(`/plans/${record.plan.id}`, { state: { from: source } })
+    const params = new URLSearchParams({
+      source,
+      recordId: record.id,
+    })
+    navigate(`/plans/${record.plan.id}?${params.toString()}`, {
+      state: { from: source, recordId: record.id },
+    })
   }
 
   if (records.length === 0) {
@@ -92,7 +92,7 @@ export function TripRecordList({
           ) : null}
 
           <div className="stored-trip-main">
-            <p className="plan-type">{planLabels[record.plan.type]}</p>
+            <p className="plan-type">行程方案</p>
             <h2>{record.plan.title}</h2>
           </div>
 

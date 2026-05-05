@@ -11,6 +11,15 @@ const transportModeOptions: Array<{ value: TransportMode; label: string }> = [
   { value: 'public_transit', label: '大眾運輸' },
 ]
 
+const DEFAULT_PERSONA_FORM = {
+  companion: '',
+  budget: '',
+  stamina: '',
+  transportMode: '' as TransportMode | '',
+  people: '' as number | '',
+  diet: '',
+}
+
 export function PersonaPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -19,13 +28,14 @@ export function PersonaPage() {
   const cachedProfile = getCachedUserProfile()
   const [isLoading, setIsLoading] = useState(!cachedProfile)
   const [isSaving, setIsSaving] = useState(false)
+  const [isResetting, setIsResetting] = useState(false)
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   const [companion, setCompanion] = useState(cachedProfile?.persona_companion || '')
   const [budget, setBudget] = useState(cachedProfile?.persona_budget || '')
   const [stamina, setStamina] = useState(cachedProfile?.persona_stamina || '')
   const [transportMode, setTransportMode] = useState<TransportMode | ''>(cachedProfile?.persona_transport_mode || '')
-  const [people, setPeople] = useState<number>(cachedProfile?.persona_people || 2)
+  const [people, setPeople] = useState<number | ''>(cachedProfile?.persona_people ?? DEFAULT_PERSONA_FORM.people)
   const [diet, setDiet] = useState(cachedProfile?.persona_diet || '')
 
   useEffect(() => {
@@ -48,7 +58,7 @@ export function PersonaPage() {
         setBudget(profile.persona_budget || '')
         setStamina(profile.persona_stamina || '')
         setTransportMode(profile.persona_transport_mode || '')
-        setPeople(profile.persona_people || 2)
+        setPeople(profile.persona_people ?? DEFAULT_PERSONA_FORM.people)
         setDiet(profile.persona_diet || '')
       } catch (error) {
         console.error('載入人設背景更新失敗:', error)
@@ -75,7 +85,7 @@ export function PersonaPage() {
           persona_budget: budget || null,
           persona_stamina: stamina || null,
           persona_transport_mode: transportMode || null,
-          persona_people: people,
+          persona_people: people === '' ? null : people,
           persona_diet: diet || null,
           updated_at: new Date().toISOString()
         })
@@ -94,6 +104,47 @@ export function PersonaPage() {
       setSaveStatus({ type: 'error', message: `儲存失敗: ${errorMsg}` })
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  async function handleReset() {
+    if (!user || !supabase) return
+
+    setIsResetting(true)
+    setSaveStatus(null)
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          persona_companion: null,
+          persona_budget: null,
+          persona_stamina: null,
+          persona_transport_mode: null,
+          persona_people: null,
+          persona_diet: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id)
+
+      if (error) throw error
+
+      await initializeUserProfile()
+
+      setCompanion(DEFAULT_PERSONA_FORM.companion)
+      setBudget(DEFAULT_PERSONA_FORM.budget)
+      setStamina(DEFAULT_PERSONA_FORM.stamina)
+      setTransportMode(DEFAULT_PERSONA_FORM.transportMode)
+      setPeople(DEFAULT_PERSONA_FORM.people)
+      setDiet(DEFAULT_PERSONA_FORM.diet)
+
+      setSaveStatus({ type: 'success', message: '已重設為系統預設。' })
+      setTimeout(() => setSaveStatus(null), 3000)
+    } catch (error: unknown) {
+      console.error('重設人設失敗:', error)
+      const errorMsg = error instanceof Error ? error.message : '請稍後再試'
+      setSaveStatus({ type: 'error', message: `重設失敗: ${errorMsg}` })
+    } finally {
+      setIsResetting(false)
     }
   }
 
@@ -180,8 +231,9 @@ export function PersonaPage() {
           <select
             id="people"
             value={people}
-            onChange={(e) => setPeople(Number(e.target.value))}
+            onChange={(e) => setPeople(e.target.value === '' ? '' : Number(e.target.value))}
           >
+            <option value="">未設定 (使用預設: 2 人)</option>
             {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => (
               <option key={value} value={value}>
                 {value} 人
@@ -203,9 +255,23 @@ export function PersonaPage() {
         </div>
 
         <div className="form-actions">
-          <button className="submit-button" type="submit" disabled={isSaving}>
-            {isSaving ? '儲存中...' : '儲存設定'}
-          </button>
+          <div className="persona-action-buttons">
+            <button
+              className="submit-button"
+              type="submit"
+              disabled={isSaving || isResetting}
+            >
+              {isSaving ? '儲存中...' : '儲存設定'}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={isSaving || isResetting}
+              onClick={() => void handleReset()}
+            >
+              {isResetting ? '重設中...' : '重設設定'}
+            </button>
+          </div>
           
           {saveStatus && (
             <div className={`save-status-msg ${saveStatus.type}`}>

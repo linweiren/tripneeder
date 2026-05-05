@@ -45,8 +45,10 @@ import {
   isFavoriteRecord,
   saveFavoriteRecord,
   syncUpdatedTripRecordPlan,
+  updateStoredTripRecordById,
 } from '../services/tripRecords/tripRecordService'
 import { useAnalysisSession } from '../contexts/analysisSession'
+import type { PlanDetailSource } from '../contexts/analysisSession'
 import { useAuth } from '../contexts/auth'
 import { useDialog, type DialogContextValue } from '../contexts/dialog'
 import * as pointsService from '../services/points/pointsService'
@@ -101,23 +103,20 @@ export function DetailPage() {
   const { user } = useAuth()
   const dialog = useDialog()
   const plans = loadGeneratedPlans()
-  const sourcePage = getDetailSource(location.state)
+  const sourcePage = getDetailSource(location.state, location.search)
   const isStoredSource = sourcePage === 'favorites' || sourcePage === 'recent'
+  const detailSource: PlanDetailSource = sourcePage ?? 'generated'
+  const detailRecordId = isStoredSource ? getDetailRecordId(location.state, location.search) : null
   const storedDetailPlan = loadPlanForDetail(planId)
   const generatedPlan = plans.find((plan) => plan.id === planId)
-  const initialSelectedPlan = isStoredSource
-    ? storedDetailPlan ?? generatedPlan
-    : generatedPlan ?? storedDetailPlan
+  const initialSelectedPlan = isStoredSource ? storedDetailPlan : generatedPlan
   // Memoize with stable deps to prevent a new object reference on every render.
   // A new reference would cause the detail-completion useEffect to abort its own fetch
   // each time setDetailCompletionStatus triggers a re-render.
   const lastInput = useMemo(() => {
-    const stored = loadPlanForDetail(planId)
-    const generated = plans.find((p) => p.id === planId)
-    const initial = isStoredSource ? stored ?? generated : generated ?? stored
-    return initial === stored ? loadInputForDetail() : loadLastTripInput()
+    return isStoredSource ? loadInputForDetail() : loadLastTripInput()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isStoredSource, planId])
+  }, [detailRecordId, isStoredSource, planId])
   const [selectedPlan, setSelectedPlan] = useState(initialSelectedPlan)
   const [isRainMode, setIsRainMode] = useState(false)
   const [stopOrders, setStopOrders] = useState<Partial<Record<OrderMode, string[]>>>(
@@ -139,7 +138,10 @@ export function DetailPage() {
   const [candidates, setCandidates] = useState<VerifiedPlaceCandidate[]>([])
   const [replacingStopId, setReplacingStopId] = useState<string | null>(null)
 
-  const detailState = planId ? planDetailStates[planId] : undefined
+  const detailStateKey = planId
+    ? getPlanDetailStateKey(planId, detailSource, detailRecordId)
+    : ''
+  const detailState = detailStateKey ? planDetailStates[detailStateKey] : undefined
   const detailCompletionStatus: 'idle' | 'loading' | 'error' =
     detailState?.status === 'loading'
       ? 'loading'
@@ -194,8 +196,7 @@ export function DetailPage() {
       }
 
       setSelectedPlan(updatedPlan)
-      updateGeneratedPlan(updatedPlan)
-      updateDetailPlan(updatedPlan)
+      persistSelectedPlanLocally(updatedPlan)
       await persistPlanUpdate(selectedPlan, updatedPlan)
       
       // Clear order overrides if any
@@ -223,7 +224,7 @@ export function DetailPage() {
     if (candidates.length === 0) {
       setIsEditing(true)
       try {
-        const pool = await getReplacementCandidates()
+        const pool = await getReplacementCandidates(lastInput)
         setCandidates(pool.allCandidates || [])
       } catch (error) {
         void dialog.alert({
@@ -256,21 +257,28 @@ export function DetailPage() {
         return s
       })
 
-      const { transportSegments: nextSegments, totalTime } = await recomputeTripRoutes(
+      const replacedIndex = nextStops.findIndex((stop, index) => getStopId(stop, index) === stopId)
+      const nextSegments = buildEstimatedSegmentsAfterReplacement(
         nextStops,
+        baseStops,
+        rawTransportSegments,
         activeTransportMode,
+        replacedIndex,
       )
 
       const updatedPlan: TripPlan = {
         ...selectedPlan,
-        totalTime,
         [isRainMode ? 'rainBackup' : 'stops']: nextStops,
         [isRainMode ? 'rainTransportSegments' : 'transportSegments']: nextSegments,
+        ...(isRainMode
+          ? {}
+          : {
+              totalTime: getStopsAndSegmentsDuration(nextStops, nextSegments),
+            }),
       }
 
       setSelectedPlan(updatedPlan)
-      updateGeneratedPlan(updatedPlan)
-      updateDetailPlan(updatedPlan)
+      persistSelectedPlanLocally(updatedPlan)
       await persistPlanUpdate(selectedPlan, updatedPlan)
       setReplacingStopId(null)
     } catch (error) {
@@ -283,6 +291,14 @@ export function DetailPage() {
     }
   }
 
+  function persistSelectedPlanLocally(updatedPlan: TripPlan) {
+    if (isStoredSource) {
+      updateDetailPlan(updatedPlan)
+    } else {
+      updateGeneratedPlan(updatedPlan)
+    }
+  }
+
   async function persistPlanUpdate(
     previousPlan: TripPlan,
     updatedPlan: TripPlan,
@@ -292,6 +308,21 @@ export function DetailPage() {
     }
 
     try {
+      if (isStoredSource && sourcePage && detailRecordId) {
+        await updateStoredTripRecordById(
+          sourcePage === 'recent' ? 'recent' : 'favorite',
+          detailRecordId,
+          updatedPlan,
+          lastInput,
+          user.id,
+        )
+        return
+      }
+
+      if (isStoredSource) {
+        return
+      }
+
       await syncUpdatedTripRecordPlan(previousPlan, updatedPlan, lastInput, user.id)
     } catch (error) {
       console.error('Trip record update failed:', error)
@@ -367,14 +398,16 @@ export function DetailPage() {
     [visibleStops, visibleTransportSegmentsWithOverrides],
   )
 
+  const timelineStartTime = selectedPlan?.scheduleStartTime ?? lastInput?.startTime
+
   const stopRows = useMemo(
     () =>
       buildStopRows(
         visibleStops,
         visibleTransportSegmentsWithOverrides,
-        lastInput?.startTime,
+        timelineStartTime,
       ),
-    [lastInput?.startTime, visibleStops, visibleTransportSegmentsWithOverrides],
+    [timelineStartTime, visibleStops, visibleTransportSegmentsWithOverrides],
   )
 
   const visibleDuration =
@@ -383,18 +416,27 @@ export function DetailPage() {
       (total, segment) => total + segment.duration,
       0,
     )
-  const allowedTripMinutes = getAllowedTripMinutes(lastInput?.startTime, lastInput?.endTime)
+  const allowedTripMinutes = getAllowedTripMinutes(timelineStartTime, lastInput?.endTime)
+  const hasValidRainBackup = useMemo(
+    () => Boolean(selectedPlan?.rainBackup && selectedPlan.rainBackup.length >= 2),
+    [selectedPlan],
+  )
+  const canShowRainBackup = Boolean(selectedPlan?.isDetailComplete && hasValidRainBackup)
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [planId])
 
   useEffect(() => {
+    if (isRainMode && !hasValidRainBackup) {
+      setIsRainMode(false)
+    }
+  }, [hasValidRainBackup, isRainMode])
+
+  useEffect(() => {
     const nextStoredDetailPlan = loadPlanForDetail(planId)
     const nextGeneratedPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
-    const nextSelectedPlan = isStoredSource
-      ? nextStoredDetailPlan ?? nextGeneratedPlan
-      : nextGeneratedPlan ?? nextStoredDetailPlan
+    const nextSelectedPlan = isStoredSource ? nextStoredDetailPlan : nextGeneratedPlan
 
     // Only replace the selectedPlan reference when the meaningful state changes;
     // otherwise the detail-completion useEffect will see a new selectedPlan ref
@@ -417,8 +459,8 @@ export function DetailPage() {
   // leaves this page before it finishes.
   useEffect(() => {
     if (!planId || !selectedPlan || selectedPlan.isDetailComplete) return
-    requestPlanDetails(planId)
-  }, [planId, requestPlanDetails, selectedPlan])
+    requestPlanDetails(planId, { source: detailSource, recordId: detailRecordId })
+  }, [detailRecordId, detailSource, planId, requestPlanDetails, selectedPlan])
 
   // When the context marks this plan as complete, re-read the upgraded plan
   // from sessionStorage so the current detail view refreshes in-place.
@@ -429,9 +471,7 @@ export function DetailPage() {
 
     const upgradedGenerated = loadGeneratedPlans().find((plan) => plan.id === planId)
     const upgradedStored = loadPlanForDetail(planId)
-    const upgraded = isStoredSource
-      ? upgradedStored ?? upgradedGenerated
-      : upgradedGenerated ?? upgradedStored
+    const upgraded = isStoredSource ? upgradedStored : upgradedGenerated
 
     if (upgraded?.isDetailComplete) {
       setSelectedPlan(upgraded)
@@ -588,8 +628,7 @@ export function DetailPage() {
     }
 
     setSelectedPlan(updatedPlan)
-    updateGeneratedPlan(updatedPlan)
-    updateDetailPlan(updatedPlan)
+    persistSelectedPlanLocally(updatedPlan)
     await persistPlanUpdate(selectedPlan, updatedPlan)
   }
 
@@ -732,8 +771,7 @@ export function DetailPage() {
       }
 
       setSelectedPlan(updatedPlan)
-      updateGeneratedPlan(updatedPlan)
-      updateDetailPlan(updatedPlan)
+      persistSelectedPlanLocally(updatedPlan)
       await persistPlanUpdate(selectedPlan, updatedPlan)
       setStopOrders((current) => ({ ...current, [orderMode]: [] }))
       setSegmentModeOverrides((current) => ({ ...current, [orderMode]: {} }))
@@ -843,7 +881,12 @@ export function DetailPage() {
                 className="secondary-button"
                 type="button"
                 onClick={() => {
-                  if (planId) requestPlanDetails(planId)
+                  if (planId) {
+                    requestPlanDetails(planId, {
+                      source: detailSource,
+                      recordId: detailRecordId,
+                    })
+                  }
                 }}
               >
                 細節補充失敗，重新補充
@@ -1057,9 +1100,15 @@ export function DetailPage() {
             className="submit-button"
             type="button"
             onClick={() => setIsRainMode((current) => !current)}
-            disabled={!selectedPlan.isDetailComplete}
+            disabled={isRainMode ? false : !canShowRainBackup}
           >
-            {isRainMode ? '查看一般行程' : '切換雨天備案'}
+            {isRainMode
+              ? '查看一般行程'
+              : selectedPlan.isDetailComplete
+                ? hasValidRainBackup
+                  ? '切換雨天備案'
+                  : '無符合雨備'
+                : '補完後可看雨備'}
           </button>
         </div>
 
@@ -1470,6 +1519,28 @@ function getTransportSegments(
     originalStops,
     baseSegments,
     fallbackMode,
+  )
+}
+
+function buildEstimatedSegmentsAfterReplacement(
+  nextStops: Stop[],
+  originalStops: Stop[],
+  rawSegments: unknown,
+  fallbackMode: TransportMode,
+  replacedIndex: number,
+) {
+  const nextSegments = getTransportSegments(rawSegments, nextStops, originalStops, fallbackMode)
+
+  return nextSegments.map((segment, index) => {
+    const touchesReplacedStop = index === replacedIndex - 1 || index === replacedIndex
+    return touchesReplacedStop ? markEstimatedSegment(segment) : segment
+  })
+}
+
+function getStopsAndSegmentsDuration(stops: Stop[], segments: TransportSegment[]) {
+  return (
+    stops.reduce((total, stop) => total + stop.duration, 0) +
+    segments.reduce((total, segment) => total + segment.duration, 0)
   )
 }
 
@@ -1892,12 +1963,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function getDetailSource(value: unknown) {
-  if (!isRecord(value)) {
-    return null
+function getDetailSource(value: unknown, search = ''): 'favorites' | 'recent' | null {
+  if (isRecord(value) && (value.from === 'favorites' || value.from === 'recent')) {
+    return value.from
   }
 
-  return value.from === 'favorites' || value.from === 'recent' ? value.from : null
+  const source = new URLSearchParams(search).get('source')
+  return source === 'favorites' || source === 'recent' ? source : null
+}
+
+function getDetailRecordId(value: unknown, search = ''): string | null {
+  if (isRecord(value) && typeof value.recordId === 'string') {
+    return value.recordId
+  }
+
+  return new URLSearchParams(search).get('recordId')
+}
+
+function getPlanDetailStateKey(
+  planId: string,
+  source: PlanDetailSource,
+  recordId?: string | null,
+) {
+  return source === 'generated'
+    ? `generated:${planId}`
+    : `${source}:${recordId ?? planId}`
 }
 
 function isTransportSegmentValue(

@@ -17,6 +17,12 @@ export type AnalysisSession = {
 }
 
 export type PlanDetailStatus = 'loading' | 'complete' | 'error'
+export type PlanDetailSource = 'generated' | 'recent' | 'favorites'
+
+export type PlanDetailRequestOptions = {
+  source?: PlanDetailSource
+  recordId?: string | null
+}
 
 export type PlanDetailState = {
   status: PlanDetailStatus
@@ -34,8 +40,8 @@ export type AnalysisSessionContextValue = {
   resetAnalysisFlow: () => void
   setFlowRoute: (route: string) => void
   planDetailStates: Record<string, PlanDetailState>
-  requestPlanDetails: (planId: string) => void
-  getReplacementCandidates: () => Promise<NearbyPlaceCandidates>
+  requestPlanDetails: (planId: string, options?: PlanDetailRequestOptions) => void
+  getReplacementCandidates: (input?: TripInput | null) => Promise<NearbyPlaceCandidates>
   recomputeTripRoutes: (
     stops: Stop[],
     transportMode: TripPlan['transportMode'],

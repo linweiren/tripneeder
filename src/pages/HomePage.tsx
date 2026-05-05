@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/auth'
 import { useAnalysisSession } from '../contexts/analysisSession'
@@ -15,6 +15,11 @@ import {
   loginPromptMessage,
   loginPromptTitle,
 } from '../utils/loginPrompt'
+import {
+  getCachedUserProfile,
+  initializeUserProfile,
+  type UserProfile,
+} from '../services/points/pointsService'
 
 const categoryOptions: Array<{ value: TripCategory; label: string }> = [
   { value: 'date', label: '約會' },
@@ -77,7 +82,7 @@ const initialInput: TripInput = {
   },
 }
 
-const planSlotLabels = ['保守型', '平衡型', '探索型']
+const planSlotLabels = ['方案一', '方案二', '方案三']
 
 const hourOptions = Array.from({ length: 24 }, (_, index) =>
   String(index).padStart(2, '0'),
@@ -86,6 +91,21 @@ const hourOptions = Array.from({ length: 24 }, (_, index) =>
 const minuteOptions = ['00', '15', '30', '45']
 const FAST_LOCATION_TARGET_ACCURACY_METERS = 300
 const MAX_ACCEPTABLE_LOCATION_ACCURACY_METERS = 1200
+
+type PreferenceSource = 'current' | 'persona' | 'system'
+
+type PreferenceSourceItem = {
+  key: string
+  label: string
+  value: string
+  source: PreferenceSource
+}
+
+const preferenceSourceLabels: Record<PreferenceSource, string> = {
+  current: '本次設定',
+  persona: '個性化',
+  system: '系統預設',
+}
 
 export function HomePage() {
   const navigate = useNavigate()
@@ -108,42 +128,46 @@ export function HomePage() {
   const [isLocating, setIsLocating] = useState(false)
   const [locationStatus, setLocationStatus] = useState('')
   const [formError, setFormError] = useState('')
+  const reverseGeocodeRequestId = useRef(0)
+  const [profile, setProfile] = useState<UserProfile | null>(() => {
+    const cachedProfile = getCachedUserProfile()
+    return cachedProfile?.id === user?.id ? cachedProfile : null
+  })
 
   const isOtherCategory = input.category === 'other'
   const isAnalysisInProgress = session?.status === 'analyzing'
   const analysisError = session?.status === 'error' ? session.error : ''
 
-  // Preference summary for the advanced toggle button
+  const preferenceSources = useMemo(
+    () => getPreferenceSources(input, profile),
+    [input, profile],
+  )
+
   const preferenceSummary = useMemo(() => {
+    const sourceCounts = preferenceSources.reduce(
+      (counts, item) => ({
+        ...counts,
+        [item.source]: counts[item.source] + 1,
+      }),
+      { current: 0, persona: 0, system: 0 } as Record<PreferenceSource, number>,
+    )
+
     const parts: string[] = []
-    
-    // Location
-    if (input.location.name) {
-      parts.push(input.location.name)
-    } else if (input.location.lat) {
-      parts.push('目前位置')
-    }
+    if (sourceCounts.current > 0) parts.push(`已套用本次偏好：${sourceCounts.current} 項`)
+    if (sourceCounts.persona > 0) parts.push(`個性化偏好：${sourceCounts.persona} 項`)
+    if (parts.length === 0) parts.push('已套用系統預設')
 
-    // Category
-    if (input.category) {
-      const cat = categoryOptions.find(o => o.value === input.category)
-      parts.push(cat?.label || '')
-    }
+    return `（${parts.join('｜')}）`
+  }, [preferenceSources])
 
-    // Budget
-    if (input.budget) {
-      const b = budgetOptions.find(o => o.value === input.budget)
-      parts.push(b?.label || '')
-    }
-
-    // People
-    if (input.people) {
-      parts.push(`${input.people}人`)
-    }
-
-    if (parts.length === 0) return ''
-    return `(已設: ${parts.join(', ')})`
-  }, [input.location, input.category, input.budget, input.people])
+  const preferenceQuickSummary = useMemo(
+    () =>
+      preferenceSources
+        .slice(0, 4)
+        .map((item) => `${item.label} ${preferenceSourceLabels[item.source]}`)
+        .join('｜'),
+    [preferenceSources],
+  )
 
   // Initialize start time to now if not set
   useEffect(() => {
@@ -163,6 +187,29 @@ export function HomePage() {
       updateInput('endTime', endTime)
     }
   }, [input.startTime, duration])
+
+  useEffect(() => {
+    if (!user) {
+      setProfile(null)
+      return
+    }
+
+    const cachedProfile = getCachedUserProfile()
+    if (cachedProfile?.id === user.id) setProfile(cachedProfile)
+
+    let isMounted = true
+    void initializeUserProfile()
+      .then((latestProfile) => {
+        if (isMounted) setProfile(latestProfile)
+      })
+      .catch((error) => {
+        console.error('載入首頁偏好摘要失敗:', error)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [user])
 
   const selectedLocationText = useMemo(() => {
     if (input.location.name && input.location.lat && input.location.lng) {
@@ -289,7 +336,7 @@ export function HomePage() {
     setLocationStatus('')
 
     try {
-      const position = await getBestAvailablePosition()
+      const position = await getBestAvailablePosition({ returnFirstUsable: true })
       const lat = position.coords.latitude
       const lng = position.coords.longitude
       const accuracy = Math.round(position.coords.accuracy)
@@ -304,35 +351,9 @@ export function HomePage() {
         },
       }))
       setUseCurrentLocation(true)
-      setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺，正在查詢地名...`)
-
-      try {
-        const response = await fetch('/api/geocode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lng }),
-        })
-        const data = await response.json()
-
-        if (data.name) {
-          location.name = data.name
-          setInput((current) => ({
-            ...current,
-            location: {
-              ...current.location,
-              lat,
-              lng,
-              name: data.name,
-            },
-          }))
-          setLocationStatus(`定位成功，精度約 ${accuracy} 公尺`)
-        } else {
-          setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺`)
-        }
-      } catch (error) {
-        console.error('Geocoding failed:', error)
-        setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺`)
-      }
+      setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺，正在背景查詢地名...`)
+      setIsLocating(false)
+      reverseGeocodeLocation(lat, lng, accuracy)
 
       return location
     } catch (error) {
@@ -347,6 +368,52 @@ export function HomePage() {
     } finally {
       setIsLocating(false)
     }
+  }
+
+  function reverseGeocodeLocation(lat: number, lng: number, accuracy: number) {
+    const requestId = reverseGeocodeRequestId.current + 1
+    reverseGeocodeRequestId.current = requestId
+
+    void (async () => {
+      try {
+        const response = await fetch('/api/geocode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat, lng }),
+        })
+        const data = (await response.json()) as { name?: string }
+
+        if (reverseGeocodeRequestId.current !== requestId) return
+
+        const resolvedName = data.name?.trim()
+
+        if (resolvedName) {
+          setInput((current) => {
+            if (current.location.lat !== lat || current.location.lng !== lng) {
+              return current
+            }
+
+            return {
+              ...current,
+              location: {
+                ...current.location,
+                lat,
+                lng,
+                name: resolvedName,
+              },
+            }
+          })
+          setLocationStatus(`定位成功，精度約 ${accuracy} 公尺`)
+        } else {
+          setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺`)
+        }
+      } catch (error) {
+        if (reverseGeocodeRequestId.current !== requestId) return
+
+        console.error('Geocoding failed:', error)
+        setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺`)
+      }
+    })()
   }
 
   async function startAnalysis() {
@@ -612,6 +679,21 @@ export function HomePage() {
 
         {showAdvanced && (
           <div className="advanced-settings-panel">
+            <section className="preference-source-panel" aria-label="目前套用偏好來源">
+              <p className="preference-source-title">目前套用：{preferenceQuickSummary}</p>
+              <div className="preference-source-grid">
+                {preferenceSources.map((item) => (
+                  <div className="preference-source-item" key={item.key}>
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                    <em className={`preference-source-badge source-${item.source}`}>
+                      {preferenceSourceLabels[item.source]}
+                    </em>
+                  </div>
+                ))}
+              </div>
+            </section>
+
             {/* Moved Location Selection here */}
             <fieldset className="form-section">
               <legend>你在哪裡？</legend>
@@ -894,6 +976,117 @@ function isValidInput(input: TripInput) {
   )
 }
 
+function getPreferenceSources(
+  input: TripInput,
+  profile: UserProfile | null,
+): PreferenceSourceItem[] {
+  const categoryLabel = input.category
+    ? categoryOptions.find((option) => option.value === input.category)?.label
+    : null
+  const budgetLabel = input.budget
+    ? budgetOptions.find((option) => option.value === input.budget)?.label
+    : null
+  const transportLabel = input.transportMode
+    ? getTransportModeLabel(input.transportMode)
+    : null
+
+  return [
+    {
+      key: 'category',
+      label: '氛圍',
+      ...resolvePreferenceSource({
+        currentValue: input.category === 'other'
+          ? input.customCategory?.trim() || '其他'
+          : categoryLabel,
+        personaValue: profile?.persona_companion,
+        systemValue: '情侶 / 約會',
+      }),
+    },
+    {
+      key: 'transport',
+      label: '交通',
+      ...resolvePreferenceSource({
+        currentValue: transportLabel,
+        personaValue: profile?.persona_transport_mode
+          ? getTransportModeLabel(profile.persona_transport_mode)
+          : null,
+        systemValue: 'AI 判斷',
+      }),
+    },
+    {
+      key: 'budget',
+      label: '預算',
+      ...resolvePreferenceSource({
+        currentValue: budgetLabel,
+        personaValue: profile?.persona_budget,
+        systemValue: '一般',
+      }),
+    },
+    {
+      key: 'people',
+      label: '人數',
+      ...resolvePeoplePreferenceSource(input.people, profile?.persona_people),
+    },
+    {
+      key: 'stamina',
+      label: '體力',
+      ...resolvePreferenceSource({
+        currentValue: null,
+        personaValue: profile?.persona_stamina,
+        systemValue: '普通',
+      }),
+    },
+    {
+      key: 'diet',
+      label: '飲食',
+      ...resolvePreferenceSource({
+        currentValue: null,
+        personaValue: profile?.persona_diet,
+        systemValue: '無禁忌',
+      }),
+    },
+  ]
+}
+
+function resolvePreferenceSource({
+  currentValue,
+  personaValue,
+  systemValue,
+}: {
+  currentValue: string | null | undefined
+  personaValue: string | null | undefined
+  systemValue: string
+}): Pick<PreferenceSourceItem, 'value' | 'source'> {
+  if (currentValue && currentValue.trim().length > 0) {
+    return { value: currentValue, source: 'current' }
+  }
+
+  if (personaValue && personaValue.trim().length > 0) {
+    return { value: personaValue, source: 'persona' }
+  }
+
+  return { value: systemValue, source: 'system' }
+}
+
+function resolvePeoplePreferenceSource(
+  currentPeople: number | undefined,
+  personaPeople: number | null | undefined,
+): Pick<PreferenceSourceItem, 'value' | 'source'> {
+  if (typeof currentPeople === 'number') {
+    return { value: `${currentPeople} 人`, source: 'current' }
+  }
+
+  if (typeof personaPeople === 'number') {
+    return { value: `${personaPeople} 人`, source: 'persona' }
+  }
+
+  return { value: '2 人', source: 'system' }
+}
+
+function getTransportModeLabel(value: TransportMode) {
+  return transportModeOptions.find((option) => option.value === value)?.label ?? value
+}
+
 function isCompleteTime(value: string) {
   return /^\d{2}:\d{2}$/.test(value)
 }
@@ -914,7 +1107,7 @@ function parseTimeToMinutes(value?: string) {
   return hour * 60 + minute
 }
 
-async function getBestAvailablePosition() {
+async function getBestAvailablePosition(options: { returnFirstUsable?: boolean } = {}) {
   let bestPosition: GeolocationPosition | null = null
   let lastError: Error | null = null
 
@@ -948,6 +1141,10 @@ async function getBestAvailablePosition() {
 
       if (!bestPosition || position.coords.accuracy < bestPosition.coords.accuracy) {
         bestPosition = position
+      }
+
+      if (options.returnFirstUsable) {
+        return position
       }
 
       if (

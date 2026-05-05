@@ -11,6 +11,7 @@ const RECENT_PLANS_STORAGE_KEY = 'tripneeder.recentPlans'
 const FAVORITE_PLANS_STORAGE_KEY = 'tripneeder.favoritePlans'
 
 export const MAX_RECENT_RECORDS = 12
+export const GENERATED_PLAN_IDS = ['safe', 'balanced', 'explore'] as const
 
 export type StoredTripRecord = {
   id: string
@@ -115,6 +116,22 @@ export function updateRecentTripRecordPlan(nextPlan: TripPlan, input: TripInput 
   localStorage.setItem(key, JSON.stringify(next))
 }
 
+export function updateRecentTripRecordById(recordId: string, nextPlan: TripPlan, input: TripInput | null, userId: string) {
+  const key = `${RECENT_PLANS_STORAGE_KEY}.${userId}`
+  const next = loadRecentTripRecords(userId).map(r =>
+    r.id === recordId ? { ...r, plan: nextPlan, input: input ?? r.input } : r
+  )
+  localStorage.setItem(key, JSON.stringify(next))
+}
+
+export function updateFavoriteTripRecordById(recordId: string, nextPlan: TripPlan, input: TripInput | null, userId: string) {
+  const key = `${FAVORITE_PLANS_STORAGE_KEY}.${userId}`
+  const next = loadFavoriteTripRecords(userId).map(r =>
+    r.id === recordId ? { ...r, plan: nextPlan, input: input ?? r.input } : r
+  )
+  localStorage.setItem(key, JSON.stringify(next))
+}
+
 export function updateFavoriteTripRecordPlan(nextPlan: TripPlan, input: TripInput | null, userId: string, previousPlan?: TripPlan) {
   const key = `${FAVORITE_PLANS_STORAGE_KEY}.${userId}`
   const prevFingerprint = previousPlan ? createPlanFingerprint(previousPlan) : null
@@ -139,6 +156,7 @@ export function createPlanFingerprint(plan: TripPlan) {
     summary: plan.summary,
     budget: plan.budget,
     transportMode: plan.transportMode,
+    scheduleStartTime: plan.scheduleStartTime,
     stops: (plan.stops || []).map(s => ({ name: s.name, type: s.type, address: s.address })),
     transportSegments: (plan.transportSegments || []).map(ts => ({ mode: ts.mode, duration: ts.duration })),
   })
@@ -148,7 +166,11 @@ function saveRecentGeneratedPlans(plans: TripPlan[], input: TripInput, userId: s
   const key = `${RECENT_PLANS_STORAGE_KEY}.${userId}`
   const prev = loadRecentTripRecords(userId)
   const next = plans.map(p => createStoredTripRecord(p, input))
-  localStorage.setItem(key, JSON.stringify([...next, ...prev].slice(0, MAX_RECENT_RECORDS)))
+  const generatedPlanIds = new Set<string>(GENERATED_PLAN_IDS)
+  localStorage.setItem(
+    key,
+    JSON.stringify([...next, ...prev.filter((record) => !generatedPlanIds.has(record.plan.id))].slice(0, MAX_RECENT_RECORDS)),
+  )
 }
 
 function loadStoredTripRecords(key: string): StoredTripRecord[] {

@@ -68,6 +68,31 @@ const skeletonTransportSegmentSchema = {
   },
 }
 
+const detailStopPatchSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['id', 'description'],
+  properties: {
+    id: { type: 'string', minLength: 1 },
+    description: { type: 'string' },
+  },
+}
+
+const detailTransportSegmentPatchSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['fromStopId', 'toStopId', 'label'],
+  properties: {
+    fromStopId: { type: 'string' },
+    toStopId: { type: 'string' },
+    label: { type: 'string' },
+    publicTransitType: {
+      type: 'string',
+      enum: ['bus', 'metro', 'train', 'walk', 'mixed'],
+    },
+  },
+}
+
 const planSchema = {
   type: 'object',
   additionalProperties: false,
@@ -188,6 +213,28 @@ export const tripPlanDetailsResponseSchema = {
   additionalProperties: false,
   required: ['plan'],
   properties: {
-    plan: planSchema,
+    plan: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['stops', 'transportSegments', 'rainBackup', 'rainTransportSegments'],
+      properties: {
+        stops: {
+          type: 'array',
+          items: detailStopPatchSchema,
+        },
+        transportSegments: {
+          type: 'array',
+          items: detailTransportSegmentPatchSchema,
+        },
+        rainBackup: {
+          type: 'array',
+          items: stopSchema,
+        },
+        rainTransportSegments: {
+          type: 'array',
+          items: transportSegmentSchema,
+        },
+      },
+    },
   },
 }

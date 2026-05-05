@@ -2400,8 +2400,24 @@
   gap: 12px;
 }
 
+.persona-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
 .persona-form .submit-button {
   /* Inherit global submit-button styles */
+}
+
+.persona-form .secondary-button:disabled {
+  cursor: not-allowed;
+  color: #7a7163;
+  background: rgba(229, 224, 216, 0.78);
+  border-color: rgba(181, 174, 163, 0.72);
+  opacity: 0.82;
+  transform: none;
 }
 
 .save-status-msg {
@@ -2427,6 +2443,19 @@
   margin: 0;
   color: #5e594f;
   font-size: 16px;
+}
+
+@media (max-width: 480px) {
+  .persona-action-buttons {
+    width: 100%;
+  }
+
+  .persona-action-buttons .submit-button,
+  .persona-action-buttons .secondary-button {
+    flex: 1 1 150px;
+    width: auto;
+    min-width: 0;
+  }
 }
 
 /* Phase 9E: On-site Quick Start Styles */
@@ -2558,6 +2587,81 @@
   display: grid;
   gap: 0;
   animation: slideDown 0.3s ease-out;
+}
+
+.preference-source-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px 0 22px;
+  border-bottom: 1px solid rgba(96, 86, 72, 0.18);
+}
+
+.preference-source-title {
+  margin: 0;
+  color: #4d473e;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.preference-source-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.preference-source-item {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(96, 86, 72, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 252, 246, 0.66);
+}
+
+.preference-source-item span {
+  color: #7a7163;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.preference-source-item strong {
+  min-height: 20px;
+  color: #2d2b26;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.preference-source-badge {
+  width: fit-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.preference-source-badge.source-current {
+  color: #4e5f54;
+  background: rgba(118, 150, 124, 0.18);
+}
+
+.preference-source-badge.source-persona {
+  color: #6a5637;
+  background: rgba(199, 164, 92, 0.2);
+}
+
+.preference-source-badge.source-system {
+  color: #655f56;
+  background: rgba(126, 118, 103, 0.14);
+}
+
+@media (max-width: 480px) {
+  .preference-source-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @keyframes slideDown {
