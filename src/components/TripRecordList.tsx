@@ -6,6 +6,7 @@ import {
   savePlanForDetail,
   type StoredTripRecord,
 } from '../utils/tripPlanStorage'
+import mascotEmptyState from '../assets/mascot/mascot-empty-state.png'
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -16,7 +17,6 @@ const transportLabels: Record<TransportMode, string> = {
 type TripRecordListProps = {
   records: StoredTripRecord[]
   emptyTitle: string
-  emptyCopy: string
   source: 'favorites' | 'recent'
   onRemove?: (recordId: string) => void
 }
@@ -24,7 +24,6 @@ type TripRecordListProps = {
 export function TripRecordList({
   records,
   emptyTitle,
-  emptyCopy,
   source,
   onRemove,
 }: TripRecordListProps) {
@@ -45,8 +44,14 @@ export function TripRecordList({
   if (records.length === 0) {
     return (
       <div className="empty-record-panel">
+        <img
+          className="empty-record-mascot"
+          src={mascotEmptyState}
+          alt="TripNeeder 奶油白旅行貓休息中"
+          decoding="async"
+          loading="lazy"
+        />
         <h2>{emptyTitle}</h2>
-        <p>{emptyCopy}</p>
       </div>
     )
   }

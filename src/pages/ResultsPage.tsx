@@ -3,6 +3,8 @@ import { useAnalysisSession } from '../contexts/analysisSession'
 import type { TransportMode, TripPlan } from '../types/trip'
 import { loadGeneratedPlans } from '../utils/tripPlanStorage'
 import { getPlanActualDuration } from '../utils/tripTiming'
+import mascotComplete from '../assets/mascot/mascot-complete.png'
+import mascotError from '../assets/mascot/mascot-error.png'
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -18,26 +20,41 @@ export function ResultsPage() {
 
   if (plans.length === 0) {
     return (
-      <section className="page">
-        <p className="page-kicker">尚未產生方案</p>
-        <h1 className="page-title">這次沒有找到可用方案。</h1>
-        <p className="page-copy">
-          目前沒有符合營業時間與路線條件的行程，請調整時間或重新生成。
-        </p>
-        <button className="submit-button result-link" type="button" onClick={resetAnalysisFlow}>
-          回到行程規劃
-        </button>
+      <section className="page results-page">
+        <div className="empty-record-panel error-state-panel">
+          <img
+            className="empty-record-mascot error-mascot"
+            src={mascotError}
+            alt="分析失敗吉祥物"
+          />
+          <h2 style={{ whiteSpace: 'nowrap' }}>這次沒有找到可用方案</h2>
+          <p style={{ whiteSpace: 'nowrap' }}>沒有符合營業時間與條件的行程</p>
+          <button 
+            className="secondary-button" 
+            style={{ marginTop: '12px' }}
+            type="button" 
+            onClick={resetAnalysisFlow}
+          >
+            回到行程規劃
+          </button>
+        </div>
       </section>
     )
   }
 
   return (
-    <section className="page">
+    <section className="page results-page">
+      <img
+        className="results-mascot-decoration"
+        src={mascotComplete}
+        alt=""
+        aria-hidden="true"
+      />
       <button className="back-link" type="button" onClick={resetAnalysisFlow}>
         重新選擇偏好
       </button>
       <p className="page-kicker">AI 已整理三種走法</p>
-      <h1 className="page-title">選擇行程方案</h1>
+      <h1 className="page-title" style={{ visibility: 'hidden' }}>選擇行程方案</h1>
       {warnings.length > 0 ? (
         <div className="plan-warning-panel" role="status">
           {warnings.map((warning: string) => (

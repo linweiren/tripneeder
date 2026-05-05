@@ -6,7 +6,6 @@ import { useDialog } from '../contexts/dialog'
 import {
   getCachedFavoriteRecords,
   hasCachedTripRecords,
-  loadFavoriteRecords,
   prepareTripRecordsForUser,
   removeFavoriteRecord,
 } from '../services/tripRecords/tripRecordService'
@@ -54,15 +53,16 @@ export function FavoritesPage() {
         setIsRecordsLoading(!hasLoadedRemoteCache && cachedRecords.length === 0)
       }
 
+      if (hasLoadedRemoteCache) {
+        return
+      }
+
       try {
         await withTimeout(
           prepareTripRecordsForUser(userId),
           RECORD_SYNC_TIMEOUT_MS,
         )
-        const nextRecords = await withTimeout(
-          loadFavoriteRecords(userId),
-          RECORD_SYNC_TIMEOUT_MS,
-        )
+        const nextRecords = getCachedFavoriteRecords(userId)
 
         if (isMounted) {
           setRecordSnapshot({
@@ -141,8 +141,7 @@ export function FavoritesPage() {
       {user && !isRecordsLoading ? (
         <TripRecordList
           records={visibleRecords}
-          emptyTitle="還沒有收藏任何方案"
-          emptyCopy="在詳情頁底部按下收藏後，行程會出現在這裡。"
+          emptyTitle="還沒有收藏任何方案呢"
           source="favorites"
           onRemove={(recordId) => void handleRemove(recordId)}
         />

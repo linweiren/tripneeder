@@ -20,6 +20,9 @@ import {
   initializeUserProfile,
   type UserProfile,
 } from '../services/points/pointsService'
+import HomeTitle from '../components/HomeTitle'
+import AnalysisMapMascot from '../components/AnalysisMapMascot'
+import mascotError from '../assets/mascot/mascot-error.png'
 
 const categoryOptions: Array<{ value: TripCategory; label: string }> = [
   { value: 'date', label: '約會' },
@@ -54,12 +57,11 @@ const tagOptions: Array<{ value: TripTag; label: string }> = [
 ]
 
 const durationOptions = [
-  { value: 60, label: '1h' },
-  { value: 120, label: '2h' },
-  { value: 180, label: '3h' },
-  { value: 360, label: '半天 6h' },
-  { value: 600, label: '一天 10h' },
-  { value: -1, label: '自訂' },
+  { value: 120, label: '小逛一下', durationLabel: '2 小時' },
+  { value: 180, label: '輕鬆走走', durationLabel: '3 小時' },
+  { value: 360, label: '半日慢遊', durationLabel: '6 小時' },
+  { value: 600, label: '玩一整天', durationLabel: '10 小時' },
+  { value: -1, label: '自訂', durationLabel: '' },
 ]
 
 const transportModeOptions: Array<{ value: TransportMode; label: string }> = [
@@ -120,7 +122,7 @@ export function HomePage() {
   const dialog = useDialog()
 
   const [input, setInput] = useState<TripInput>(initialInput)
-  const [duration, setDuration] = useState<number>(180) // Default 3h
+  const [duration, setDuration] = useState<number | null>(null)
   const [useCurrentLocation, setUseCurrentLocation] = useState(true)
   const [showManualLocation, setShowManualLocation] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -182,7 +184,7 @@ export function HomePage() {
 
   // Update endTime whenever startTime or duration changes
   useEffect(() => {
-    if (input.startTime && duration > 0) {
+    if (input.startTime && duration !== null && duration > 0) {
       const endTime = addMinutesToTime(input.startTime, duration)
       updateInput('endTime', endTime)
     }
@@ -255,6 +257,35 @@ export function HomePage() {
       ...current,
       [key]: current[key] === value ? undefined : value,
     }))
+  }
+
+  function clearDurationSelection() {
+    setDuration(null)
+    setInput((current) => ({
+      ...current,
+      endTime: '',
+    }))
+  }
+
+  function handleDurationSelect(value: number) {
+    if (duration === value) {
+      clearDurationSelection()
+      return
+    }
+
+    setDuration(value)
+  }
+
+  function handleCustomDurationToggle() {
+    if (duration === -1) {
+      clearDurationSelection()
+      return
+    }
+
+    setDuration(-1)
+    if (input.startTime && !input.endTime) {
+      updateInput('endTime', addMinutesToTime(input.startTime, 180))
+    }
   }
 
   /**
@@ -419,6 +450,14 @@ export function HomePage() {
   async function startAnalysis() {
     setFormError('')
 
+    if (!isCompleteTime(input.endTime)) {
+      void dialog.alert({
+        title: '請先選擇時間',
+        message: '請先選擇想玩的時間，再開始安排旅程。',
+      })
+      return
+    }
+
     if (!user) {
       const confirmed = await dialog.confirm({
         title: loginPromptTitle,
@@ -489,28 +528,51 @@ export function HomePage() {
     return <Navigate to={session.lastRoute} replace />
   }
 
+  // 只有在還沒成功，且正在分析中或有錯誤時才顯示載入/錯誤畫面
   if (isAnalysisInProgress || analysisError) {
     const partialPlans = session?.partialPlans ?? []
     const readyCount = Math.min(partialPlans.length, 3)
 
     return (
       <section className="page trip-loading">
-        <div className="loading-panel" role="status" aria-live="polite">
-          <div>
-            <h2>
-              {analysisError
-                ? '分析沒有成功'
-                : readyCount === 0
-                  ? '正在整理你的旅行偏好...'
-                  : `已完成 ${readyCount} / 3 個方案`}
-            </h2>
-            {analysisError ? (
-              <p>{analysisError}</p>
-            ) : null}
-          </div>
+        {analysisError ? (
+          <h1 className="page-title" style={{ textAlign: 'center' }}>分析沒有成功</h1>
+        ) : null}
+
+        <div
+          className={
+            analysisError
+              ? 'loading-panel empty-record-panel error-state-panel'
+              : 'loading-panel loading-panel-with-mascot'
+          }
+          role="status"
+          aria-live="polite"
+          style={analysisError ? { marginTop: '2vh' } : {}}
+        >
+          {analysisError ? (
+            <img
+              className="empty-record-mascot error-mascot"
+              src={mascotError}
+              alt="分析失敗"
+            />
+          ) : (
+            <AnalysisMapMascot />
+          )}
+          
+          {!analysisError ? (
+            <div style={{ textAlign: 'inherit' }}>
+              <h2>
+                {readyCount === 0
+                    ? '正在整理你的旅行偏好...'
+                    : `已完成 ${readyCount} / 3 個方案`}
+              </h2>
+            </div>
+          ) : null}
+
           {analysisError ? (
             <p className="analysis-no-charge-note">分析失敗不扣除點數</p>
           ) : null}
+
           {!analysisError ? (
             <ul className="plan-skeleton-list">
               {planSlotLabels.map((slotLabel, index) => {
@@ -546,6 +608,7 @@ export function HomePage() {
               })}
             </ul>
           ) : null}
+
           {!analysisError ? (
             <div className="loading-actions">
               <button
@@ -557,6 +620,7 @@ export function HomePage() {
               </button>
             </div>
           ) : null}
+
           {analysisError ? (
             <div className="loading-actions">
               <button
@@ -576,6 +640,30 @@ export function HomePage() {
             </div>
           ) : null}
         </div>
+
+        {analysisError ? (
+          <div className="debug-log-container" style={{
+            margin: '20px auto 0',
+            width: 'min(760px, 90vw)',
+            background: 'rgba(0, 0, 0, 0.05)',
+            border: '1px solid rgba(0, 0, 0, 0.1)',
+            borderRadius: '12px',
+            padding: '12px',
+            maxHeight: '25vh',
+            overflowY: 'auto'
+          }}>
+            <p style={{ margin: '0 0 8px 0', fontSize: '12px', fontWeight: 'bold', color: '#666' }}>開發者偵錯訊息：</p>
+            <pre className="debug-error-log" style={{
+              fontSize: '11px',
+              color: '#444',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              margin: 0
+            }}>
+              {analysisError}
+            </pre>
+          </div>
+        ) : null}
       </section>
     )
   }
@@ -585,95 +673,89 @@ export function HomePage() {
       <form className="trip-form home-trip-form" onSubmit={handleSubmit}>
         <div className="home-top-panel">
           <div className="home-hero">
-            <p className="page-kicker">現場快速排行程</p>
-            <h1 className="page-title">想在這玩多久？</h1>
+            <div className="home-hero-copy">
+              <HomeTitle />
+            </div>
           </div>
 
-          {/* Step 1: Duration Selection (Main View) */}
-          <fieldset className="form-section duration-section" aria-label="想玩多久">
-            <div className="chip-grid duration-chip-grid">
-              <div className="duration-chip-row duration-chip-row-three">
-                {durationOptions.slice(0, 3).map((option) => (
+          <div className="home-action-card">
+            <div className="home-action-content">
+              {/* Step 1: Duration Selection (Main View) */}
+              <fieldset className="form-section duration-section" aria-label="想玩多久">
+                <div className="chip-grid duration-chip-grid">
+                  {durationOptions
+                    .filter((option) => option.value > 0)
+                    .map((option) => (
+                    <button
+                      key={option.label}
+                      className={
+                        duration === option.value ? 'chip chip-active' : 'chip'
+                      }
+                      type="button"
+                      onClick={() => handleDurationSelect(option.value)}
+                    >
+                      <span>{option.label}</span>
+                      <small>{option.durationLabel}</small>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className={
+                    duration === -1
+                      ? 'custom-duration-toggle custom-duration-toggle-active'
+                      : 'custom-duration-toggle'
+                  }
+                  type="button"
+                  aria-pressed={duration === -1}
+                  onClick={handleCustomDurationToggle}
+                >
+                  自訂結束時間
+                </button>
+
+                {duration === -1 && (
+                   <div className="custom-duration-fields">
+                      <TimeSelect
+                        label="自訂結束時間"
+                        value={input.endTime}
+                        onChange={(value) => {
+                          updateInput('endTime', value)
+                          setDuration(-1)
+                        }}
+                      />
+                   </div>
+                )}
+              </fieldset>
+
+              <div className="home-action-scene" aria-hidden="true" />
+
+              <div className="home-action-footer">
+                <div className="duration-display">
+                  預計玩到 <strong>{input.endTime || '--:--'}</strong>
+                  {isCrossDay && <span className="cross-day-note"> (明天)</span>}
+                </div>
+
+                {formError ? <p className="form-error" style={{ marginBottom: '16px' }}>{formError}</p> : null}
+
+                <button
+                  className="submit-button home-submit-button"
+                  type="submit"
+                  disabled={isLocating}
+                >
+                  {isLocating ? '正在取得定位...' : '立即出發'}
+                </button>
+
+                {/* Step 2: Advanced Settings (Collapsed) */}
+                <div className="advanced-toggle-area">
                   <button
-                    key={option.label}
-                    className={
-                      duration === option.value ? 'chip chip-active' : 'chip'
-                    }
                     type="button"
-                    onClick={() => setDuration(option.value)}
+                    className="advanced-toggle-button"
+                    onClick={() => setShowAdvanced(!showAdvanced)}
                   >
-                    {option.label}
+                    {showAdvanced ? '收起進階設定 ↑' : `更多偏好設定 ${preferenceSummary} ↓`}
                   </button>
-                ))}
-              </div>
-              <div className="duration-chip-row duration-chip-row-two">
-                {durationOptions.slice(3, 5).map((option) => (
-                  <button
-                    key={option.label}
-                    className={
-                      duration === option.value ? 'chip chip-active' : 'chip'
-                    }
-                    type="button"
-                    onClick={() => setDuration(option.value)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+                </div>
               </div>
             </div>
-            <button
-              className={
-                duration === -1
-                  ? 'custom-duration-toggle custom-duration-toggle-active'
-                  : 'custom-duration-toggle'
-              }
-              type="button"
-              aria-pressed={duration === -1}
-              onClick={() => setDuration(-1)}
-            >
-              自訂結束時間
-            </button>
-
-            {duration === -1 && (
-               <div className="custom-duration-fields">
-                  <TimeSelect
-                    label="自訂結束時間"
-                    value={input.endTime}
-                    onChange={(value) => {
-                      updateInput('endTime', value)
-                      setDuration(0) // Set to 0 to stop auto-calculating from duration
-                    }}
-                  />
-               </div>
-            )}
-          </fieldset>
-        </div>
-
-        <div className="home-bottom-panel">
-          <div className="duration-display">
-            預計玩到 <strong>{input.endTime}</strong>
-            {isCrossDay && <span className="cross-day-note"> (明天)</span>}
-          </div>
-
-          {formError ? <p className="form-error" style={{ marginBottom: '16px' }}>{formError}</p> : null}
-
-          <button 
-            className="submit-button home-submit-button" 
-            type="submit" 
-            disabled={isLocating}
-          >
-            {isLocating ? '正在取得定位...' : '立即出發'}
-          </button>
-
-          {/* Step 2: Advanced Settings (Collapsed) */}
-          <div className="advanced-toggle-area">
-            <button 
-              type="button" 
-              className="advanced-toggle-button"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-            >
-              {showAdvanced ? '收起進階設定 ↑' : `更多偏好設定 ${preferenceSummary} ↓`}
-            </button>
           </div>
         </div>
 

@@ -7,6 +7,7 @@ import { AuthProvider } from './contexts/AuthContext'
 import { DialogProvider } from './contexts/DialogContext'
 import { useAnalysisSession } from './contexts/analysisSession'
 import { useAuth } from './contexts/auth'
+import mascotMain from './assets/mascot/mascot-main.png'
 import './App.css'
 
 const navItems = [
@@ -17,6 +18,22 @@ const navItems = [
 ]
 
 function App() {
+  const [isSplashVisible, setIsSplashVisible] = useState(true)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setIsSplashVisible(false)
+    }, 2000)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [])
+
+  if (isSplashVisible) {
+    return <SplashScreen />
+  }
+
   return (
     <AuthProvider>
       <AnalysisSessionProvider>
@@ -25,6 +42,26 @@ function App() {
         </DialogProvider>
       </AnalysisSessionProvider>
     </AuthProvider>
+  )
+}
+
+function SplashScreen() {
+  return (
+    <main className="splash-screen" aria-label="TripNeeder 開機畫面">
+      <div className="splash-stage">
+        <img
+          className="splash-mascot"
+          src={mascotMain}
+          alt="TripNeeder 奶油白旅行貓吉祥物"
+        />
+        <div className="splash-wordmark" aria-label="TripNeeder">
+          TripNeeder
+        </div>
+        <div className="splash-progress" aria-hidden="true">
+          <span />
+        </div>
+      </div>
+    </main>
   )
 }
 
@@ -108,7 +145,7 @@ function AppLayout() {
         </div>
 
         <NavLink to={plannerPath} className="brand" aria-label="回到行程規劃">
-          Tripneeder
+          TripNeeder
         </NavLink>
 
         <div className="auth-actions">

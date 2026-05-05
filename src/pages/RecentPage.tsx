@@ -118,8 +118,7 @@ export function RecentPage() {
       {user && !isRecordsLoading ? (
         <TripRecordList
           records={visibleRecords}
-          emptyTitle="還沒有最近生成"
-          emptyCopy="送出行程偏好並成功產生三方案後，最近生成會保存在這裡。"
+          emptyTitle="還沒有最近生成的方案呀"
           source="recent"
         />
       ) : null}

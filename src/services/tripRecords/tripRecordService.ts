@@ -1,5 +1,6 @@
 import { supabase } from '../auth/supabaseClient'
 import type { TripInput, TripPlan } from '../../types/trip'
+import { buildFavoriteDeleteFilters } from './favoriteDeleteFilters'
 import {
   createPlanFingerprint,
   GENERATED_PLAN_IDS,
@@ -132,10 +133,17 @@ export async function removeFavoriteRecord(recordId: string, userId: string, pla
   notifyFavoritesChanged()
 
   if (supabase) {
-    await supabase.from('trip_records').delete()
-      .eq('user_id', userId)
-      .eq('kind', 'favorite')
-      .or(`id.eq.${recordId}${fingerprint ? `,plan_fingerprint.eq.${fingerprint}` : ''}`)
+    const deleteFilters = buildFavoriteDeleteFilters(recordId, userId, fingerprint)
+
+    for (const filters of deleteFilters) {
+      let query = supabase.from('trip_records').delete()
+      for (const [column, value] of filters) {
+        query = query.eq(column, value)
+      }
+
+      const { error } = await query
+      if (error) throw error
+    }
   }
 }
 
