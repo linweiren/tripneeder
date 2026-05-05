@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/auth'
 import { useAnalysisSession } from '../contexts/analysisSession'
@@ -82,7 +82,7 @@ const initialInput: TripInput = {
   },
 }
 
-const planSlotLabels = ['保守型', '平衡型', '探索型']
+const planSlotLabels = ['方案一', '方案二', '方案三']
 
 const hourOptions = Array.from({ length: 24 }, (_, index) =>
   String(index).padStart(2, '0'),
@@ -128,6 +128,7 @@ export function HomePage() {
   const [isLocating, setIsLocating] = useState(false)
   const [locationStatus, setLocationStatus] = useState('')
   const [formError, setFormError] = useState('')
+  const reverseGeocodeRequestId = useRef(0)
   const [profile, setProfile] = useState<UserProfile | null>(() => {
     const cachedProfile = getCachedUserProfile()
     return cachedProfile?.id === user?.id ? cachedProfile : null
@@ -335,7 +336,7 @@ export function HomePage() {
     setLocationStatus('')
 
     try {
-      const position = await getBestAvailablePosition()
+      const position = await getBestAvailablePosition({ returnFirstUsable: true })
       const lat = position.coords.latitude
       const lng = position.coords.longitude
       const accuracy = Math.round(position.coords.accuracy)
@@ -350,35 +351,9 @@ export function HomePage() {
         },
       }))
       setUseCurrentLocation(true)
-      setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺，正在查詢地名...`)
-
-      try {
-        const response = await fetch('/api/geocode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lng }),
-        })
-        const data = await response.json()
-
-        if (data.name) {
-          location.name = data.name
-          setInput((current) => ({
-            ...current,
-            location: {
-              ...current.location,
-              lat,
-              lng,
-              name: data.name,
-            },
-          }))
-          setLocationStatus(`定位成功，精度約 ${accuracy} 公尺`)
-        } else {
-          setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺`)
-        }
-      } catch (error) {
-        console.error('Geocoding failed:', error)
-        setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺`)
-      }
+      setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺，正在背景查詢地名...`)
+      setIsLocating(false)
+      reverseGeocodeLocation(lat, lng, accuracy)
 
       return location
     } catch (error) {
@@ -393,6 +368,52 @@ export function HomePage() {
     } finally {
       setIsLocating(false)
     }
+  }
+
+  function reverseGeocodeLocation(lat: number, lng: number, accuracy: number) {
+    const requestId = reverseGeocodeRequestId.current + 1
+    reverseGeocodeRequestId.current = requestId
+
+    void (async () => {
+      try {
+        const response = await fetch('/api/geocode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat, lng }),
+        })
+        const data = (await response.json()) as { name?: string }
+
+        if (reverseGeocodeRequestId.current !== requestId) return
+
+        const resolvedName = data.name?.trim()
+
+        if (resolvedName) {
+          setInput((current) => {
+            if (current.location.lat !== lat || current.location.lng !== lng) {
+              return current
+            }
+
+            return {
+              ...current,
+              location: {
+                ...current.location,
+                lat,
+                lng,
+                name: resolvedName,
+              },
+            }
+          })
+          setLocationStatus(`定位成功，精度約 ${accuracy} 公尺`)
+        } else {
+          setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺`)
+        }
+      } catch (error) {
+        if (reverseGeocodeRequestId.current !== requestId) return
+
+        console.error('Geocoding failed:', error)
+        setLocationStatus(`座標已取得，精度約 ${accuracy} 公尺`)
+      }
+    })()
   }
 
   async function startAnalysis() {
@@ -1086,7 +1107,7 @@ function parseTimeToMinutes(value?: string) {
   return hour * 60 + minute
 }
 
-async function getBestAvailablePosition() {
+async function getBestAvailablePosition(options: { returnFirstUsable?: boolean } = {}) {
   let bestPosition: GeolocationPosition | null = null
   let lastError: Error | null = null
 
@@ -1120,6 +1141,10 @@ async function getBestAvailablePosition() {
 
       if (!bestPosition || position.coords.accuracy < bestPosition.coords.accuracy) {
         bestPosition = position
+      }
+
+      if (options.returnFirstUsable) {
+        return position
       }
 
       if (

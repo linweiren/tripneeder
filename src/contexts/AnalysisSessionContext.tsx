@@ -4,6 +4,7 @@ import { tripPlanner } from '../services/ai'
 import { supabase } from '../services/auth/supabaseClient'
 import {
   saveRecentGeneratedRecords,
+  updateStoredTripRecordById,
   upgradeRecentGeneratedRecord,
 } from '../services/tripRecords/tripRecordService'
 import type { TripInput } from '../types/trip'
@@ -21,6 +22,8 @@ import type { Stop, TransportSegment, TripPlan } from '../types/trip'
 import {
   AnalysisSessionContext,
   type AnalysisSession,
+  type PlanDetailRequestOptions,
+  type PlanDetailSource,
   type PlanDetailState,
 } from './analysisSession'
 
@@ -177,17 +180,19 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     setSession(null)
   }, [])
 
-  const requestPlanDetails = useCallback((planId: string) => {
+  const requestPlanDetails = useCallback((planId: string, options?: PlanDetailRequestOptions) => {
     if (!planId) return
 
+    const source = options?.source ?? 'generated'
+    const stateKey = getPlanDetailStateKey(planId, source, options?.recordId)
     const generatedPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
     const detailPlan = loadPlanForDetail(planId)
-    const currentPlan = detailPlan || generatedPlan
+    const currentPlan = source === 'generated' ? generatedPlan : detailPlan
 
     if (!currentPlan) {
       setPlanDetailStates((prev) => ({
         ...prev,
-        [planId]: {
+        [stateKey]: {
           status: 'error',
           error: '找不到這個方案資料，請回到最近生成後重新開啟。',
         },
@@ -197,22 +202,22 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
 
     if (currentPlan.isDetailComplete) {
       setPlanDetailStates((prev) => {
-        if (prev[planId]?.status === 'complete') {
+        if (prev[stateKey]?.status === 'complete') {
           return prev
         }
-        return { ...prev, [planId]: { status: 'complete' } }
+        return { ...prev, [stateKey]: { status: 'complete' } }
       })
       return
     }
 
     const lastInput = loadLastTripInput()
     const detailInput = loadInputForDetail()
-    const input = detailInput || lastInput
+    const input = source === 'generated' ? lastInput : detailInput
 
     if (!input) {
       setPlanDetailStates((prev) => ({
         ...prev,
-        [planId]: {
+        [stateKey]: {
           status: 'error',
           error: '找不到當初產生這個方案的偏好資料，無法自動補完整細節。',
         },
@@ -220,7 +225,7 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    const existingController = planDetailControllersRef.current[planId]
+    const existingController = planDetailControllersRef.current[stateKey]
     if (existingController) {
       // Loading already in-flight; no-op. Re-subscribing consumers will pick up
       // the eventual state transition from the original fetch.
@@ -228,10 +233,10 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     }
 
     const controller = new AbortController()
-    planDetailControllersRef.current[planId] = controller
+    planDetailControllersRef.current[stateKey] = controller
     setPlanDetailStates((prev) => ({
       ...prev,
-      [planId]: { status: 'loading' },
+      [stateKey]: { status: 'loading' },
     }))
 
     void (async () => {
@@ -246,43 +251,61 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
 
         if (controller.signal.aborted) return
 
-        updateGeneratedPlan(response.plan)
-        updateDetailPlan(response.plan)
+        if (source === 'generated') {
+          updateGeneratedPlan(response.plan)
+        } else {
+          updateDetailPlan(response.plan)
+        }
 
         setPlanDetailStates((prev) => ({
           ...prev,
-          [planId]: { status: 'complete', completedAt: getTimestamp() },
+          [stateKey]: { status: 'complete', completedAt: getTimestamp() },
         }))
         window.dispatchEvent(
-          new CustomEvent('tripneeder:planDetailComplete', { detail: { planId } }),
+          new CustomEvent('tripneeder:planDetailComplete', {
+            detail: { planId, source, stateKey },
+          }),
         )
 
         if (userId) {
-          void upgradeRecentGeneratedRecord(response.plan, input, userId).catch(() => {
-            // The upgraded plan is already persisted locally; remote sync will retry later.
-          })
+          if (source === 'generated') {
+            void upgradeRecentGeneratedRecord(response.plan, input, userId).catch(() => {
+              // The upgraded plan is already persisted locally; remote sync will retry later.
+            })
+          } else if (options?.recordId) {
+            const recordKind = source === 'recent' ? 'recent' : 'favorite'
+            void updateStoredTripRecordById(
+              recordKind,
+              options.recordId,
+              response.plan,
+              input,
+              userId,
+            ).catch(() => {
+              // The upgraded stored record is already reflected in the detail view.
+            })
+          }
         }
       } catch (error) {
         if (controller.signal.aborted) return
 
         setPlanDetailStates((prev) => ({
           ...prev,
-          [planId]: {
+          [stateKey]: {
             status: 'error',
             error:
               error instanceof Error ? error.message : '細節補充失敗，請稍後再試。',
           },
         }))
       } finally {
-        if (planDetailControllersRef.current[planId] === controller) {
-          delete planDetailControllersRef.current[planId]
+        if (planDetailControllersRef.current[stateKey] === controller) {
+          delete planDetailControllersRef.current[stateKey]
         }
       }
     })()
   }, [])
 
-  const getReplacementCandidates = useCallback(async () => {
-    const input = loadInputForDetail() ?? loadLastTripInput()
+  const getReplacementCandidates = useCallback(async (requestInput?: TripInput | null) => {
+    const input = requestInput ?? loadLastTripInput()
     if (!input) throw new Error('Missing trip input')
 
     const response = await fetch('/api/get-candidates', {
@@ -391,6 +414,16 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       {children}
     </AnalysisSessionContext.Provider>
   )
+}
+
+function getPlanDetailStateKey(
+  planId: string,
+  source: PlanDetailSource,
+  recordId?: string | null,
+) {
+  return source === 'generated'
+    ? `generated:${planId}`
+    : `${source}:${recordId ?? planId}`
 }
 
 async function getSessionAuth() {

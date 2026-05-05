@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:unit": "node --import ./tests/unit/register-ts-js-extension-loader.mjs --test tests/unit/*.test.mjs",
     "points:manager": "node ./點數管理器/server.mjs",
     "preview": "vite preview"
   },

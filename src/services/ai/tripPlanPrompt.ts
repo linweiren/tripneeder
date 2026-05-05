@@ -5,12 +5,16 @@ import type {
 import type {
   BudgetLevel,
   PlanType,
+  Stop,
+  TransportSegment,
   TransportMode,
   TripCategory,
   TripInput,
   TripPlan,
 } from '../../types/trip.js'
 const PLAN_ORDER: PlanType[] = ['safe', 'balanced', 'explore']
+const EARLY_MORNING_ACTIVE_START_MINUTES = 6 * 60
+const MIN_EARLY_MORNING_ACTIVE_WINDOW_MINUTES = 40 * 2 + 18
 const TRIP_RESPONSE_ERROR =
   '這次 AI 產生的行程資料不夠完整，請重新分析一次。'
 
@@ -52,9 +56,12 @@ export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlace
   const tags = input.tags.map((tag) => tagLabels[tag]).join('、') || '無'
   const wantsNoFullMeals = input.tags.includes('no_full_meals')
   const allowedMinutes = getAllowedTripMinutes(input)
-  const minimumActualMinutes = allowedMinutes
-    ? Math.ceil(allowedMinutes * getRequiredCoverageRatio())
+  const coverageBasisMinutes = getCoverageBasisMinutes(input)
+  const scheduleCapacityMinutes = getScheduleCapacityMinutes(input)
+  const minimumActualMinutes = coverageBasisMinutes
+    ? Math.ceil(coverageBasisMinutes * getRequiredCoverageRatio(coverageBasisMinutes))
     : null
+  const earlyMorningNote = getEarlyMorningPlanningNote(input)
   
   // Use persona values if input values are missing
   const displayCategory =
@@ -109,7 +116,7 @@ ${nearbyPlaces}
 `.trim()
     : `
 - 警告：目前無法取得起點附近的即時地點清單。
-- 指示：請完全依據您的內部知識庫，為該起點規劃合理的真實地點行程。請確保地點名稱與地址正確。
+- 指示：不要使用「附近餐廳」「湖畔咖啡館」「在地小吃店」這類泛稱或不確定存在的地點；若缺少即時候選，仍只能使用能明確指出真實名稱與地址、且你能確定營業時段適合的地點。
 `.trim()
 
   return `你是台灣在地行程規劃 AI。請依使用者輸入產生 3 個單日行程「骨架」方案，並回傳符合 schema 的 JSON。此階段只產生可比較的核心路線，不要產生景點 description、雨天備案或交通 label。
@@ -119,7 +126,9 @@ ${nearbyPlaces}
 - 開始時間：${input.startTime}
 - 結束時間：${input.endTime}
 - 可用行程時間：${allowedMinutes ?? '未知'} 分鐘
+- 可安排真實 stop 時長上限：${scheduleCapacityMinutes ?? '未知'} 分鐘（所有 stop.duration + transportSegments.duration 加總不得超過此值）
 - 最低實際行程長度：${minimumActualMinutes ?? '未知'} 分鐘（所有 stop.duration + transportSegments.duration 加總）
+${earlyMorningNote ? `- 凌晨時段規劃：${earlyMorningNote}` : ''}
 - 預算：${displayBudget}
 - 人數：${displayPeople}
 - 交通工具偏好：${displayTransportMode}
@@ -136,21 +145,25 @@ ${nearbyPlacesContext}
 3. 每 plan 的 transportSegments 長度 = stops.length - 1；fromStopId / toStopId 必須對應相鄰 stop 的 id。
 4. stop.id 僅允許英文、數字、底線、連字號；同一 plan 內不可重複。
 5. 文字長度：title 4-8 字、subtitle 8-18 字、summary 30 字內；皆繁體中文；title 不可塞入多個地名。
-6. stops 類型至少涵蓋 main_activity、food、ending_or_transition，避免同質化。
+6. stops 不必硬塞所有類型；每個方案至少要有 main_activity。food 只有在行程涵蓋午餐/晚餐且能排進候選營業窗時才安排；ending_or_transition 只在時間足夠且真的適合作為收尾時安排。
 7. totalTime 為分鐘、budget 為新台幣元、stop.duration 與 transportSegments.duration 為分鐘。
 8. 若人數 ≥ 5，避開座位少、精緻小巧、不適合團體的店家或活動。
 9. 早餐規則：除非使用者明確要求早餐，否則不要把早餐作為 stop 名稱、主餐或主要餐飲安排。
 10. 午晚餐判定採「任意重疊」：行程與 11:00-13:00 有重疊即涵蓋午餐，與 17:00-19:00 有重疊即涵蓋晚餐。
-    - 未勾選「不吃正餐」時，涵蓋哪餐就在 stops 安排該餐的 food stop，且該 stop 實際停留時段需與該餐時段有重疊，不可把午餐排在 9 點等過早時段。只涵蓋一餐就只排一餐。
+    - 未勾選「不吃正餐」時，涵蓋哪餐才安排該餐的 food stop；該 stop 實際停留時段需與該餐時段有重疊，且候選營業窗必須足以停留至少 45 分鐘，不可把午餐排在 9 點等過早時段。只涵蓋一餐就只排一餐；若營業窗無法支撐正式用餐，改用非餐飲景點或可營業的輕食/咖啡，不要硬塞未開門餐廳。
     - 勾選「不吃正餐」時不排正餐，可改咖啡、甜點、點心或輕食。
+    - 未明確選擇「美食優先」時，food stop 優先選可坐下休息的 cafe / dessert / restaurant，不要讓整個方案的餐飲都變成傳統小吃、夜市或市場攤位。
 11. 時間覆蓋率：實際總分鐘數（所有 stop.duration + 所有交通段 duration）必須 >= 上方「最低實際行程長度」；totalTime 也必須等於這個實際總分鐘數。
-    - 可用時間 > 6h 時實際結束不得明顯早於指定結束：8-12h 最多提早 90 分、12-24h 最多提早 180 分。
-    - stops 不設硬性上限；時間越長可安排越多站，避免把單一 stop.duration 拉到不合理長度。
+    - 實際總分鐘數不得超過上方「可安排真實 stop 時長上限」。
+    - 可用時間 > 6h 時實際結束不得明顯早於指定結束：8-12h 最多提早 90 分、12-24h 最多提早 180 分；若有「凌晨時段規劃」提示，這條只套用在 06:00 後的有效活動時段，不要求用景點填滿凌晨緩衝。
+    - stops 不設硬性上限；時間越長可安排越多站，避免把單一 stop.duration 拉到不合理長度。4-8h 通常 3-5 站，8-12h 通常 4-6 站，12-16h 通常 5-7 站，16h 以上至少約 6 站，依候選營業窗調整。
 12. 不要在 summary 要求使用者自行新增停靠站；回傳結果需是可直接比較的完整路線骨架。
 13. 第一站距離起點必須 ≤ 2 km (若有經緯度座標時為硬性規則)。
 14. 交通效率建議 (軟性規則)：相鄰站點間交通時間建議 ≤ 30 分鐘；整日累積交通時間建議 ≤ 總行程時長的 25%。
 15. 規劃核心：必須以使用者提供的「起點」為地理中心點往外擴張，優先選擇附近的景點，避免跨區過遠。
 16. 禁止重複：在同一個方案（plan）中，禁止重複安排同一個地點。每個 stop 的名稱與地址必須是唯一的，不可讓使用者在不同時間點回到同一個地方。
+17. 跨方案多樣性：三個方案應盡量提供不同選擇；若候選池有可行替代，避免在不同方案重複使用同一個 placeId，但候選不足時允許重複以保留可用方案。
+18. 節奏品質：避免連續安排 3 個公園/戶外開放空間；非餐飲景點停留通常需至少 40 分鐘，餐飲至少 45 分鐘，不要用 20 分鐘短站湊數；交通時間不應佔總行程過高。
 
 JSON 範例（其餘欄位請依 schema）：
 {
@@ -176,7 +189,14 @@ JSON 範例（其餘欄位請依 schema）：
 `.trim()
 }
 
-export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona?: Persona, nearbyIndoorPlaces?: string, locationWarning?: string) {
+export function buildTripDetailsPrompt(
+  input: TripInput,
+  plan: TripPlan,
+  persona?: Persona,
+  nearbyIndoorPlaces?: string,
+  locationWarning?: string,
+  options: { includeRainBackup?: boolean } = {},
+) {
   const tags = input.tags.map((tag) => tagLabels[tag]).join('、') || '無'
   
   const displayCategory =
@@ -195,6 +215,8 @@ export function buildTripDetailsPrompt(input: TripInput, plan: TripPlan, persona
   const displayTransportMode = preferredTransportMode
     ? transportModeLabels[preferredTransportMode]
     : '未指定'
+  const includeRainBackup = options.includeRainBackup ?? true
+  const promptPlan = buildDetailsPromptSkeleton(plan)
 
   const personaContext = persona
     ? `
@@ -215,13 +237,19 @@ ${nearbyIndoorPlaces}
 雨天備案硬性規則：
 1. rainBackup 的所有景點必須從上方「真實室內地點參考」清單挑選，禁止自創、改寫或使用清單外地點。
 2. stop.name 必須逐字複製候選清單的 name；stop.address 必須逐字複製 address；若有 placeId 請原樣填入。
+3. 所有雨天備案候選都必須有明確 Google 營業時間；若候選含 hours，必須安排在可用時間內，且停留結束不可晚於 leaveBy。
+4. 優先使用 score 較高的候選；food stop 優先用 FOOD_CANDIDATES，main_activity 優先用 MAIN_ACTIVITY_CANDIDATES。
+5. 若候選含 bestSlots，請優先把 early 排在前段、middle 排在中段、late 排在尾段。
 `.trim()
   : `
 - 警告：目前無法取得起點附近的即時室內地點清單。
 - 指示：請完全依據您的內部知識庫，為該起點規劃合理的真實室內景點作為雨天備案。
 `.trim()
+  const rainBackupInstruction = includeRainBackup
+    ? 'rainBackup 可從真實室內地點參考中挑 2-4 站；若無法合法成立，回傳空陣列。'
+    : '本行程時間很長，這次不要產生雨天備案；rainBackup 與 rainTransportSegments 必須回傳空陣列。'
 
-  return `你是台灣在地行程規劃 AI。請只替下方單一骨架方案補完整細節，回傳符合 schema 的 JSON。
+  return `你是台灣在地行程規劃 AI。請只替下方單一骨架方案補必要細節，回傳符合 schema 的增量 JSON。
 
 使用者輸入：
 - 行程類型：${displayCategory}
@@ -237,19 +265,21 @@ ${personaContext}
 ${nearbyPlacesContext}
 
 骨架方案（JSON）：
-${JSON.stringify(plan, null, 2)}
+${JSON.stringify(promptPlan, null, 2)}
 
 補充規則：
-1. 必須保留原本 plan.id、type、title、subtitle、summary、totalTime、budget、transportMode、stops 的 id/name/type/address/duration 與 transportSegments 的 fromStopId/toStopId/mode/duration，不要替換主方案地點。
-2. 替每個主方案 stop 補 20-50 字繁體中文 description。
-3. transport label 為 4-16 字繁體中文摘要，禁含數字、分鐘、小時、公里。機車 / 汽車描述路線狀態；大眾運輸描述搭乘摘要。mode = public_transit 時請回傳 publicTransitType（bus/metro/train/walk/mixed，混合用 mixed）。
-4. 產生 rainBackup 與 rainTransportSegments；rainBackup 不可覆蓋主方案，但需符合相同時間、預算、餐食與人數限制。
-5. 雨天備案硬性規則：
+1. 只回傳 { "plan": { "stops": [...], "transportSegments": [...], "rainBackup": [...], "rainTransportSegments": [...] } }。
+2. 主方案 stops 只需要 id 與 description，不要回傳 name/address/duration/placeId，也不要替換主方案地點。
+3. 替每個主方案 stop 補 18-36 字繁體中文 description。
+4. transportSegments 只需要 fromStopId、toStopId、label，mode/duration 會由後端沿用原本資料。
+5. transport label 為 4-16 字繁體中文摘要，禁含數字、分鐘、小時、公里。機車 / 汽車描述路線狀態；大眾運輸描述搭乘摘要。
+6. ${rainBackupInstruction}
+7. 雨天備案硬性規則：
    - 景點必須是「室內」或「有遮蔽」的地點。
    - 儘量讓主方案與雨天備案的對應站點（如第一個景點對第一個備案）地理距離相近。
-6. rainBackup 每個 stop 都要有 20-50 字 description；rainTransportSegments 長度 = rainBackup.length - 1。
-7. 不要翻譯、羅馬拼音或改寫任何既有主方案 stop.name / stop.address；若原本是中文就必須維持中文。
-8. 回傳格式只能是 { "plan": ... }，不要多餘文字。
+8. 若產生 rainBackup，每個 stop 都要有 18-36 字 description；rainTransportSegments 長度 = rainBackup.length - 1。
+9. 不要翻譯、羅馬拼音或改寫任何既有主方案 stop.name / stop.address；若原本是中文就必須維持中文。
+10. 不要多餘文字。
 `.trim()
 }
 
@@ -268,12 +298,38 @@ export function buildRetryTripSkeletonPrompt(
   return `
 ${originalPrompt}
 
-重要：你之前產生的以下方案 ID 未通過 server 端品質檢查，請重新規劃這幾個方案。其餘方案仍需照 schema 回傳，但可維持原風格。
-請務必修正所有列出的問題：地點必須來自候選清單、能通過 Google Places 驗證、第一站 ≤ 2 km，且實際總分鐘數必須達到指定時間範圍的覆蓋率。
+重要：你之前產生的以下方案 ID 未通過 server 端品質檢查，請重新規劃這幾個方案。只回傳列出的方案 ID，不要回傳其餘已通過方案。
+請務必修正所有列出的問題：地點必須來自候選清單、能通過 Google Places 驗證、第一站 ≤ 2 km、安排時間需符合候選 hours / leaveBy，且實際總分鐘數必須達到指定時間範圍的覆蓋率。
+補案的 plan.id 與 type 必須逐字等於「需重產的方案 ID」；title 不可寫「方案一 / 方案二 / 方案三」，避免和前端排序混淆。
 
 需重產的方案 ID：${invalidPlanIds.join(', ')}
 ${validationContext}
 `.trim()
+}
+
+function buildDetailsPromptSkeleton(plan: TripPlan) {
+  return {
+    id: plan.id,
+    type: plan.type,
+    title: plan.title,
+    summary: plan.summary,
+    totalTime: plan.totalTime,
+    transportMode: plan.transportMode,
+    stops: plan.stops.map((stop) => ({
+      id: stop.id,
+      name: stop.name,
+      type: stop.type,
+      address: stop.address,
+      duration: stop.duration,
+    })),
+    transportSegments: plan.transportSegments.map((segment) => ({
+      fromStopId: segment.fromStopId,
+      toStopId: segment.toStopId,
+      mode: segment.mode,
+      publicTransitType: segment.publicTransitType,
+      duration: segment.duration,
+    })),
+  }
 }
 
 export function parseTripPlanResponse(text: string): GenerateTripPlansResponse {
@@ -301,8 +357,21 @@ export function parseTripPlanSkeletonResponse(text: string): GenerateTripPlansRe
   return parsed as GenerateTripPlansResponse
 }
 
+type TripPlanDetailsPatch = {
+  plan?: {
+    stops?: Array<Pick<Stop, 'id'> & Partial<Pick<Stop, 'description'>>>
+    transportSegments?: Array<
+      Pick<TransportSegment, 'fromStopId' | 'toStopId'> &
+        Partial<Pick<TransportSegment, 'label' | 'publicTransitType'>>
+    >
+    rainBackup?: TripPlan['rainBackup']
+    rainTransportSegments?: TripPlan['rainTransportSegments']
+  }
+}
+type TripPlanDetailsPatchPlan = NonNullable<TripPlanDetailsPatch['plan']>
+
 export function parseTripPlanDetailsResponse(text: string, skeletonPlan: TripPlan): TripPlan {
-  const parsed = parseJsonObject(text) as { plan: TripPlan }
+  const parsed = parseJsonObject(text) as TripPlanDetailsPatch
   
   if (!parsed || !parsed.plan) {
     throw new Error('詳情補充回傳格式不正確。')
@@ -313,7 +382,6 @@ export function parseTripPlanDetailsResponse(text: string, skeletonPlan: TripPla
   // 將骨架版的基礎資訊合併回來（以防 AI 弄亂）
   return {
     ...skeletonPlan,
-    ...detailedPlan,
     stops: mergeDetailedStops(skeletonPlan.stops, detailedPlan.stops),
     rainBackup: detailedPlan.rainBackup || [],
     transportMode: skeletonPlan.transportMode,
@@ -326,7 +394,10 @@ export function parseTripPlanDetailsResponse(text: string, skeletonPlan: TripPla
   }
 }
 
-function mergeDetailedStops(skeletonStops: TripPlan['stops'], detailedStops?: TripPlan['stops']) {
+function mergeDetailedStops(
+  skeletonStops: TripPlan['stops'],
+  detailedStops?: TripPlanDetailsPatchPlan['stops'],
+) {
   return skeletonStops.map((skeletonStop) => {
     const detailedStop = detailedStops?.find((stop) => stop.id === skeletonStop.id)
 
@@ -342,7 +413,7 @@ function mergeDetailedStops(skeletonStops: TripPlan['stops'], detailedStops?: Tr
 
 function mergeDetailedTransportSegments(
   skeletonSegments: TripPlan['transportSegments'],
-  detailedSegments?: TripPlan['transportSegments'],
+  detailedSegments?: TripPlanDetailsPatchPlan['transportSegments'],
 ) {
   return skeletonSegments.map((skeletonSegment) => {
     const detailedSegment = detailedSegments?.find(
@@ -399,6 +470,51 @@ function getAllowedTripMinutes(input: TripInput) {
   return end >= start ? end - start : end + 24 * 60 - start
 }
 
+function getCoverageBasisMinutes(input: TripInput) {
+  const start = parseTimeToMinutes(input.startTime)
+  let end = parseTimeToMinutes(input.endTime)
+
+  if (start === null || end === null) return null
+  if (end <= start) end += 24 * 60
+
+  if (shouldUseEarlyMorningActiveWindow(start, end)) {
+    return end - EARLY_MORNING_ACTIVE_START_MINUTES
+  }
+
+  return end - start
+}
+
+function getScheduleCapacityMinutes(input: TripInput) {
+  return getCoverageBasisMinutes(input)
+}
+
+function getEarlyMorningPlanningNote(input: TripInput) {
+  const start = parseTimeToMinutes(input.startTime)
+  let end = parseTimeToMinutes(input.endTime)
+
+  if (start === null || end === null) return ''
+  if (end <= start) end += 24 * 60
+  if (start < EARLY_MORNING_ACTIVE_START_MINUTES && end <= EARLY_MORNING_ACTIVE_START_MINUTES) {
+    return '整段行程落在 06:00 前的低營業密度時段；只能安排候選清單中已知在這段時間營業、且可完整停留至少 40 分鐘（餐飲至少 45 分鐘）的地點。不可安排 06:00 才開門或沒有 bestSlots 的候選。'
+  }
+  if (start >= EARLY_MORNING_ACTIVE_START_MINUTES || end <= EARLY_MORNING_ACTIVE_START_MINUTES) {
+    return ''
+  }
+  if (!shouldUseEarlyMorningActiveWindow(start, end)) {
+    return '行程只短暫跨到 06:00 後，06:00 後不足以排完整兩站；請以整段使用者時間窗為準，只能使用候選清單中已知在清晨/凌晨可完整停留的地點，不可自創地點或硬排未營業景點。'
+  }
+
+  return '行程橫跨凌晨與早晨，02:00-06:00 這類低營業密度時段可視為等待/休息/移動緩衝；請優先安排 06:00 後已知營業中的真實地點，不要為了塞滿凌晨而硬排未營業景點。'
+}
+
+function shouldUseEarlyMorningActiveWindow(start: number, end: number) {
+  return (
+    start < EARLY_MORNING_ACTIVE_START_MINUTES &&
+    end > EARLY_MORNING_ACTIVE_START_MINUTES &&
+    end - EARLY_MORNING_ACTIVE_START_MINUTES >= MIN_EARLY_MORNING_ACTIVE_WINDOW_MINUTES
+  )
+}
+
 function parseTimeToMinutes(value?: string) {
   if (!value || !/^\d{2}:\d{2}$/.test(value)) return null
 
@@ -406,7 +522,10 @@ function parseTimeToMinutes(value?: string) {
   return hour * 60 + minute
 }
 
-function getRequiredCoverageRatio() {
-  // 統一提升至 85%，確保行程時長符合使用者期望
-  return 0.85
+function getRequiredCoverageRatio(allowedMinutes: number) {
+  if (allowedMinutes <= 4 * 60) return 0.7
+  if (allowedMinutes <= 8 * 60) return 0.75
+  if (allowedMinutes <= 12 * 60) return 0.8
+
+  return 0.7
 }

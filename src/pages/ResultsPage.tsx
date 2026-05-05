@@ -1,14 +1,8 @@
 import { Link } from 'react-router-dom'
 import { useAnalysisSession } from '../contexts/analysisSession'
-import type { PlanType, TransportMode, TripPlan } from '../types/trip'
+import type { TransportMode, TripPlan } from '../types/trip'
 import { loadGeneratedPlans } from '../utils/tripPlanStorage'
 import { getPlanActualDuration } from '../utils/tripTiming'
-
-const planLabels: Record<PlanType, string> = {
-  safe: '保守型',
-  balanced: '平衡型',
-  explore: '探索型',
-}
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -26,13 +20,13 @@ export function ResultsPage() {
     return (
       <section className="page">
         <p className="page-kicker">尚未產生方案</p>
-        <h1 className="page-title">先告訴我你想怎麼出發。</h1>
+        <h1 className="page-title">這次沒有找到可用方案。</h1>
         <p className="page-copy">
-          三種方案會在你送出行程偏好後出現，不會直接從選單進入。
+          目前沒有符合營業時間與路線條件的行程，請調整時間或重新生成。
         </p>
-        <Link className="submit-button result-link" to="/">
+        <button className="submit-button result-link" type="button" onClick={resetAnalysisFlow}>
           回到行程規劃
-        </Link>
+        </button>
       </section>
     )
   }
@@ -52,13 +46,14 @@ export function ResultsPage() {
         </div>
       ) : null}
       <div className="result-grid">
-        {plans.map((plan) => (
+        {plans.map((plan, index) => (
           <PlanCard
             key={plan.id}
             plan={plan}
+            label={`方案${toChineseNumber(index + 1)}`}
             onSelect={(route) => {
               setFlowRoute(route)
-              requestPlanDetails(plan.id)
+              requestPlanDetails(plan.id, { source: 'generated' })
             }}
           />
         ))}
@@ -69,9 +64,11 @@ export function ResultsPage() {
 
 function PlanCard({
   plan,
+  label,
   onSelect,
 }: {
   plan: TripPlan
+  label: string
   onSelect: (route: string) => void
 }) {
   const stops = plan.stops ?? []
@@ -81,7 +78,7 @@ function PlanCard({
   return (
     <article className="plan-card">
       <div>
-        <p className="plan-type">{planLabels[plan.type]}</p>
+        <p className="plan-type">{label}</p>
         <h2>{plan.title}</h2>
         <p>{plan.summary}</p>
       </div>
@@ -123,6 +120,10 @@ function PlanCard({
       </Link>
     </article>
   )
+}
+
+function toChineseNumber(value: number) {
+  return ['一', '二', '三'][value - 1] ?? String(value)
 }
 
 function formatMinutes(minutes: number) {

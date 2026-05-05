@@ -2,6 +2,7 @@ import { supabase } from '../auth/supabaseClient'
 import type { TripInput, TripPlan } from '../../types/trip'
 import {
   createPlanFingerprint,
+  GENERATED_PLAN_IDS,
   loadFavoriteTripRecords,
   loadRecentTripRecords,
   MAX_RECENT_RECORDS,
@@ -9,7 +10,9 @@ import {
   saveFavoriteTrip,
   saveFavoriteTripRecords,
   saveGeneratedPlans,
+  updateFavoriteTripRecordById,
   updateFavoriteTripRecordPlan,
+  updateRecentTripRecordById,
   updateRecentTripRecordPlan,
   type StoredTripRecord,
 } from '../../utils/tripPlanStorage'
@@ -137,10 +140,20 @@ export async function removeFavoriteRecord(recordId: string, userId: string, pla
 }
 
 export async function saveRecentGeneratedRecords(plans: TripPlan[], input: TripInput, userId: string) {
+  if (plans.length === 0) return
+
   saveGeneratedPlans(plans, input, userId)
   setTripRecordCache('recent', userId, loadRecentTripRecords(userId))
 
   if (supabase) {
+    const planIds = Array.from(new Set([...GENERATED_PLAN_IDS, ...plans.map((plan) => plan.id)]))
+    if (planIds.length > 0) {
+      await supabase.from('trip_records').delete()
+        .eq('user_id', userId)
+        .eq('kind', 'recent')
+        .in('plan->>id', planIds)
+    }
+
     const { error } = await supabase.from('trip_records').insert(
       plans.map(plan => ({
         user_id: userId,
@@ -171,6 +184,37 @@ export async function upgradeRecentGeneratedRecord(plan: TripPlan, input: TripIn
         plan_fingerprint: createPlanFingerprint(plan),
       }).eq('id', record.id).eq('user_id', userId)
     }
+  }
+}
+
+export async function updateStoredTripRecordById(
+  kind: TripRecordKind,
+  recordId: string,
+  plan: TripPlan,
+  input: TripInput | null,
+  userId: string,
+) {
+  if (kind === 'recent') {
+    updateRecentTripRecordById(recordId, plan, input, userId)
+  } else {
+    updateFavoriteTripRecordById(recordId, plan, input, userId)
+    notifyFavoritesChanged()
+  }
+
+  setTripRecordCache(
+    kind,
+    userId,
+    kind === 'recent'
+      ? loadRecentTripRecords(userId)
+      : loadFavoriteTripRecords(userId),
+  )
+
+  if (supabase) {
+    await supabase.from('trip_records').update({
+      plan,
+      input,
+      plan_fingerprint: createPlanFingerprint(plan),
+    }).eq('id', recordId).eq('kind', kind).eq('user_id', userId)
   }
 }
 

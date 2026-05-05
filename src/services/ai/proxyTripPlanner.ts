@@ -20,7 +20,7 @@ export class ProxyTripPlanner implements AiTripPlanner {
   async generateTripPlans(
     request: GenerateTripPlansRequest,
   ): Promise<GenerateTripPlansResponse> {
-    const response = await fetch('/api/generate-trip', {
+    const response = await fetchTripApi('/api/generate-trip', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -92,6 +92,8 @@ export class ProxyTripPlanner implements AiTripPlanner {
           request.onPlan?.(parsed.plan)
         } else if (parsed.event === 'done') {
           finalResponse = parsed.response
+          await reader.cancel().catch(() => undefined)
+          return mergeWarnings(finalResponse, warnings)
         } else if (parsed.event === 'error') {
           errorMessage = parsed.message
         } else if (parsed.event === 'plan_warning') {
@@ -109,17 +111,7 @@ export class ProxyTripPlanner implements AiTripPlanner {
       throw new Error('這次 AI 產生的行程資料不夠完整，請重新分析一次。')
     }
 
-    const combinedWarnings = Array.from(
-      new Set([...(finalResponse.warnings ?? []), ...warnings]),
-    )
-    if (combinedWarnings.length > 0) {
-      finalResponse = {
-        ...finalResponse,
-        warnings: combinedWarnings,
-      }
-    }
-
-    return finalResponse
+    return mergeWarnings(finalResponse, warnings)
   }
 
   async recalculateTransport(
@@ -132,7 +124,7 @@ export class ProxyTripPlanner implements AiTripPlanner {
   async completeTripPlanDetails(
     request: CompleteTripPlanDetailsRequest,
   ): Promise<CompleteTripPlanDetailsResponse> {
-    const response = await fetch('/api/generate-trip-details', {
+    const response = await fetchTripApi('/api/generate-trip-details', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -166,6 +158,36 @@ export class ProxyTripPlanner implements AiTripPlanner {
 
     return data
   }
+}
+
+async function fetchTripApi(input: RequestInfo | URL, init?: RequestInit) {
+  try {
+    return await fetch(input, init)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error
+    }
+
+    throw new Error(
+      '無法連線到行程生成服務，可能是本地 dev server 正在重啟、網路中斷，或串流連線被切斷。請等伺服器重新啟動完成後再試一次。',
+    )
+  }
+}
+
+function mergeWarnings(
+  response: GenerateTripPlansResponse,
+  warnings: string[],
+) {
+  const combinedWarnings = Array.from(
+    new Set([...(response.warnings ?? []), ...warnings]),
+  )
+
+  return combinedWarnings.length > 0
+    ? {
+        ...response,
+        warnings: combinedWarnings,
+      }
+    : response
 }
 
 function isGenerateTripPlansResponse(

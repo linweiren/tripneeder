@@ -99,5 +99,6 @@ export type TripPlan = {
   transportSegments: TransportSegment[]
   rainBackup: Stop[]
   rainTransportSegments: TransportSegment[]
+  scheduleStartTime?: string
   isDetailComplete?: boolean
 }

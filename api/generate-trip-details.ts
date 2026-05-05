@@ -32,6 +32,7 @@ type VercelResponse = {
 }
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
+const DETAIL_PERFORMANCE_LOG_EVENT = '[detail-performance]'
 
 const SYSTEM_DEFAULT_PERSONA = {
   companion: '情侶 / 約會',
@@ -71,6 +72,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    const logPhase = createDetailPhaseTimer(request.plan.id)
     const supabase = createUserScopedSupabaseClient(accessToken)
     const userId = getUserIdFromToken(accessToken)
 
@@ -93,19 +95,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         locationWarning = `警告：系統無法精確定位起點「${request.input.location.name}」的經緯度。請 AI 依據您的知識庫為該處補齊雨天備案與詳情。`
       }
     }
+    logPhase('location-ready')
 
     const persona = await getMergedPersona(supabase, userId, request.input)
+    logPhase('persona-ready')
 
-    // 獲取室內地點候選，供雨天備案使用
-    const indoorInput = {
-      ...request.input,
-      tags: [...request.input.tags, 'indoor_first' as const],
+    const includeRainBackup = shouldRequestRainBackup(request.input)
+    let nearbyIndoorPlaces = ''
+    let nearbyIndoorCandidateCount = 0
+
+    if (includeRainBackup) {
+      // 獲取室內地點候選，供雨天備案使用
+      const indoorInput = {
+        ...request.input,
+        tags: [...request.input.tags, 'indoor_first' as const],
+      }
+      const nearbyIndoorCandidates = await getNearbyPlaceCandidates({
+        input: indoorInput,
+        persona,
+      })
+      nearbyIndoorPlaces = formatNearbyRecommendations(nearbyIndoorCandidates)
+      nearbyIndoorCandidateCount = nearbyIndoorCandidates.allCandidates.length
     }
-    const nearbyIndoorCandidates = await getNearbyPlaceCandidates({
-      input: indoorInput,
-      persona,
+
+    logPhase('indoor-candidates-ready', {
+      candidateCount: nearbyIndoorCandidateCount,
+      includeRainBackup,
     })
-    const nearbyIndoorPlaces = formatNearbyRecommendations(nearbyIndoorCandidates)
 
     const openAiResponse = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
@@ -126,7 +142,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   request.plan,
                   persona,
                   nearbyIndoorPlaces,
-                  locationWarning
+                  locationWarning,
+                  { includeRainBackup },
                 ),
               },
             ],
@@ -151,6 +168,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const data = (await openAiResponse.json()) as OpenAiResponse
     const text = extractOutputText(data)
+    logPhase('openai-complete', {
+      responseChars: text?.length ?? 0,
+    })
 
     if (!text) {
       res.status(502).json({ error: '細節補充失敗，請稍後再試。' })
@@ -158,6 +178,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const detailedPlan = parseTripPlanDetailsResponse(text, request.plan)
+    logPhase('parse-complete', {
+      stopCount: detailedPlan.stops.length,
+      rainStopCount: detailedPlan.rainBackup?.length ?? 0,
+    })
 
     // 9D: 將第一階段已經驗證過的 placeId 補回第二階段
     // 這樣可以確保詳情頁依然保有精準的地圖連結
@@ -182,13 +206,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const bias = request.input.location.lat && request.input.location.lng
       ? { lat: request.input.location.lat, lng: request.input.location.lng }
       : undefined
-    const { validatedPlan } = await validateStopsWithPlaces(detailedPlan, bias)
-    const stablePlan = preserveMainStopIdentity(validatedPlan, request.plan)
-    const routedPlan = await repairDetailedPlanRoutes(stablePlan)
+    const stableDetailedPlan = preserveMainStopIdentity(detailedPlan, request.plan)
+    const stablePlan = await validateRainBackupWithPlaces(stableDetailedPlan, bias, request.input)
+    logPhase('rain-places-validation-complete', {
+      rainStopCount: stablePlan.rainBackup?.length ?? 0,
+    })
+    const routedPlan = await repairDetailedPlanRoutes(stablePlan, request.input)
+    logPhase('routes-complete', {
+      mainSegments: routedPlan.transportSegments.length,
+      rainSegments: routedPlan.rainTransportSegments.length,
+    })
 
     res.status(200).json({
       plan: routedPlan,
     })
+    logPhase('done')
   } catch (error) {
     res.status(502).json({
       error: error instanceof Error ? error.message : '細節補充失敗，請稍後再試。',
@@ -196,17 +228,136 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-async function repairDetailedPlanRoutes(plan: TripPlan): Promise<TripPlan> {
-  const [mainRoutes, rainRoutes] = await Promise.all([
-    repairTransportSegments(plan.transportSegments || [], plan.stops || [], plan.transportMode),
-    repairTransportSegments(
-      plan.rainTransportSegments || [],
-      plan.rainBackup || [],
-      plan.transportMode,
-    ),
-  ])
+function createDetailPhaseTimer(planId: string) {
+  const startedAt = Date.now()
+  let previousAt = startedAt
+
+  return (phase: string, details: Record<string, unknown> = {}) => {
+    const now = Date.now()
+    console.info(DETAIL_PERFORMANCE_LOG_EVENT, {
+      planId,
+      phase,
+      phaseMs: now - previousAt,
+      elapsedMs: now - startedAt,
+      ...details,
+    })
+    previousAt = now
+  }
+}
+
+async function validateRainBackupWithPlaces(
+  plan: TripPlan,
+  bias: { lat: number; lng: number } | undefined,
+  input: TripInput,
+): Promise<TripPlan> {
+  const rainBackup = plan.rainBackup ?? []
+
+  if (rainBackup.length === 0) {
+    return {
+      ...plan,
+      rainBackup: [],
+      rainTransportSegments: [],
+    }
+  }
+
+  const validationPlan: TripPlan = {
+    ...plan,
+    stops: [],
+    transportSegments: [],
+    rainBackup,
+    rainTransportSegments: plan.rainTransportSegments ?? [],
+  }
+  const validation = await validateStopsWithPlaces(validationPlan, bias, input)
+  const invalidRainBackupStopIds = new Set(
+    validation.issues
+      .map((issue) => issue.stopId)
+      .filter((stopId) => validation.validatedPlan.rainBackup?.some((stop) => stop.id === stopId)),
+  )
+  const validRainBackup = (validation.validatedPlan.rainBackup ?? []).filter(
+    (stop) => !invalidRainBackupStopIds.has(stop.id),
+  )
+  const dedupedRainBackup = dedupeRainBackupStops(validRainBackup)
+  const rainBackupChanged = dedupedRainBackup.length !== validRainBackup.length
+
+  if (rainBackupChanged) {
+    console.warn('[rain-backup-deduped]', {
+      planId: plan.id,
+      before: validRainBackup.map((stop) => stop.name),
+      after: dedupedRainBackup.map((stop) => stop.name),
+    })
+  }
 
   return {
+    ...plan,
+    rainBackup: dedupedRainBackup,
+    rainTransportSegments: rainBackupChanged
+      ? []
+      : (validation.validatedPlan.rainTransportSegments ?? []).filter(
+          (segment) =>
+            !invalidRainBackupStopIds.has(segment.fromStopId) &&
+            !invalidRainBackupStopIds.has(segment.toStopId),
+        ),
+  }
+}
+
+function dedupeRainBackupStops(stops: TripPlan['stops']) {
+  const seenKeys = new Set<string>()
+
+  return stops.filter((stop) => {
+    const key = getRainBackupStopKey(stop)
+    if (seenKeys.has(key)) return false
+
+    seenKeys.add(key)
+    return true
+  })
+}
+
+function getRainBackupStopKey(stop: TripPlan['stops'][number]) {
+  return (
+    stop.placeId?.trim() ||
+    `${normalizeRainBackupText(stop.name)}|${normalizeRainBackupText(stop.address)}`
+  )
+}
+
+function normalizeRainBackupText(value: string) {
+  return value.trim().toLocaleLowerCase('zh-TW').replace(/\s+/g, '')
+}
+
+async function repairDetailedPlanRoutes(plan: TripPlan, input: TripInput): Promise<TripPlan> {
+  const shouldRepairMainRoutes = !hasCompleteTransportSegments(
+    plan.transportSegments || [],
+    plan.stops || [],
+  )
+  const shouldRepairRainRoutes = (plan.rainBackup?.length ?? 0) >= 2
+
+  if (shouldRepairMainRoutes) {
+    console.warn('[detail-main-route-repair]', {
+      planId: plan.id,
+      segmentCount: plan.transportSegments?.length ?? 0,
+      stopCount: plan.stops?.length ?? 0,
+    })
+  }
+
+  const [mainRoutes, rainRoutes] = await Promise.all([
+    shouldRepairMainRoutes
+      ? repairTransportSegments(plan.transportSegments || [], plan.stops || [], plan.transportMode)
+      : Promise.resolve({
+          segments: plan.transportSegments || [],
+          routesFailed: false,
+        }),
+    shouldRepairRainRoutes
+      ? repairTransportSegments(
+          plan.rainTransportSegments || [],
+          plan.rainBackup || [],
+          plan.transportMode,
+        )
+      : Promise.resolve({
+          segments: [],
+          routesFailed: false,
+        }),
+  ])
+
+  const routedPlan = {
     ...plan,
     totalTime:
       (plan.stops || []).reduce((total, stop) => total + stop.duration, 0) +
@@ -214,6 +365,41 @@ async function repairDetailedPlanRoutes(plan: TripPlan): Promise<TripPlan> {
     transportSegments: mainRoutes.segments,
     rainTransportSegments: rainRoutes.segments,
   }
+
+  const rainIssues = getRainBackupQualityIssues(routedPlan, input)
+  if (rainIssues.length === 0) return routedPlan
+
+  console.warn(`[rain-backup-quality] plan=${routedPlan.id} removed`, {
+    issues: rainIssues,
+    stopCount: routedPlan.rainBackup?.length ?? 0,
+    actualMinutes: getRainBackupActualDuration(routedPlan),
+  })
+
+  return {
+    ...routedPlan,
+    rainBackup: [],
+    rainTransportSegments: [],
+  }
+}
+
+function hasCompleteTransportSegments(
+  segments: TripPlan['transportSegments'],
+  stops: TripPlan['stops'],
+) {
+  const expectedLength = Math.max(stops.length - 1, 0)
+
+  if (segments.length !== expectedLength) return false
+
+  return segments.every((segment, index) => {
+    const nextStop = stops[index + 1]
+
+    return (
+      segment.fromStopId === stops[index]?.id &&
+      segment.toStopId === nextStop?.id &&
+      Number.isFinite(segment.duration) &&
+      segment.duration > 0
+    )
+  })
 }
 
 function preserveMainStopIdentity(plan: TripPlan, originalPlan: TripPlan): TripPlan {
@@ -240,6 +426,73 @@ function preserveMainStopIdentity(plan: TripPlan, originalPlan: TripPlan): TripP
     rainBackup: plan.rainBackup || [],
     rainTransportSegments: plan.rainTransportSegments || [],
   }
+}
+
+function getRainBackupQualityIssues(plan: TripPlan, input: TripInput) {
+  const issues: string[] = []
+  const stops = plan.rainBackup ?? []
+  const allowedMinutes = getAllowedTripMinutes(input)
+  const actualMinutes = getRainBackupActualDuration(plan)
+
+  if (stops.length > 0 && stops.length < 2) {
+    issues.push('雨天備案站點數不足')
+  }
+
+  stops.forEach((stop) => {
+    const minimumDuration = stop.type === 'food' ? 45 : 35
+    if (stop.duration < minimumDuration) {
+      issues.push(`${stop.name} 雨天備案停留時間過短`)
+    }
+  })
+
+  if (allowedMinutes && stops.length > 0) {
+    const minimumMinutes = Math.ceil(allowedMinutes * getRequiredCoverageRatio(allowedMinutes))
+    if (actualMinutes < minimumMinutes) {
+      issues.push(`雨天備案時長不足（目前 ${actualMinutes} 分鐘，至少需要 ${minimumMinutes} 分鐘）`)
+    }
+    if (actualMinutes > allowedMinutes) {
+      issues.push(`雨天備案超出可用時間（目前 ${actualMinutes} 分鐘，最多 ${allowedMinutes} 分鐘）`)
+    }
+  }
+
+  return Array.from(new Set(issues))
+}
+
+function getRainBackupActualDuration(plan: TripPlan) {
+  return (
+    (plan.rainBackup ?? []).reduce((total, stop) => total + stop.duration, 0) +
+    (plan.rainTransportSegments ?? []).reduce((total, segment) => total + segment.duration, 0)
+  )
+}
+
+function getAllowedTripMinutes(input: TripInput) {
+  const start = parseTimeToMinutes(input.startTime)
+  const end = parseTimeToMinutes(input.endTime)
+
+  if (start === null || end === null) return null
+
+  return end >= start ? end - start : end + 24 * 60 - start
+}
+
+function shouldRequestRainBackup(input: TripInput) {
+  const allowedMinutes = getAllowedTripMinutes(input)
+
+  return allowedMinutes === null || allowedMinutes <= 8 * 60
+}
+
+function parseTimeToMinutes(value?: string) {
+  if (!value || !/^\d{2}:\d{2}$/.test(value)) return null
+
+  const [hour, minute] = value.split(':').map(Number)
+  return hour * 60 + minute
+}
+
+function getRequiredCoverageRatio(allowedMinutes: number) {
+  if (allowedMinutes <= 4 * 60) return 0.7
+  if (allowedMinutes <= 8 * 60) return 0.75
+  if (allowedMinutes <= 12 * 60) return 0.8
+
+  return 0.7
 }
 
 function createUserScopedSupabaseClient(accessToken: string) {
