@@ -23,6 +23,12 @@ import {
 import HomeTitle from '../components/HomeTitle'
 import AnalysisMapMascot from '../components/AnalysisMapMascot'
 import mascotError from '../assets/mascot/mascot-error.png'
+import signpostDecoration from '../assets/mascot/signpost-decoration.png'
+import duration2hIcon from '../assets/mascot/2h.png'
+import duration3hIcon from '../assets/mascot/3h.png'
+import duration6hIcon from '../assets/mascot/6h.png'
+import duration10hIcon from '../assets/mascot/10h.png'
+import calendarIcon from '../assets/mascot/日曆.png'
 
 const categoryOptions: Array<{ value: TripCategory; label: string }> = [
   { value: 'date', label: '約會' },
@@ -56,12 +62,17 @@ const tagOptions: Array<{ value: TripTag; label: string }> = [
   { value: 'no_full_meals', label: '不吃正餐' },
 ]
 
-const durationOptions = [
-  { value: 120, label: '小逛一下', durationLabel: '2 小時' },
-  { value: 180, label: '輕鬆走走', durationLabel: '3 小時' },
-  { value: 360, label: '半日慢遊', durationLabel: '6 小時' },
-  { value: 600, label: '玩一整天', durationLabel: '10 小時' },
-  { value: -1, label: '自訂', durationLabel: '' },
+const durationOptions: Array<{
+  value: number
+  label: string
+  durationLabel: string
+  iconSrc: string
+}> = [
+  { value: 120, label: '小逛一下', durationLabel: '2 小時', iconSrc: duration2hIcon },
+  { value: 180, label: '輕鬆走走', durationLabel: '3 小時', iconSrc: duration3hIcon },
+  { value: 360, label: '半日慢遊', durationLabel: '6 小時', iconSrc: duration6hIcon },
+  { value: 600, label: '玩一整天', durationLabel: '10 小時', iconSrc: duration10hIcon },
+  { value: -1, label: '自訂', durationLabel: '', iconSrc: duration2hIcon },
 ]
 
 const transportModeOptions: Array<{ value: TransportMode; label: string }> = [
@@ -673,9 +684,25 @@ export function HomePage() {
       <form className="trip-form home-trip-form" onSubmit={handleSubmit}>
         <div className="home-top-panel">
           <div className="home-hero">
+            <div className="home-map-pin" aria-hidden="true" />
+            <svg
+              className="home-dashed-route"
+              viewBox="0 0 360 96"
+              preserveAspectRatio="none"
+              focusable="false"
+              aria-hidden="true"
+            >
+              <path d="M8 76 C50 41 88 88 130 72 C177 52 216 59 256 72 C291 83 322 76 344 38" />
+            </svg>
             <div className="home-hero-copy">
               <HomeTitle />
             </div>
+            <img
+              className="home-signpost-decoration"
+              src={signpostDecoration}
+              alt=""
+              aria-hidden="true"
+            />
           </div>
 
           <div className="home-action-card">
@@ -694,23 +721,34 @@ export function HomePage() {
                       type="button"
                       onClick={() => handleDurationSelect(option.value)}
                     >
-                      <span>{option.label}</span>
-                      <small>{option.durationLabel}</small>
+                      <span
+                        className={`duration-option-icon duration-option-icon-${option.value}`}
+                        aria-hidden="true"
+                      >
+                        <img src={option.iconSrc} alt="" />
+                      </span>
+                      <span className="duration-option-copy">
+                        <span>{option.label}</span>
+                        <small>{option.durationLabel}</small>
+                      </span>
                     </button>
                   ))}
                 </div>
-                <button
-                  className={
-                    duration === -1
-                      ? 'custom-duration-toggle custom-duration-toggle-active'
-                      : 'custom-duration-toggle'
-                  }
-                  type="button"
-                  aria-pressed={duration === -1}
-                  onClick={handleCustomDurationToggle}
-                >
-                  自訂結束時間
-                </button>
+                <div className="custom-duration-row">
+                  <span className="custom-duration-divider" aria-hidden="true" />
+                  <button
+                    className={
+                      duration === -1
+                        ? 'custom-duration-toggle custom-duration-toggle-active'
+                        : 'custom-duration-toggle'
+                    }
+                    type="button"
+                    aria-pressed={duration === -1}
+                    onClick={handleCustomDurationToggle}
+                  >
+                    <span>自訂結束時間</span>
+                  </button>
+                </div>
 
                 {duration === -1 && (
                    <div className="custom-duration-fields">
@@ -730,7 +768,8 @@ export function HomePage() {
 
               <div className="home-action-footer">
                 <div className="duration-display">
-                  預計玩到 <strong>{input.endTime || '--:--'}</strong>
+                  <img className="duration-display-icon" src={calendarIcon} alt="" aria-hidden="true" />
+                  <span>預計玩到</span> <strong>{input.endTime || '--:--'}</strong>
                   {isCrossDay && <span className="cross-day-note"> (明天)</span>}
                 </div>
 
@@ -751,7 +790,17 @@ export function HomePage() {
                     className="advanced-toggle-button"
                     onClick={() => setShowAdvanced(!showAdvanced)}
                   >
-                    {showAdvanced ? '收起進階設定 ↑' : `更多偏好設定 ${preferenceSummary} ↓`}
+                    <span className="advanced-toggle-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" focusable="false">
+                        <path d="M4 7h16" />
+                        <path d="M4 12h16" />
+                        <path d="M4 17h16" />
+                        <circle cx="9" cy="7" r="1.8" />
+                        <circle cx="15" cy="12" r="1.8" />
+                        <circle cx="8" cy="17" r="1.8" />
+                      </svg>
+                    </span>
+                    <span>{showAdvanced ? '收起進階設定' : `更多偏好設定 ${preferenceSummary}`}</span>
                   </button>
                 </div>
               </div>
