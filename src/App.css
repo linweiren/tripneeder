@@ -166,18 +166,18 @@
 }
 
 .auth-button {
-  min-height: 52px;
+  min-height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 20px;
+  padding: 6px 14px;
   color: #4d473e;
   background: rgba(255, 252, 246, 0.72);
   border: 1px solid rgba(96, 86, 72, 0.3);
-  border-radius: 10px;
+  border-radius: 7px;
   cursor: pointer;
   font: inherit;
-  font-size: 22px;
+  font-size: 15px;
   font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
@@ -703,7 +703,7 @@
 .duration-option-icon-120 img {
   width: 92px;
   height: 92px;
-  transform: translate(-6px, -6px);
+  transform: translate(-8px, -6px);
 }
 
 .chip,
@@ -2693,7 +2693,7 @@
   .duration-option-icon-120 img {
     width: 58px;
     height: 58px;
-    transform: translate(-4px, -4px);
+    transform: translate(-5.33px, -4px);
   }
 
   .duration-chip-grid .chip span {
@@ -3069,9 +3069,9 @@
   }
 
   .auth-button {
-    min-height: 40px;
-    padding: 7px 12px;
-    font-size: 17px;
+    min-height: 28px;
+    padding: 5px 8px;
+    font-size: 12px;
   }
 
   .points-history li {
@@ -3145,7 +3145,7 @@
   .duration-option-icon-120 img {
     width: 52px;
     height: 52px;
-    transform: translate(-3.5px, -3.5px);
+    transform: translate(-4.66px, -3.5px);
   }
 
   .duration-chip-grid .chip span {
