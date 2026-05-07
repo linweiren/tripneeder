@@ -20,6 +20,7 @@ import {
   initializeUserProfile,
   type UserProfile,
 } from '../services/points/pointsService'
+import { AppSelect, type AppSelectOption } from '../components/ui/AppSelect'
 import HomeTitle from '../components/HomeTitle'
 import AnalysisMapMascot from '../components/AnalysisMapMascot'
 import mascotError from '../assets/mascot/mascot-error.png'
@@ -102,6 +103,14 @@ const hourOptions = Array.from({ length: 24 }, (_, index) =>
 )
 
 const minuteOptions = ['00', '15', '30', '45']
+const hourSelectOptions: Array<AppSelectOption<string>> = hourOptions.map((option) => ({
+  value: option,
+  label: option,
+}))
+const minuteSelectOptions: Array<AppSelectOption<string>> = minuteOptions.map((option) => ({
+  value: option,
+  label: option,
+}))
 const FAST_LOCATION_TARGET_ACCURACY_METERS = 300
 const MAX_ACCEPTABLE_LOCATION_ACCURACY_METERS = 1200
 
@@ -1059,31 +1068,23 @@ function TimeSelect({ label, value, onChange }: TimeSelectProps) {
     <div className="field-label">
       <span>{label}</span>
       <div className="time-select-group">
-        <select
-          aria-label={`${label} 小時`}
+        <AppSelect
+          ariaLabel={`${label} 小時`}
           value={hour}
-          onChange={(event) => updateTime(event.target.value, minute)}
-        >
-          <option value="">時</option>
-          {hourOptions.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+          options={hourSelectOptions}
+          placeholder="時"
+          className="app-select--compact"
+          onChange={(nextHour) => updateTime(nextHour, minute)}
+        />
         <span aria-hidden="true">:</span>
-        <select
-          aria-label={`${label} 分鐘`}
+        <AppSelect
+          ariaLabel={`${label} 分鐘`}
           value={minute}
-          onChange={(event) => updateTime(hour, event.target.value)}
-        >
-          <option value="">分</option>
-          {minuteOptions.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+          options={minuteSelectOptions}
+          placeholder="分"
+          className="app-select--compact"
+          onChange={(nextMinute) => updateTime(hour, nextMinute)}
+        />
       </div>
     </div>
   )
