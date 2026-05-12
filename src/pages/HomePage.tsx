@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
+import { CheckCircle, LoaderCircle } from 'lucide-react'
 import { useAuth } from '../contexts/auth'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import { useDialog } from '../contexts/dialog'
@@ -22,8 +23,8 @@ import {
 } from '../services/points/pointsService'
 import { AppSelect, type AppSelectOption } from '../components/ui/AppSelect'
 import HomeTitle from '../components/HomeTitle'
-import AnalysisMapMascot from '../components/AnalysisMapMascot'
 import mascotError from '../assets/mascot/mascot-error.png'
+import mascotMapReference from '../assets/mascot/mascot-map-reference.png'
 import signpostDecoration from '../assets/mascot/signpost-decoration.png'
 import duration2hIcon from '../assets/mascot/2h.png'
 import duration3hIcon from '../assets/mascot/3h.png'
@@ -113,6 +114,7 @@ const minuteSelectOptions: Array<AppSelectOption<string>> = minuteOptions.map((o
 }))
 const FAST_LOCATION_TARGET_ACCURACY_METERS = 300
 const MAX_ACCEPTABLE_LOCATION_ACCURACY_METERS = 1200
+const ANALYSIS_COST = 20
 
 type PreferenceSource = 'current' | 'persona' | 'system'
 
@@ -380,9 +382,19 @@ export function HomePage() {
 
   async function handleLocatePreferred(): Promise<TripLocation | null> {
     if (!navigator.geolocation) {
-      return handleLocate()
+      console.debug('[trip-location-source]', {
+        at: new Date().toISOString(),
+        source: 'fallback blocked',
+        reason: 'geolocation unavailable',
+      })
+      void dialog.alert({
+        title: '無法取得目前位置',
+        message: '無法取得目前位置，請改用手動輸入地點。',
+      })
+      return null
     }
 
+    console.debug('[trip-location-start]', { at: new Date().toISOString() })
     setIsLocating(true)
     setLocationStatus('')
 
@@ -392,6 +404,13 @@ export function HomePage() {
       const lng = position.coords.longitude
       const accuracy = Math.round(position.coords.accuracy)
       const location: TripLocation = { lat, lng, name: '' }
+      console.debug('[trip-location-source]', {
+        at: new Date().toISOString(),
+        source: 'browser GPS',
+        lat,
+        lng,
+        accuracy,
+      })
 
       setInput((current) => ({
         ...current,
@@ -408,11 +427,21 @@ export function HomePage() {
 
       return location
     } catch (error) {
+      console.debug('[trip-location-source]', {
+        at: new Date().toISOString(),
+        source: 'fallback blocked',
+        reason: error instanceof Error ? error.message : 'geolocation failed',
+      })
+      void dialog.alert({
+        title: '無法取得目前位置',
+        message: '無法取得目前位置，請改用手動輸入地點。',
+      })
+      return null
       void dialog.alert({
         title: '無法取得定位',
         message:
-          error instanceof Error && error.message
-            ? error.message
+          error instanceof Error && (error as Error).message
+            ? (error as Error).message
             : '無法取得您的定位，請檢查定位權限後再試一次。',
       })
       return null
@@ -467,7 +496,7 @@ export function HomePage() {
     })()
   }
 
-  async function startAnalysis() {
+  async function startAnalysisLegacy() {
     setFormError('')
 
     if (!isCompleteTime(input.endTime)) {
@@ -527,6 +556,116 @@ export function HomePage() {
     }
   }
 
+  async function startAnalysis() {
+    console.debug('[trip-start-click]', { at: new Date().toISOString() })
+    setFormError('')
+
+    if (!isCompleteTime(input.endTime)) {
+      void dialog.alert({
+        title: '時間尚未完整',
+        message: '請先選擇行程結束時間。',
+      })
+      return
+    }
+
+    if (!user) {
+      const confirmed = await dialog.confirm({
+        title: loginPromptTitle,
+        message: loginPromptMessage,
+      })
+
+      if (confirmed) {
+        navigate('/login', { state: { from: '/' } })
+      }
+
+      return
+    }
+
+    const currentInput = { ...input, location: { ...input.location } }
+    const hasLocationData = hasTripLocation(currentInput.location)
+    const canLocateAfterConfirmation = useCurrentLocation && !hasLocationData
+
+    if (!hasLocationData && !canLocateAfterConfirmation) {
+      setFormError('無法取得目前位置，請改用手動輸入地點。')
+      setShowAdvanced(true)
+      return
+    }
+
+    if (!isValidInputForConfirmation(currentInput, canLocateAfterConfirmation)) {
+      setFormError('請先完成必要欄位，再開始生成行程。')
+      setShowAdvanced(true)
+      return
+    }
+
+    if (profile && profile.points_balance < ANALYSIS_COST) {
+      void dialog.alert({
+        title: '點數不足',
+        message: `本次生成需要 ${ANALYSIS_COST} 點，目前剩餘 ${profile.points_balance} 點。`,
+      })
+      return
+    }
+
+    console.debug('[trip-points-dialog-open]', { at: new Date().toISOString() })
+    const confirmed = await dialog.confirm({
+      title: '確認生成行程',
+      message: `本次生成會扣除 ${ANALYSIS_COST} 點。`,
+      confirmLabel: '確認並扣點',
+      cancelLabel: '取消',
+    })
+
+    if (!confirmed) {
+      return
+    }
+
+    console.debug('[trip-points-confirmed]', { at: new Date().toISOString() })
+
+    const finalInput = { ...currentInput, location: { ...currentInput.location } }
+    if (!hasTripLocation(finalInput.location)) {
+      const autoLocation = await handleLocatePreferred()
+      if (!autoLocation) {
+        console.debug('[trip-location-source]', {
+          at: new Date().toISOString(),
+          source: 'fallback blocked',
+        })
+        setFormError('無法取得目前位置，請改用手動輸入地點。')
+        setShowAdvanced(true)
+        return
+      }
+      finalInput.location = autoLocation
+    } else if (
+      typeof finalInput.location.lat === 'number' &&
+      typeof finalInput.location.lng === 'number'
+    ) {
+      console.debug('[trip-location-source]', {
+        at: new Date().toISOString(),
+        source: 'browser GPS',
+        lat: finalInput.location.lat,
+        lng: finalInput.location.lng,
+        label: finalInput.location.name,
+      })
+    } else {
+      console.debug('[trip-location-source]', {
+        at: new Date().toISOString(),
+        source: 'manual input',
+        label: finalInput.location.name,
+      })
+    }
+
+    if (!isValidInput(finalInput)) {
+      setFormError('無法取得目前位置，請改用手動輸入地點。')
+      setShowAdvanced(true)
+      return
+    }
+
+    console.debug('[trip-generate-start-location]', {
+      at: new Date().toISOString(),
+      lat: finalInput.location.lat,
+      lng: finalInput.location.lng,
+      label: finalInput.location.name,
+    })
+    await startSessionAnalysis(finalInput)
+  }
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     void startAnalysis()
@@ -544,6 +683,9 @@ export function HomePage() {
     }
   }
 
+  void handleLocate
+  void startAnalysisLegacy
+
   if (session?.status === 'success') {
     return <Navigate to={session.lastRoute} replace />
   }
@@ -551,7 +693,9 @@ export function HomePage() {
   // 只有在還沒成功，且正在分析中或有錯誤時才顯示載入/錯誤畫面
   if (isAnalysisInProgress || analysisError) {
     const partialPlans = session?.partialPlans ?? []
-    const readyCount = Math.min(partialPlans.length, 3)
+    const completedCount = Math.min(partialPlans.length, 3)
+    const totalCount = 3
+    const percent = Math.round((completedCount / totalCount) * 100)
 
     return (
       <section className="page trip-loading">
@@ -563,7 +707,7 @@ export function HomePage() {
           className={
             analysisError
               ? 'loading-panel empty-record-panel error-state-panel'
-              : 'loading-panel loading-panel-with-mascot'
+              : 'analysis-progress-layout'
           }
           role="status"
           aria-live="polite"
@@ -576,69 +720,103 @@ export function HomePage() {
               alt="分析失敗"
             />
           ) : (
-            <AnalysisMapMascot />
+            <>
+              <div className="analysis-progress-hero">
+                <div className="analysis-progress-copy">
+                  <h1>正在為你整理旅程提案</h1>
+                </div>
+                <img
+                  className="analysis-progress-mascot"
+                  src={mascotMapReference}
+                  alt=""
+                  aria-hidden="true"
+                />
+                <div className="analysis-progress-panel">
+                  <div className="analysis-progress-meta">
+                    <span>已完成 {completedCount} / {totalCount} 個方案</span>
+                    <strong>{percent}%</strong>
+                  </div>
+                  <div className="analysis-progress-track">
+                    <span
+                      className="analysis-progress-fill"
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <ul className="analysis-plan-list">
+                {planSlotLabels.map((slotLabel, index) => {
+                  const plan = partialPlans[index]
+                  const isReady = Boolean(plan?.title)
+                  const isGenerating = !isReady && index === completedCount
+
+                  return (
+                    <li
+                      key={slotLabel}
+                      className={[
+                        'analysis-plan-card',
+                        isReady ? 'is-ready' : '',
+                        isGenerating ? 'is-generating' : '',
+                        !isReady && !isGenerating ? 'is-waiting' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      <div className="analysis-plan-card-header">
+                        <span className="analysis-plan-pill">{slotLabel}</span>
+                        {isReady ? (
+                          <span className="analysis-status-badge is-complete">
+                            <CheckCircle size={17} strokeWidth={2.2} aria-hidden="true" />
+                            已完成
+                          </span>
+                        ) : isGenerating ? (
+                          <span className="analysis-status-badge is-generating">
+                            <LoaderCircle size={17} strokeWidth={2.2} aria-hidden="true" />
+                            生成中...
+                          </span>
+                        ) : (
+                          <span className="analysis-status-badge is-waiting">
+                            等待中
+                          </span>
+                        )}
+                      </div>
+
+                      {isReady ? (
+                        <div className="analysis-plan-content">
+                          <h2>{plan?.title}</h2>
+                          {/* 僅保留一段簡短敘述，優先顯示 subtitle，若無則顯示 summary */}
+                          {(plan?.subtitle || plan?.summary) ? (
+                            <p>{plan.subtitle || plan.summary}</p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="analysis-plan-skeleton" aria-hidden="true">
+                          <span className="analysis-skeleton-dot" />
+                          <span className="analysis-skeleton-line analysis-skeleton-line-title" />
+                          <span className="analysis-skeleton-line analysis-skeleton-line-wide" />
+                          <span className="analysis-skeleton-line analysis-skeleton-line-medium" />
+                        </div>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+
+              <div className="analysis-bottom-actions">
+                <button
+                  className="analysis-cancel-button"
+                  type="button"
+                  onClick={() => void handleCancelAnalysis()}
+                >
+                  取消分析
+                </button>
+              </div>
+            </>
           )}
-          
-          {!analysisError ? (
-            <div style={{ textAlign: 'inherit' }}>
-              <h2>
-                {readyCount === 0
-                    ? '正在整理你的旅行偏好...'
-                    : `已完成 ${readyCount} / 3 個方案`}
-              </h2>
-            </div>
-          ) : null}
 
           {analysisError ? (
             <p className="analysis-no-charge-note">分析失敗不扣除點數</p>
-          ) : null}
-
-          {!analysisError ? (
-            <ul className="plan-skeleton-list">
-              {planSlotLabels.map((slotLabel, index) => {
-                const plan = partialPlans[index]
-                const isReady = Boolean(plan?.title)
-                return (
-                  <li
-                    key={slotLabel}
-                    className={`plan-skeleton-card${isReady ? ' is-ready' : ''}`}
-                  >
-                    <span className="plan-skeleton-tag">{slotLabel}</span>
-                    {isReady ? (
-                      <>
-                        <h3 className="plan-skeleton-title">{plan?.title}</h3>
-                        {plan?.subtitle ? (
-                          <p className="plan-skeleton-subtitle">
-                            {plan.subtitle}
-                          </p>
-                        ) : null}
-                        {plan?.summary ? (
-                          <p className="plan-skeleton-summary">{plan.summary}</p>
-                        ) : null}
-                      </>
-                    ) : (
-                      <>
-                        <span className="plan-skeleton-bar plan-skeleton-bar-title" />
-                        <span className="plan-skeleton-bar plan-skeleton-bar-subtitle" />
-                        <span className="plan-skeleton-bar plan-skeleton-bar-summary" />
-                      </>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-          ) : null}
-
-          {!analysisError ? (
-            <div className="loading-actions">
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => void handleCancelAnalysis()}
-              >
-                取消分析
-              </button>
-            </div>
           ) : null}
 
           {analysisError ? (
@@ -1091,10 +1269,7 @@ function TimeSelect({ label, value, onChange }: TimeSelectProps) {
 }
 
 function isValidInput(input: TripInput) {
-  const hasLocation =
-    (input.location.name && input.location.name.trim().length > 0) ||
-    (typeof input.location.lat === 'number' &&
-      typeof input.location.lng === 'number')
+  const hasLocation = hasTripLocation(input.location)
 
   return (
     (input.category === undefined || input.category.length > 0) &&
@@ -1105,6 +1280,24 @@ function isValidInput(input: TripInput) {
     (input.budget === undefined || input.budget.length > 0) &&
     (input.people === undefined || (input.people >= 1 && input.people <= 10)) &&
     hasLocation
+  )
+}
+
+function isValidInputForConfirmation(input: TripInput, canLocateAfterConfirmation: boolean) {
+  if (canLocateAfterConfirmation) {
+    return isValidInput({
+      ...input,
+      location: { name: 'current-location-pending' },
+    })
+  }
+
+  return isValidInput(input)
+}
+
+function hasTripLocation(location: TripLocation) {
+  return (
+    Boolean(location.name && location.name.trim().length > 0) ||
+    (typeof location.lat === 'number' && typeof location.lng === 'number')
   )
 }
 
