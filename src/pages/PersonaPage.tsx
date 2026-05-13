@@ -1,9 +1,22 @@
 import { useEffect, useState } from 'react'
+import {
+  CarFront,
+  CheckCircle,
+  PersonStanding,
+  RotateCcw,
+  Users,
+  UsersRound,
+  Utensils,
+  Wallet,
+} from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../services/auth/supabaseClient'
 import { initializeUserProfile, getCachedUserProfile } from '../services/points/pointsService'
 import { useAuth } from '../contexts/auth'
+import { AppSelect, type AppSelectOption } from '../components/ui/AppSelect'
 import type { TransportMode } from '../types/trip'
+import personaHeroLeaf from '../assets/mascot/葉子.png'
+import personaHeroSignpost from '../assets/mascot/山指示牌.png'
 
 const transportModeOptions: Array<{ value: TransportMode; label: string }> = [
   { value: 'scooter', label: '機車' },
@@ -19,6 +32,44 @@ const DEFAULT_PERSONA_FORM = {
   people: '' as number | '',
   diet: '',
 }
+
+const companionOptions: Array<AppSelectOption<string>> = [
+  { value: '', label: '未設定 (使用預設: 情侶 / 約會)' },
+  { value: '情侶 / 約會', label: '情侶 / 約會' },
+  { value: '家人', label: '家人' },
+  { value: '朋友', label: '朋友' },
+  { value: '同事', label: '同事' },
+  { value: '獨旅', label: '獨旅' },
+  { value: '其他', label: '其他' },
+]
+
+const budgetOptions: Array<AppSelectOption<string>> = [
+  { value: '', label: '未設定 (使用預設: 一般)' },
+  { value: '小資', label: '小資' },
+  { value: '一般', label: '一般' },
+  { value: '輕奢', label: '輕奢' },
+  { value: '豪華', label: '豪華' },
+]
+
+const staminaOptions: Array<AppSelectOption<string>> = [
+  { value: '', label: '未設定 (使用預設: 普通)' },
+  { value: '弱', label: '弱 (偏好慢節奏)' },
+  { value: '普通', label: '普通' },
+  { value: '強', label: '強 (可以一直走)' },
+]
+
+const personaTransportModeOptions: Array<AppSelectOption<TransportMode>> = [
+  { value: '', label: '不指定，讓 AI 依行程判斷' },
+  ...transportModeOptions,
+]
+
+const peopleOptions: Array<AppSelectOption<number>> = [
+  { value: '', label: '未設定 (使用預設: 2 人)' },
+  ...Array.from({ length: 10 }, (_, index) => {
+    const value = index + 1
+    return { value, label: `${value} 人` }
+  }),
+]
 
 export function PersonaPage() {
   const { user } = useAuth()
@@ -158,100 +209,113 @@ export function PersonaPage() {
 
   return (
     <div className="persona-page">
-      <div className="page-header">
-        <h1 className="page-title">個性化設定</h1>
-        <p className="page-copy">設定您的旅遊人設，讓 AI 產生更貼近您偏好的行程（隨時可修改）。</p>
+      <div className="persona-hero">
+        <img className="persona-title-art" src={personaHeroLeaf} alt="" aria-hidden="true" />
+        <div className="persona-hero-title-block">
+          <h1 className="page-title">個性化設定</h1>
+          <p className="page-copy">設定您的旅遊人設，讓 AI 產生更貼近您偏好的行程（隨時可修改）。</p>
+        </div>
+        <img
+          className="persona-hero-art"
+          src={personaHeroSignpost}
+          alt=""
+          aria-hidden="true"
+        />
       </div>
 
       <form className="persona-form" onSubmit={(e) => void handleSave(e)}>
-        <div className="form-group">
-          <label htmlFor="companion">同行對象</label>
-          <select
-            id="companion"
-            value={companion}
-            onChange={(e) => setCompanion(e.target.value)}
-          >
-            <option value="">未設定 (使用預設: 情侶 / 約會)</option>
-            <option value="情侶 / 約會">情侶 / 約會</option>
-            <option value="家人">家人</option>
-            <option value="朋友">朋友</option>
-            <option value="同事">同事</option>
-            <option value="獨旅">獨旅</option>
-            <option value="其他">其他</option>
-          </select>
-        </div>
+        <div className="persona-card">
+          <div className="persona-field-row">
+            <span className="persona-field-icon" aria-hidden="true">
+              <Users size={24} strokeWidth={1.8} />
+            </span>
+            <label htmlFor="companion">同行對象</label>
+            <div className="persona-control">
+              <AppSelect
+                id="companion"
+                value={companion}
+                options={companionOptions}
+                onChange={setCompanion}
+              />
+            </div>
+          </div>
 
-        <div className="form-group">
-          <label htmlFor="budget">預算感</label>
-          <select
-            id="budget"
-            value={budget}
-            onChange={(e) => setBudget(e.target.value)}
-          >
-            <option value="">未設定 (使用預設: 一般)</option>
-            <option value="小資">小資</option>
-            <option value="一般">一般</option>
-            <option value="輕奢">輕奢</option>
-            <option value="豪華">豪華</option>
-          </select>
-        </div>
+          <div className="persona-field-row">
+            <span className="persona-field-icon" aria-hidden="true">
+              <Wallet size={24} strokeWidth={1.8} />
+            </span>
+            <label htmlFor="budget">預算感</label>
+            <div className="persona-control">
+              <AppSelect
+                id="budget"
+                value={budget}
+                options={budgetOptions}
+                onChange={setBudget}
+              />
+            </div>
+          </div>
 
-        <div className="form-group">
-          <label htmlFor="stamina">體力狀況</label>
-          <select
-            id="stamina"
-            value={stamina}
-            onChange={(e) => setStamina(e.target.value)}
-          >
-            <option value="">未設定 (使用預設: 普通)</option>
-            <option value="弱">弱 (偏好慢節奏)</option>
-            <option value="普通">普通</option>
-            <option value="強">強 (可以一直走)</option>
-          </select>
-        </div>
+          <div className="persona-field-row">
+            <span className="persona-field-icon" aria-hidden="true">
+              <PersonStanding size={25} strokeWidth={1.8} />
+            </span>
+            <label htmlFor="stamina">體力狀況</label>
+            <div className="persona-control">
+              <AppSelect
+                id="stamina"
+                value={stamina}
+                options={staminaOptions}
+                onChange={setStamina}
+              />
+            </div>
+          </div>
 
-        <div className="form-group">
-          <label htmlFor="transportMode">常用交通工具</label>
-          <select
-            id="transportMode"
-            value={transportMode}
-            onChange={(e) => setTransportMode(e.target.value as TransportMode | '')}
-          >
-            <option value="">不指定，讓 AI 依行程判斷</option>
-            {transportModeOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
+          <div className="persona-field-row">
+            <span className="persona-field-icon" aria-hidden="true">
+              <CarFront size={24} strokeWidth={1.8} />
+            </span>
+            <label htmlFor="transportMode">常用交通工具</label>
+            <div className="persona-control">
+              <AppSelect
+                id="transportMode"
+                value={transportMode}
+                options={personaTransportModeOptions}
+                onChange={setTransportMode}
+              />
+            </div>
+          </div>
 
-        <div className="form-group">
-          <label htmlFor="people">經常出遊人數</label>
-          <select
-            id="people"
-            value={people}
-            onChange={(e) => setPeople(e.target.value === '' ? '' : Number(e.target.value))}
-          >
-            <option value="">未設定 (使用預設: 2 人)</option>
-            {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => (
-              <option key={value} value={value}>
-                {value} 人
-              </option>
-            ))}
-          </select>
-        </div>
+          <div className="persona-field-row">
+            <span className="persona-field-icon" aria-hidden="true">
+              <UsersRound size={24} strokeWidth={1.8} />
+            </span>
+            <label htmlFor="people">經常出遊人數</label>
+            <div className="persona-control">
+              <AppSelect
+                id="people"
+                value={people}
+                options={peopleOptions}
+                onChange={setPeople}
+              />
+            </div>
+          </div>
 
-        <div className="form-group">
-          <label htmlFor="diet">飲食禁忌</label>
-          <input
-            id="diet"
-            type="text"
-            placeholder="例如：不吃牛、全素、海鮮過敏..."
-            value={diet}
-            onChange={(e) => setDiet(e.target.value)}
-          />
-          <p className="field-hint">若無則留空 (預設為無飲食禁忌)</p>
+          <div className="persona-field-row persona-diet-row">
+            <span className="persona-field-icon" aria-hidden="true">
+              <Utensils size={23} strokeWidth={1.8} />
+            </span>
+            <div className="persona-control persona-diet-control">
+              <label htmlFor="diet">飲食禁忌</label>
+              <input
+                id="diet"
+                type="text"
+                placeholder="例如：不吃牛、全素、海鮮過敏..."
+                value={diet}
+                onChange={(e) => setDiet(e.target.value)}
+              />
+              <p className="field-hint">若無則留空（預設為無飲食禁忌）</p>
+            </div>
+          </div>
         </div>
 
         <div className="form-actions">
@@ -261,6 +325,7 @@ export function PersonaPage() {
               type="submit"
               disabled={isSaving || isResetting}
             >
+              <CheckCircle size={20} strokeWidth={2} aria-hidden="true" />
               {isSaving ? '儲存中...' : '儲存設定'}
             </button>
             <button
@@ -269,6 +334,7 @@ export function PersonaPage() {
               disabled={isSaving || isResetting}
               onClick={() => void handleReset()}
             >
+              <RotateCcw size={20} strokeWidth={2} aria-hidden="true" />
               {isResetting ? '重設中...' : '重設設定'}
             </button>
           </div>

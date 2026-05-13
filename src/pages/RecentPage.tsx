@@ -16,6 +16,8 @@ import {
   loginPromptMessage,
   loginPromptTitle,
 } from '../utils/loginPrompt'
+import historyBottomBg from '../assets/mascot/history-bottom-bg.png'
+import recentTitleArt from '../assets/mascot/recent-title-art.png'
 
 const RECORD_SYNC_TIMEOUT_MS = 8000
 
@@ -106,23 +108,43 @@ export function RecentPage() {
   }, [dialog, isAuthLoading, navigate, user])
 
   return (
-    <section className="page">
-      <p className="page-kicker">最近生成</p>
-      <h1 className="page-title">最近生成</h1>
-      {user && isRecordsLoading ? (
-        <div className="empty-record-panel" role="status" aria-live="polite">
-          <h2>正在讀取最近生成...</h2>
-          <p>我們正在同步你的行程紀錄。</p>
-        </div>
-      ) : null}
-      {user && !isRecordsLoading ? (
-        <TripRecordList
-          records={visibleRecords}
-          emptyTitle="還沒有最近生成"
-          emptyCopy="送出行程偏好並成功產生三方案後，最近生成會保存在這裡。"
-          source="recent"
+    <section className="history-page history-page-recent">
+      <section className="history-hero" aria-label="最近生成">
+        <img
+          className="history-title-art"
+          src={recentTitleArt}
+          alt="最近生成"
+          decoding="async"
         />
-      ) : null}
+      </section>
+      <div className="history-scroll">
+        {user && !isRecordsLoading ? (
+          <div className="history-status-row" aria-label="固定顯示最近紀錄">
+            <span className="history-status-chip">固定顯示最近紀錄</span>
+          </div>
+        ) : null}
+        {user && isRecordsLoading ? (
+          <div className="empty-record-panel" role="status" aria-live="polite">
+            <h2>正在讀取最近生成...</h2>
+            <p>我們正在同步你的行程紀錄。</p>
+          </div>
+        ) : null}
+        {user && !isRecordsLoading ? (
+          <TripRecordList
+            records={visibleRecords}
+            emptyTitle="還沒有最近生成的方案呀"
+            source="recent"
+          />
+        ) : null}
+      </div>
+      <img
+        className="history-bottom-art"
+        src={historyBottomBg}
+        alt=""
+        aria-hidden="true"
+        decoding="async"
+        loading="lazy"
+      />
     </section>
   )
 }

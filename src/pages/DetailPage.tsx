@@ -24,6 +24,25 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import {
+  ArrowLeft,
+  Bus,
+  Car,
+  Clock,
+  Compass,
+  GripVertical,
+  Hourglass,
+  Info,
+  LoaderCircle,
+  MapPin,
+  MapPinned,
+  Navigation,
+  RefreshCw,
+  Scooter,
+  Trash2,
+  Utensils,
+  Wallet,
+} from 'lucide-react'
 import type {
   PublicTransitType,
   Stop,
@@ -79,6 +98,38 @@ const transportSpeed: Record<TransportMode, number> = {
   scooter: 40,
   car: 60,
   public_transit: 28,
+}
+
+function TransportModeIcon({
+  mode,
+  className,
+}: {
+  mode: TransportMode
+  className?: string
+}) {
+  if (mode === 'scooter') {
+    return <Scooter className={className} aria-hidden="true" />
+  }
+
+  if (mode === 'car') {
+    return <Car className={className} aria-hidden="true" />
+  }
+
+  return <Bus className={className} aria-hidden="true" />
+}
+
+function StopTypeIcon({
+  type,
+  className,
+}: {
+  type: StopType
+  className?: string
+}) {
+  if (type === 'food') {
+    return <Utensils className={className} aria-hidden="true" />
+  }
+
+  return <MapPin className={className} aria-hidden="true" />
 }
 
 const publicTransitLabels: Record<PublicTransitType, string> = {
@@ -831,27 +882,38 @@ export function DetailPage() {
       </div>
 
       <dl className="detail-metrics">
-        <div>
+        <div className="detail-metric-card">
           <dt>預估時長</dt>
+          <span className="detail-metric-icon" aria-hidden="true">
+            <Clock />
+          </span>
+          <div className="detail-metric-spacer" aria-hidden="true" />
           <dd>{formatMinutes(visibleDuration || selectedPlan.totalTime)}</dd>
         </div>
-        <div>
+        <div className="detail-metric-card">
           <dt>預估預算</dt>
+          <span className="detail-metric-icon" aria-hidden="true">
+            <Wallet />
+          </span>
+          <div className="detail-metric-spacer" aria-hidden="true" />
           <dd>約 NT$ {selectedPlan.budget.toLocaleString('zh-TW')}</dd>
         </div>
-        <div className="metric-transport-card">
+        <div className="detail-metric-card metric-transport-card">
           <dt>交通方式</dt>
+          <span className="detail-metric-icon" aria-hidden="true">
+            <TransportModeIcon mode={activeTransportMode} />
+          </span>
           <dd>{transportLabels[activeTransportMode]}</dd>
           <div className="transport-switch-area">
             <button
-              className="transport-switch-button"
+              className="transport-switch-button transport-switch-button-primary"
               type="button"
               onClick={() => setIsGlobalTransportMenuOpen((current) => !current)}
             >
               切換
             </button>
             <button
-              className="transport-switch-button"
+              className="transport-switch-button transport-switch-button-outline"
               type="button"
               disabled={isRecomputingRoutes || visibleStops.length < 2}
               onClick={() => void handleRecomputeVisibleRoutes()}
@@ -895,10 +957,7 @@ export function DetailPage() {
           ) : (
             <>
               <div className="detail-completion-heading">
-                <span
-                  className="detail-completion-spinner"
-                  aria-hidden="true"
-                />
+                <LoaderCircle className="detail-completion-spinner" aria-hidden="true" />
                 <h2>{isEditing ? '正在重新計算交通與時程' : '正在補完整細節'}</h2>
               </div>
               <p>
@@ -941,10 +1000,10 @@ export function DetailPage() {
           const directionsUrl = getVerifiedDirectionsUrl(stop, activeTransportMode)
 
           return (
-            <SortableTimelineGroup id={getStopId(stop, index)} key={stopKey}>
-              {(dragHandleProps) => (
-                <>
-              <article className="timeline-stop">
+            <div className="timeline-row" key={stopKey}>
+              <SortableTimelineGroup id={getStopId(stop, index)}>
+                {(dragHandleProps) => (
+                  <article className="timeline-stop">
                 <div className="timeline-marker" aria-hidden="true">
                   <span>{index + 1}</span>
                 </div>
@@ -956,37 +1015,46 @@ export function DetailPage() {
                     type="button"
                     aria-label={`拖曳排序 ${stop.name}`}
                   >
-                    ↑↓
+                    <GripVertical aria-hidden="true" />
                   </button>
 
                   <div className="stop-time-grid">
                     <div className="stop-time">
-                      <span>時段</span>
+                      <Clock aria-hidden="true" />
                       <strong>
                         {startTime && endTime ? `${startTime} ~ ${endTime}` : '依出發時間計算'}
                       </strong>
                     </div>
                     <div className="stop-time">
-                      <span>停留</span>
+                      <Hourglass aria-hidden="true" />
                       <strong>{formatMinutes(stop.duration)}</strong>
                     </div>
                   </div>
 
                   <div className="stop-heading">
-                    <p>{stopTypeLabels[stop.type]}</p>
+                    <p>
+                      <StopTypeIcon type={stop.type} />
+                      {stopTypeLabels[stop.type]}
+                    </p>
                     <h2>{stop.name}</h2>
                   </div>
 
-                  <p className="stop-description">
-                    {stop.description ||
-                      (selectedPlan.isDetailComplete
-                        ? '這個景點暫時沒有補充說明。'
-                        : '正在補完整細節，AI 會為這個景點補上具體簡介。')}
-                  </p>
+                  {stop.description ? (
+                    <p className="stop-description">{stop.description}</p>
+                  ) : selectedPlan.isDetailComplete ? (
+                    <p className="stop-description">這個景點暫時沒有補充說明。</p>
+                  ) : (
+                    <p className="stop-description stop-description-pending">
+                      <Info aria-hidden="true" />
+                      景點介紹正在補充中，敬請期待。
+                    </p>
+                  )}
 
                   <dl className="stop-details">
                     <div>
-                      <dt>地址</dt>
+                      <dt aria-label="地址">
+                        <MapPin aria-hidden="true" />
+                      </dt>
                       <dd>{stop.address}</dd>
                     </div>
                   </dl>
@@ -999,10 +1067,14 @@ export function DetailPage() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        開啟 Google Maps
+                        <MapPinned aria-hidden="true" />
+                        開啟地圖
                       </a>
                     ) : (
-                      <span className="maps-link maps-link-disabled">地點未驗證</span>
+                      <span className="maps-link maps-link-disabled">
+                        <MapPinned aria-hidden="true" />
+                        地點未驗證
+                      </span>
                     )}
                     {directionsUrl ? (
                       <a
@@ -1011,10 +1083,14 @@ export function DetailPage() {
                         target="_blank"
                         rel="noreferrer"
                       >
+                        <Navigation aria-hidden="true" />
                         開始導航
                       </a>
                     ) : (
-                      <span className="maps-link maps-link-disabled">無法導航</span>
+                      <span className="maps-link maps-link-disabled">
+                        <Compass aria-hidden="true" />
+                        無法導航
+                      </span>
                     )}
                     
                     <div
@@ -1029,15 +1105,35 @@ export function DetailPage() {
                         disabled={isEditing}
                         onClick={() => void handleOpenReplaceMenu(getStopId(stop, index))}
                       >
+                        <RefreshCw aria-hidden="true" />
                         換一站
                       </button>
                       <button
-                        className="maps-link stop-edit-button stop-delete-button"
+                        className={`maps-link stop-edit-button stop-delete-button${
+                          isEditing || visibleStops.length <= 2 ? ' maps-link-disabled' : ''
+                        }`}
                         type="button"
-                        disabled={isEditing || visibleStops.length <= 2}
-                        onClick={() => void handleDeleteStop(getStopId(stop, index))}
+                        onClick={() => {
+                          if (isEditing) {
+                            void dialog.alert({
+                              title: '無法刪除',
+                              message: '編輯中暫時無法刪除此站',
+                            })
+                            return
+                          }
+                          if (visibleStops.length <= 2) {
+                            void dialog.alert({
+                              title: '無法刪除',
+                              message: '行程至少需保留 2 個站點',
+                            })
+                            return
+                          }
+                          void handleDeleteStop(getStopId(stop, index))
+                        }}
+                        aria-disabled={isEditing || visibleStops.length <= 2}
                       >
-                        刪除行程
+                        <Trash2 aria-hidden="true" />
+                        刪除此站
                       </button>
                       
                       {replacingStopId === getStopId(stop, index) ? (
@@ -1052,7 +1148,9 @@ export function DetailPage() {
                     </div>
                   </div>
                 </div>
-              </article>
+                  </article>
+                )}
+              </SortableTimelineGroup>
 
               {nextSegment ? (
                 <div className="transport-quick-view">
@@ -1067,7 +1165,8 @@ export function DetailPage() {
                       )
                     }
                   >
-                    {getTransportButtonLabel(nextSegment)}
+                    <TransportModeIcon mode={nextSegment.mode} />
+                    <span>{getTransportButtonLabel(nextSegment)}</span>
                   </button>
                   <div>
                     <p>{getTransportSegmentLabel(nextSegment)}</p>
@@ -1085,9 +1184,7 @@ export function DetailPage() {
                   ) : null}
                 </div>
               ) : null}
-                </>
-              )}
-            </SortableTimelineGroup>
+            </div>
           )
             })}
           </div>
@@ -1114,7 +1211,7 @@ export function DetailPage() {
 
         <div className="favorite-action-panel action-strip">
           <button
-            className="submit-button"
+            className={`submit-button${hasSavedFavorite ? ' favorite-button-saved' : ''}`}
             type="button"
             onClick={() => void handleSaveFavorite()}
             disabled={hasSavedFavorite || isSavingFavorite}
@@ -1148,13 +1245,14 @@ function DetailBackControl({
         aria-label="回上一頁"
         onClick={onBack}
       >
-        ←
+        <ArrowLeft aria-hidden="true" />
       </button>
     )
   }
 
   return (
     <Link className="back-link" to="/results" onClick={onReturnToResults}>
+      <RefreshCw aria-hidden="true" />
       重新選擇
     </Link>
   )

@@ -192,6 +192,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     (!request.input.location.lat || !request.input.location.lng) &&
     request.input.location.name
   ) {
+    console.debug('[trip-location-source]', {
+      at: new Date().toISOString(),
+      source: 'geocoding',
+      label: request.input.location.name,
+    })
     const resolved = await resolveLocation(request.input.location.name)
     if (resolved) {
       request.input.location = {
@@ -210,6 +215,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const persona = await getMergedPersona(supabase, userId, request.input)
 
   // 9D-7: 智慧前置搜尋 (Search-Inject)
+  if (!request.input.location.lat || !request.input.location.lng) {
+    console.debug('[trip-location-source]', {
+      at: new Date().toISOString(),
+      source: 'fallback blocked',
+      label: request.input.location.name,
+    })
+    res.status(422).json({ error: '無法解析起點位置，請改用更完整的台灣地址或地標。' })
+    return
+  }
+
+  console.debug('[trip-generate-start-location]', {
+    at: new Date().toISOString(),
+    lat: request.input.location.lat,
+    lng: request.input.location.lng,
+    label: request.input.location.name,
+  })
+
   const nearbyPlaceCandidates = await getNearbyPlaceCandidates({
     ...request,
     persona,
@@ -783,6 +805,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         finalResponse.warnings.push('Google Places 驗證未啟用，部分地點資訊可能不夠準確。')
       }
       if (routesApiFailed) {
+        finalResponse.warnings.push('Google Routes API 未啟用或無法呼叫，請在 Google Cloud 啟用 Routes API；交通時間與距離已暫用系統估算值。')
         finalResponse.warnings.push('Google Routes API 未啟用，交通時間與距離為系統估算值。')
       }
       if (finalResponse.plans.length < PLAN_IDS.length) {

@@ -1,8 +1,11 @@
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
+import { Car, Clock, MapPin, RotateCcw, Wallet } from 'lucide-react'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import type { TransportMode, TripPlan } from '../types/trip'
 import { loadGeneratedPlans } from '../utils/tripPlanStorage'
 import { getPlanActualDuration } from '../utils/tripTiming'
+import mascotComplete from '../assets/mascot/mascot-complete.png'
+import mascotError from '../assets/mascot/mascot-error.png'
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -11,6 +14,7 @@ const transportLabels: Record<TransportMode, string> = {
 }
 
 export function ResultsPage() {
+  const navigate = useNavigate()
   const { session, resetAnalysisFlow, setFlowRoute, requestPlanDetails } =
     useAnalysisSession()
   const plans = loadGeneratedPlans()
@@ -18,26 +22,43 @@ export function ResultsPage() {
 
   if (plans.length === 0) {
     return (
-      <section className="page">
-        <p className="page-kicker">尚未產生方案</p>
-        <h1 className="page-title">這次沒有找到可用方案。</h1>
-        <p className="page-copy">
-          目前沒有符合營業時間與路線條件的行程，請調整時間或重新生成。
-        </p>
-        <button className="submit-button result-link" type="button" onClick={resetAnalysisFlow}>
-          回到行程規劃
-        </button>
+      <section className="page results-page">
+        <div className="empty-record-panel error-state-panel">
+          <img
+            className="empty-record-mascot error-mascot"
+            src={mascotError}
+            alt="分析失敗吉祥物"
+          />
+          <h2 style={{ whiteSpace: 'nowrap' }}>這次沒有找到可用方案</h2>
+          <p style={{ whiteSpace: 'nowrap' }}>沒有符合營業時間與條件的行程</p>
+          <button 
+            className="secondary-button" 
+            style={{ marginTop: '12px' }}
+            type="button" 
+            onClick={resetAnalysisFlow}
+          >
+            回到行程規劃
+          </button>
+        </div>
       </section>
     )
   }
 
   return (
-    <section className="page">
-      <button className="back-link" type="button" onClick={resetAnalysisFlow}>
-        重新選擇偏好
-      </button>
-      <p className="page-kicker">AI 已整理三種走法</p>
-      <h1 className="page-title">選擇行程方案</h1>
+    <section className="page results-page">
+      <img
+        className="results-mascot-decoration"
+        src={mascotComplete}
+        alt=""
+        aria-hidden="true"
+      />
+      <div className="results-hero">
+        <button className="back-link" type="button" onClick={resetAnalysisFlow}>
+          <RotateCcw aria-hidden="true" />
+          重新選擇偏好
+        </button>
+        <h1 className="results-title">3 種專屬方案已為你準備好</h1>
+      </div>
       {warnings.length > 0 ? (
         <div className="plan-warning-panel" role="status">
           {warnings.map((warning: string) => (
@@ -54,6 +75,7 @@ export function ResultsPage() {
             onSelect={(route) => {
               setFlowRoute(route)
               requestPlanDetails(plan.id, { source: 'generated' })
+              navigate(route)
             }}
           />
         ))}
@@ -74,50 +96,79 @@ function PlanCard({
   const stops = plan.stops ?? []
   const previewStops = stops.slice(0, 3)
   const actualDuration = getPlanActualDuration(plan)
+  const metrics = [
+    {
+      icon: <Clock aria-hidden="true" />,
+      label: '總時間',
+      value: formatMinutes(actualDuration),
+    },
+    {
+      icon: <Wallet aria-hidden="true" />,
+      label: '預算',
+      value: `約 NT$ ${(plan.budget ?? 0).toLocaleString('zh-TW')}`,
+    },
+    {
+      icon: <Car aria-hidden="true" />,
+      label: '交通',
+      value: transportLabels[plan.transportMode] ?? '未指定',
+    },
+    {
+      icon: <MapPin aria-hidden="true" />,
+      label: '停留點',
+      value: `${stops.length} 個`,
+    },
+  ]
 
   return (
-    <article className="plan-card">
-      <div>
-        <p className="plan-type">{label}</p>
-        <h2>{plan.title}</h2>
-        <p>{plan.summary}</p>
+    <article 
+      className="plan-card result-plan-card" 
+      onClick={() => onSelect(`/plans/${plan.id}`)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect(`/plans/${plan.id}`)
+        }
+      }}
+    >
+      <div className="plan-card-body">
+        <div className="plan-main">
+          <div className="plan-card-header">
+            <p className="plan-type">{label}</p>
+            <h2>{plan.title}</h2>
+          </div>
+
+          <div className="stop-preview">
+            <div className="stop-preview-heading">
+              <strong>行程預覽</strong>
+              <span aria-hidden="true" />
+            </div>
+            <ol>
+              {previewStops.map((stop, index) => (
+                <li key={`${plan.id}-${stop.id || stop.name}`}>
+                  <span className="stop-preview-index">{index + 1}</span>
+                  <span>{stop.name}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
+
+        <div className="plan-side">
+          <dl className="plan-metrics">
+            {metrics.map((metric) => (
+              <div className="plan-metric-item" key={metric.label}>
+                <span className="plan-metric-icon" aria-hidden="true">
+                  {metric.icon}
+                </span>
+                <dt>{metric.label}</dt>
+                <dd>{metric.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       </div>
-
-      <dl className="plan-metrics">
-        <div>
-          <dt>總時間</dt>
-          <dd>{formatMinutes(actualDuration)}</dd>
-        </div>
-        <div>
-          <dt>預算</dt>
-          <dd>約 NT$ {(plan.budget ?? 0).toLocaleString('zh-TW')}</dd>
-        </div>
-        <div>
-          <dt>交通</dt>
-          <dd>{transportLabels[plan.transportMode] ?? '未指定'}</dd>
-        </div>
-        <div>
-          <dt>停留點</dt>
-          <dd>{stops.length} 個</dd>
-        </div>
-      </dl>
-
-      <div className="stop-preview">
-        <strong>行程</strong>
-        <ol>
-          {previewStops.map((stop) => (
-            <li key={`${plan.id}-${stop.id || stop.name}`}>{stop.name}</li>
-          ))}
-        </ol>
-      </div>
-
-      <Link
-        className="secondary-button result-link"
-        to={`/plans/${plan.id}`}
-        onClick={() => onSelect(`/plans/${plan.id}`)}
-      >
-        選擇此方案
-      </Link>
     </article>
   )
 }

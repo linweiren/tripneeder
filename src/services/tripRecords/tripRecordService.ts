@@ -1,8 +1,8 @@
 import { supabase } from '../auth/supabaseClient'
 import type { TripInput, TripPlan } from '../../types/trip'
+import { buildFavoriteDeleteFilters } from './favoriteDeleteFilters'
 import {
   createPlanFingerprint,
-  GENERATED_PLAN_IDS,
   loadFavoriteTripRecords,
   loadRecentTripRecords,
   MAX_RECENT_RECORDS,
@@ -132,10 +132,17 @@ export async function removeFavoriteRecord(recordId: string, userId: string, pla
   notifyFavoritesChanged()
 
   if (supabase) {
-    await supabase.from('trip_records').delete()
-      .eq('user_id', userId)
-      .eq('kind', 'favorite')
-      .or(`id.eq.${recordId}${fingerprint ? `,plan_fingerprint.eq.${fingerprint}` : ''}`)
+    const deleteFilters = buildFavoriteDeleteFilters(recordId, userId, fingerprint)
+
+    for (const filters of deleteFilters) {
+      let query = supabase.from('trip_records').delete()
+      for (const [column, value] of filters) {
+        query = query.eq(column, value)
+      }
+
+      const { error } = await query
+      if (error) throw error
+    }
   }
 }
 
@@ -146,14 +153,6 @@ export async function saveRecentGeneratedRecords(plans: TripPlan[], input: TripI
   setTripRecordCache('recent', userId, loadRecentTripRecords(userId))
 
   if (supabase) {
-    const planIds = Array.from(new Set([...GENERATED_PLAN_IDS, ...plans.map((plan) => plan.id)]))
-    if (planIds.length > 0) {
-      await supabase.from('trip_records').delete()
-        .eq('user_id', userId)
-        .eq('kind', 'recent')
-        .in('plan->>id', planIds)
-    }
-
     const { error } = await supabase.from('trip_records').insert(
       plans.map(plan => ({
         user_id: userId,
@@ -256,12 +255,12 @@ async function loadRemoteTripRecords(kind: TripRecordKind, userId: string) {
 
 async function updateRemoteRecentRecords(prev: TripPlan, next: TripPlan, input: TripInput | null, userId: string) {
   const records = await loadRemoteTripRecords('recent', userId)
-  const matching = records.filter(r => r.plan.id === prev.id)
-  for (const r of matching) {
-    await supabase!.from('trip_records').update({
-      plan: next, input: input ?? r.input, plan_fingerprint: createPlanFingerprint(next)
-    }).eq('id', r.id)
-  }
+  const matching = records.find(r => r.plan.id === prev.id)
+  if (!matching) return
+
+  await supabase!.from('trip_records').update({
+    plan: next, input: input ?? matching.input, plan_fingerprint: createPlanFingerprint(next)
+  }).eq('id', matching.id)
 }
 
 async function updateRemoteFavoriteRecords(prev: TripPlan, next: TripPlan, input: TripInput | null, userId: string) {

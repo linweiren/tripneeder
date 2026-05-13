@@ -22,6 +22,11 @@ export async function getRouteInfo(
   }
 
   try {
+    console.debug('[google-route-endpoint]', {
+      endpoint: 'Routes API computeRoutes',
+      url: ROUTES_API_URL,
+      mode,
+    })
     const response = await googleRoutesFetch(ROUTES_API_URL, {
       method: 'POST',
       headers: {
@@ -45,6 +50,11 @@ export async function getRouteInfo(
     })
 
     if (!response.ok) {
+      console.warn('[google-route-error]', {
+        endpoint: 'Routes API computeRoutes',
+        status: response.status,
+        statusText: response.statusText,
+      })
       // 403 Forbidden often means API not enabled
       return { routeInfo: null, apiFailed: response.status === 403 || response.status === 401 }
     }

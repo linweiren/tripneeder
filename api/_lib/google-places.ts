@@ -77,6 +77,11 @@ type GoogleGeocodeResponse = {
   status?: string
   results?: Array<{
     formatted_address: string
+    address_components?: Array<{
+      long_name?: string
+      short_name?: string
+      types?: string[]
+    }>
     geometry?: {
       location?: {
         lat: number
@@ -322,16 +327,25 @@ export async function resolveLocation(
   name: string,
 ): Promise<{ lat: number; lng: number; formattedName: string } | null> {
   if (!GOOGLE_PLACES_API_KEY || !name.trim()) return null
+  const query = normalizeTaiwanLocationQuery(name)
 
   // 策略 1：使用 Geocoding API (對地標與模糊地址辨識度較高)
   try {
     const response = await googleFetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(name)}&key=${GOOGLE_PLACES_API_KEY}&language=zh-TW`
+      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${GOOGLE_PLACES_API_KEY}&language=zh-TW&region=tw&components=country:TW`
     )
     const data = (await response.json()) as GoogleGeocodeResponse
 
     if (data.status === 'OK' && data.results?.[0]?.geometry?.location) {
       const result = data.results[0]
+      if (!isTaiwanGeocodeResult(result)) {
+        console.warn('[location-geocode-rejected]', {
+          reason: 'non-taiwan-result',
+          query,
+          formattedAddress: result.formatted_address,
+        })
+        return null
+      }
       const location = result.geometry!.location!
       return {
         lat: location.lat,
@@ -345,8 +359,17 @@ export async function resolveLocation(
 
   // 策略 2：回退到 Places API (若 Geocoding 沒抓到，嘗試 Places Text Search)
   try {
-    const places = await searchPlaces(name, { maxResultCount: 1 })
-    const place = places[0]
+    const places = await searchPlaces(query, { maxResultCount: 3 })
+    const taiwanPlaces = places.filter(isTaiwanPlace)
+    if (places.length > 0 && taiwanPlaces.length === 0) {
+      console.warn('[location-places-rejected]', {
+        reason: 'non-taiwan-result',
+        query,
+        firstAddress: places[0]?.formattedAddress,
+      })
+      return null
+    }
+    const place = taiwanPlaces[0]
 
     if (place && place.location) {
       return {
@@ -360,6 +383,29 @@ export async function resolveLocation(
   }
 
   return null
+}
+
+function normalizeTaiwanLocationQuery(name: string) {
+  const trimmed = name.trim()
+  if (!trimmed) return trimmed
+  if (/台灣|臺灣|Taiwan|TW|高雄|Kaohsiung/i.test(trimmed)) return trimmed
+  if (/楠梓|Nanzi|Nanzih/i.test(trimmed)) return `台灣 高雄 楠梓 ${trimmed}`
+
+  return `台灣 ${trimmed}`
+}
+
+function isTaiwanGeocodeResult(result: NonNullable<GoogleGeocodeResponse['results']>[number]) {
+  const components = result.address_components ?? []
+  return components.some(
+    (component) =>
+      component.types?.includes('country') &&
+      (/^(TW|Taiwan)$/i.test(component.short_name ?? '') ||
+        /台灣|臺灣|Taiwan/i.test(component.long_name ?? '')),
+  )
+}
+
+function isTaiwanPlace(place: GooglePlace) {
+  return /台灣|臺灣|Taiwan/i.test(place.formattedAddress ?? '')
 }
 
 export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): string {
@@ -1133,6 +1179,7 @@ async function searchPlaces(
     body: JSON.stringify({
       textQuery,
       languageCode: 'zh-TW',
+      regionCode: 'TW',
       maxResultCount: options.maxResultCount ?? 5,
       locationBias: options.bias
         ? {

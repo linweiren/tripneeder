@@ -37,7 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const response = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}&language=zh-TW`
+      `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}&language=zh-TW&region=tw`
     )
     const data = (await response.json()) as {
       status: string
@@ -45,6 +45,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         formatted_address: string
         address_components: Array<{
           long_name: string
+          short_name?: string
           types: string[]
         }>
       }>
@@ -60,6 +61,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 台灣地名邏輯：優先找 administrative_area_level_1 (縣市) 與 sublocality_level_1 / locality (區)
     const city = components.find((c) => c.types.includes('administrative_area_level_1'))?.long_name || ''
+    const countryComponent = components.find((c) => c.types.includes('country'))
+    const country = countryComponent?.short_name || countryComponent?.long_name || ''
     const district = components.find((c) => 
       c.types.includes('sublocality_level_1') || 
       c.types.includes('locality') ||
@@ -70,7 +73,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     res.status(200).json({
       name: shortName || result.formatted_address,
-      address: result.formatted_address
+      address: result.formatted_address,
+      country,
     })
   } catch (error) {
     console.error('Geocoding error:', error)
