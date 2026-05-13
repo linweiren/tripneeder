@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { CheckCircle, LoaderCircle } from 'lucide-react'
+import { CheckCircle, ChevronRight, LoaderCircle, SlidersHorizontal } from 'lucide-react'
 import { useAuth } from '../contexts/auth'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import { useDialog } from '../contexts/dialog'
@@ -22,10 +22,9 @@ import {
   type UserProfile,
 } from '../services/points/pointsService'
 import { AppSelect, type AppSelectOption } from '../components/ui/AppSelect'
-import HomeTitle from '../components/HomeTitle'
 import mascotError from '../assets/mascot/mascot-error.png'
 import mascotMapReference from '../assets/mascot/mascot-map-reference.png'
-import signpostDecoration from '../assets/mascot/signpost-decoration.png'
+import homeDurationTitleArt from '../assets/mascot/home-duration-title-art.png'
 import duration2hIcon from '../assets/mascot/2h.png'
 import duration3hIcon from '../assets/mascot/3h.png'
 import duration6hIcon from '../assets/mascot/6h.png'
@@ -871,30 +870,17 @@ export function HomePage() {
       <form className="trip-form home-trip-form" onSubmit={handleSubmit}>
         <div className="home-top-panel">
           <div className="home-hero">
-            <div className="home-map-pin" aria-hidden="true" />
-            <svg
-              className="home-dashed-route"
-              viewBox="0 0 360 96"
-              preserveAspectRatio="none"
-              focusable="false"
-              aria-hidden="true"
-            >
-              <path d="M8 76 C50 41 88 88 130 72 C177 52 216 59 256 72 C291 83 322 76 344 38" />
-            </svg>
-            <div className="home-hero-copy">
-              <HomeTitle />
-            </div>
             <img
-              className="home-signpost-decoration"
-              src={signpostDecoration}
-              alt=""
-              aria-hidden="true"
+              className="home-title-image"
+              src={homeDurationTitleArt}
+              alt="想在這玩多久？"
             />
           </div>
 
           <div className="home-action-card">
             <div className="home-action-content">
               {/* Step 1: Duration Selection (Main View) */}
+              <div className="home-card-top">
               <fieldset className="form-section duration-section" aria-label="想玩多久">
                 <div className="chip-grid duration-chip-grid">
                   {durationOptions
@@ -934,6 +920,7 @@ export function HomePage() {
                     onClick={handleCustomDurationToggle}
                   >
                     <span>自訂結束時間</span>
+                    <ChevronRight className="inline-chevron-icon" size={17} strokeWidth={1.9} aria-hidden="true" />
                   </button>
                 </div>
 
@@ -950,7 +937,9 @@ export function HomePage() {
                    </div>
                 )}
               </fieldset>
+              </div>
 
+              <div className="home-card-bottom">
               <div className="home-action-scene" aria-hidden="true" />
 
               <div className="home-action-footer">
@@ -978,18 +967,15 @@ export function HomePage() {
                     onClick={() => setShowAdvanced(!showAdvanced)}
                   >
                     <span className="advanced-toggle-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" focusable="false">
-                        <path d="M4 7h16" />
-                        <path d="M4 12h16" />
-                        <path d="M4 17h16" />
-                        <circle cx="9" cy="7" r="1.8" />
-                        <circle cx="15" cy="12" r="1.8" />
-                        <circle cx="8" cy="17" r="1.8" />
-                      </svg>
+                      <SlidersHorizontal size={18} strokeWidth={2.2} />
                     </span>
-                    <span>{showAdvanced ? '收起進階設定' : `更多偏好設定 ${preferenceSummary}`}</span>
+                    <span className="advanced-toggle-copy">
+                      <span>{showAdvanced ? '收起進階設定' : `更多偏好設定 ${preferenceSummary}`}</span>
+                      <ChevronRight className="inline-chevron-icon" size={17} strokeWidth={1.9} aria-hidden="true" />
+                    </span>
                   </button>
                 </div>
+              </div>
               </div>
             </div>
           </div>
