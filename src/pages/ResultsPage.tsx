@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Car, Clock, MapPin, Wallet } from 'lucide-react'
+import { Car, Clock, MapPin, RotateCcw, Wallet } from 'lucide-react'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import type { TransportMode, TripPlan } from '../types/trip'
 import { loadGeneratedPlans } from '../utils/tripPlanStorage'
@@ -53,6 +53,7 @@ export function ResultsPage() {
       />
       <div className="results-hero">
         <button className="back-link" type="button" onClick={resetAnalysisFlow}>
+          <RotateCcw aria-hidden="true" />
           重新選擇偏好
         </button>
         <h1 className="results-title">3 種專屬方案已為你準備好</h1>
@@ -118,43 +119,51 @@ function PlanCard({
 
   return (
     <article className="plan-card">
-      <div className="plan-card-header">
-        <p className="plan-type">{label}</p>
-        <h2>{plan.title}</h2>
-        <p className="plan-summary">{plan.summary}</p>
-      </div>
-
-      <dl className="plan-metrics">
-        {metrics.map((metric) => (
-          <div className="plan-metric-item" key={metric.label}>
-            <span className="plan-metric-icon" aria-hidden="true">
-              {metric.icon}
-            </span>
-            <dt>{metric.label}</dt>
-            <dd>{metric.value}</dd>
+      <div className="plan-card-body">
+        <div className="plan-main">
+          <div className="plan-card-header">
+            <p className="plan-type">{label}</p>
+            <h2>{plan.title}</h2>
           </div>
-        ))}
-      </dl>
 
-      <div className="stop-preview">
-        <strong>行程預覽</strong>
-        <ol>
-          {previewStops.map((stop, index) => (
-            <li key={`${plan.id}-${stop.id || stop.name}`}>
-              <span className="stop-preview-index">{index + 1}</span>
-              <span>{stop.name}</span>
-            </li>
-          ))}
-        </ol>
+          <div className="stop-preview">
+            <div className="stop-preview-heading">
+              <strong>行程預覽</strong>
+              <span aria-hidden="true" />
+            </div>
+            <ol>
+              {previewStops.map((stop, index) => (
+                <li key={`${plan.id}-${stop.id || stop.name}`}>
+                  <span className="stop-preview-index">{index + 1}</span>
+                  <span>{stop.name}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
+
+        <div className="plan-side">
+          <dl className="plan-metrics">
+            {metrics.map((metric) => (
+              <div className="plan-metric-item" key={metric.label}>
+                <span className="plan-metric-icon" aria-hidden="true">
+                  {metric.icon}
+                </span>
+                <dt>{metric.label}</dt>
+                <dd>{metric.value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <Link
+            className="result-link"
+            to={`/plans/${plan.id}`}
+            onClick={() => onSelect(`/plans/${plan.id}`)}
+          >
+            選擇此方案
+          </Link>
+        </div>
       </div>
-
-      <Link
-        className="result-link"
-        to={`/plans/${plan.id}`}
-        onClick={() => onSelect(`/plans/${plan.id}`)}
-      >
-        選擇此方案
-      </Link>
     </article>
   )
 }
