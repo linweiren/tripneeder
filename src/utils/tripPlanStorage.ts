@@ -11,7 +11,6 @@ const RECENT_PLANS_STORAGE_KEY = 'tripneeder.recentPlans'
 const FAVORITE_PLANS_STORAGE_KEY = 'tripneeder.favoritePlans'
 
 export const MAX_RECENT_RECORDS = 12
-export const GENERATED_PLAN_IDS = ['safe', 'balanced', 'explore'] as const
 
 export type StoredTripRecord = {
   id: string
@@ -110,9 +109,14 @@ export function removeFavoriteTrip(recordId: string, userId: string) {
 
 export function updateRecentTripRecordPlan(nextPlan: TripPlan, input: TripInput | null, userId: string) {
   const key = `${RECENT_PLANS_STORAGE_KEY}.${userId}`
-  const next = loadRecentTripRecords(userId).map(r => 
-    r.plan.id === nextPlan.id ? { ...r, plan: nextPlan, input: input ?? r.input } : r
-  )
+  let hasUpdatedLatestMatch = false
+  const next = loadRecentTripRecords(userId).map(r => {
+    if (!hasUpdatedLatestMatch && r.plan.id === nextPlan.id) {
+      hasUpdatedLatestMatch = true
+      return { ...r, plan: nextPlan, input: input ?? r.input }
+    }
+    return r
+  })
   localStorage.setItem(key, JSON.stringify(next))
 }
 
@@ -166,10 +170,9 @@ function saveRecentGeneratedPlans(plans: TripPlan[], input: TripInput, userId: s
   const key = `${RECENT_PLANS_STORAGE_KEY}.${userId}`
   const prev = loadRecentTripRecords(userId)
   const next = plans.map(p => createStoredTripRecord(p, input))
-  const generatedPlanIds = new Set<string>(GENERATED_PLAN_IDS)
   localStorage.setItem(
     key,
-    JSON.stringify([...next, ...prev.filter((record) => !generatedPlanIds.has(record.plan.id))].slice(0, MAX_RECENT_RECORDS)),
+    JSON.stringify([...next, ...prev].slice(0, MAX_RECENT_RECORDS)),
   )
 }
 

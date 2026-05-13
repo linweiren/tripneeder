@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Car, Clock, MapPin, RotateCcw, Wallet } from 'lucide-react'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import type { TransportMode, TripPlan } from '../types/trip'
@@ -14,6 +14,7 @@ const transportLabels: Record<TransportMode, string> = {
 }
 
 export function ResultsPage() {
+  const navigate = useNavigate()
   const { session, resetAnalysisFlow, setFlowRoute, requestPlanDetails } =
     useAnalysisSession()
   const plans = loadGeneratedPlans()
@@ -74,6 +75,7 @@ export function ResultsPage() {
             onSelect={(route) => {
               setFlowRoute(route)
               requestPlanDetails(plan.id, { source: 'generated' })
+              navigate(route)
             }}
           />
         ))}
@@ -118,7 +120,18 @@ function PlanCard({
   ]
 
   return (
-    <article className="plan-card">
+    <article 
+      className="plan-card result-plan-card" 
+      onClick={() => onSelect(`/plans/${plan.id}`)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect(`/plans/${plan.id}`)
+        }
+      }}
+    >
       <div className="plan-card-body">
         <div className="plan-main">
           <div className="plan-card-header">
@@ -154,14 +167,6 @@ function PlanCard({
               </div>
             ))}
           </dl>
-
-          <Link
-            className="result-link"
-            to={`/plans/${plan.id}`}
-            onClick={() => onSelect(`/plans/${plan.id}`)}
-          >
-            選擇此方案
-          </Link>
         </div>
       </div>
     </article>
