@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { Car, Clock, MapPin, Wallet } from 'lucide-react'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import type { TransportMode, TripPlan } from '../types/trip'
 import { loadGeneratedPlans } from '../utils/tripPlanStorage'
@@ -50,11 +51,12 @@ export function ResultsPage() {
         alt=""
         aria-hidden="true"
       />
-      <button className="back-link" type="button" onClick={resetAnalysisFlow}>
-        重新選擇偏好
-      </button>
-      <p className="page-kicker">AI 已整理三種走法</p>
-      <h1 className="page-title" style={{ visibility: 'hidden' }}>選擇行程方案</h1>
+      <div className="results-hero">
+        <button className="back-link" type="button" onClick={resetAnalysisFlow}>
+          重新選擇偏好
+        </button>
+        <h1 className="results-title">3 種專屬方案已為你準備好</h1>
+      </div>
       {warnings.length > 0 ? (
         <div className="plan-warning-panel" role="status">
           {warnings.map((warning: string) => (
@@ -91,45 +93,63 @@ function PlanCard({
   const stops = plan.stops ?? []
   const previewStops = stops.slice(0, 3)
   const actualDuration = getPlanActualDuration(plan)
+  const metrics = [
+    {
+      icon: <Clock aria-hidden="true" />,
+      label: '總時間',
+      value: formatMinutes(actualDuration),
+    },
+    {
+      icon: <Wallet aria-hidden="true" />,
+      label: '預算',
+      value: `約 NT$ ${(plan.budget ?? 0).toLocaleString('zh-TW')}`,
+    },
+    {
+      icon: <Car aria-hidden="true" />,
+      label: '交通',
+      value: transportLabels[plan.transportMode] ?? '未指定',
+    },
+    {
+      icon: <MapPin aria-hidden="true" />,
+      label: '停留點',
+      value: `${stops.length} 個`,
+    },
+  ]
 
   return (
     <article className="plan-card">
-      <div>
+      <div className="plan-card-header">
         <p className="plan-type">{label}</p>
         <h2>{plan.title}</h2>
-        <p>{plan.summary}</p>
+        <p className="plan-summary">{plan.summary}</p>
       </div>
 
       <dl className="plan-metrics">
-        <div>
-          <dt>總時間</dt>
-          <dd>{formatMinutes(actualDuration)}</dd>
-        </div>
-        <div>
-          <dt>預算</dt>
-          <dd>約 NT$ {(plan.budget ?? 0).toLocaleString('zh-TW')}</dd>
-        </div>
-        <div>
-          <dt>交通</dt>
-          <dd>{transportLabels[plan.transportMode] ?? '未指定'}</dd>
-        </div>
-        <div>
-          <dt>停留點</dt>
-          <dd>{stops.length} 個</dd>
-        </div>
+        {metrics.map((metric) => (
+          <div className="plan-metric-item" key={metric.label}>
+            <span className="plan-metric-icon" aria-hidden="true">
+              {metric.icon}
+            </span>
+            <dt>{metric.label}</dt>
+            <dd>{metric.value}</dd>
+          </div>
+        ))}
       </dl>
 
       <div className="stop-preview">
-        <strong>行程</strong>
+        <strong>行程預覽</strong>
         <ol>
-          {previewStops.map((stop) => (
-            <li key={`${plan.id}-${stop.id || stop.name}`}>{stop.name}</li>
+          {previewStops.map((stop, index) => (
+            <li key={`${plan.id}-${stop.id || stop.name}`}>
+              <span className="stop-preview-index">{index + 1}</span>
+              <span>{stop.name}</span>
+            </li>
           ))}
         </ol>
       </div>
 
       <Link
-        className="secondary-button result-link"
+        className="result-link"
         to={`/plans/${plan.id}`}
         onClick={() => onSelect(`/plans/${plan.id}`)}
       >

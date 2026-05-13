@@ -6,12 +6,20 @@ import {
   getTransactionTypeLabel,
   loadPointsSnapshot,
   getCachedPointsSnapshot,
+  type PointTransaction,
   type PointsSnapshot,
 } from '../services/points/pointsService'
 import {
   loginPromptMessage,
   loginPromptTitle,
 } from '../utils/loginPrompt'
+import pointsHeaderArt from '../assets/mascot/points-header-art.png'
+import pointsBalanceCoin from '../assets/mascot/points-balance-coin.png'
+import pointsRecordsIcon from '../assets/mascot/points-records-icon.png'
+import pointsAddIcon from '../assets/mascot/points-add-icon.png'
+import pointsDeductIcon from '../assets/mascot/points-deduct-icon.png'
+import pointsAccountIcon from '../assets/mascot/points-account-icon.png'
+import historyBottomBg from '../assets/mascot/history-bottom-bg.png'
 
 export function PointsPage() {
   const navigate = useNavigate()
@@ -19,11 +27,10 @@ export function PointsPage() {
   const { user, isAuthLoading } = useAuth()
   const hasPromptedLoginRef = useRef(false)
 
-  // 1. 初始化優先使用快取
   const [pointsSnapshot, setPointsSnapshot] = useState<PointsSnapshot | null>(() => getCachedPointsSnapshot())
   const [pointsError, setPointsError] = useState('')
   const [isPointsLoading, setIsPointsLoading] = useState(!getCachedPointsSnapshot())
-  
+
   const visiblePointsSnapshot =
     pointsSnapshot?.profile.id === user?.id ? pointsSnapshot : null
 
@@ -53,7 +60,6 @@ export function PointsPage() {
     let isMounted = true
 
     async function loadPoints() {
-      // 只有在完全沒資料時才顯示主 loading
       if (!pointsSnapshot) {
         setIsPointsLoading(true)
       }
@@ -69,7 +75,7 @@ export function PointsPage() {
           setPointsError(
             error instanceof Error
               ? error.message
-              : '目前無法讀取點數資料。',
+              : '無法讀取點數資料，請稍後再試。',
           )
         }
       } finally {
@@ -90,73 +96,147 @@ export function PointsPage() {
     return <section className="page" />
   }
 
+  const transactions = visiblePointsSnapshot?.transactions ?? []
+  const currentBalance = visiblePointsSnapshot?.profile.points_balance
+  const accountEmail = user.email ?? '尚未取得帳號'
+
   return (
-    <section className="page points-page">
-      <h1 className="page-title">點數管理</h1>
-      <div className="points-panel">
-        <p className="plan-type">目前帳號</p>
-        <h2>{user.email ?? '已登入使用者'}</h2>
-        
-        {/* 背景更新時顯示一個小的提示或 spinner，不再阻擋整個畫面 */}
-        {isPointsLoading && !visiblePointsSnapshot ? <p>正在讀取點數...</p> : null}
-        
+    <section className="points-page" aria-label="點數管理">
+      <img
+        className="points-bottom-art"
+        src={historyBottomBg}
+        alt=""
+        aria-hidden="true"
+      />
+
+      <section className="points-fixed-top">
+        <img
+          className="points-header-art"
+          src={pointsHeaderArt}
+          alt="點數管理"
+        />
+
+        <div className="points-summary-card" aria-label="帳號與點數摘要">
+          <div className="points-summary-item">
+            <img
+              className="points-summary-icon"
+              src={pointsAccountIcon}
+              alt=""
+              aria-hidden="true"
+            />
+            <div className="points-summary-copy">
+              <span>目前帳號</span>
+              <strong className="points-account-email">{accountEmail}</strong>
+            </div>
+          </div>
+
+          <div className="points-summary-divider" aria-hidden="true" />
+
+          <div className="points-summary-item points-summary-item-balance">
+            <img
+              className="points-summary-icon points-coin-icon"
+              src={pointsBalanceCoin}
+              alt=""
+              aria-hidden="true"
+            />
+            <div className="points-summary-copy">
+              <span>目前點數</span>
+              <strong className="points-balance-value">
+                {typeof currentBalance === 'number'
+                  ? currentBalance.toLocaleString('zh-TW')
+                  : '--'}
+              </strong>
+            </div>
+          </div>
+        </div>
+
+        <p className="points-retention-note">
+          僅保留最近 30 筆紀錄，後續將自動移除較舊紀錄
+        </p>
+
+        {isPointsLoading && !visiblePointsSnapshot ? (
+          <p className="points-status">正在讀取點數資料...</p>
+        ) : null}
+
         {pointsError ? (
           <p className="points-error">
             {pointsError}
           </p>
         ) : null}
 
-        {visiblePointsSnapshot ? (
-          <>
-            <div className="points-balance-card">
-              <span>目前點數</span>
-              <strong>{visiblePointsSnapshot.profile.points_balance}</strong>
-              {isPointsLoading && <small style={{ display: 'block', fontSize: '12px', color: '#666' }}>更新中...</small>}
-            </div>
+        <div className="points-history-title">
+          <img
+            className="points-history-title-icon"
+            src={pointsRecordsIcon}
+            alt=""
+            aria-hidden="true"
+          />
+          <h2>點數紀錄</h2>
+        </div>
+      </section>
 
-            <div className="points-history">
-              <h2>點數紀錄</h2>
-              {visiblePointsSnapshot.transactions.length > 0 ? (
-                <ol>
-                  {visiblePointsSnapshot.transactions.map((transaction) => (
-                    <li key={transaction.id}>
-                      <div>
-                        <strong>
-                          {getTransactionTypeLabel(transaction.type)}
-                        </strong>
-                        <span>{formatTransactionDate(transaction.created_at)}</span>
-                      </div>
-                      <div>
-                        <span>{formatPointAmount(transaction.amount)}</span>
-                        <small>餘額 {transaction.balance_after}</small>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p>目前沒有點數紀錄。</p>
-              )}
-            </div>
-          </>
+      <section className="points-history-scroll" aria-label="最近點數紀錄">
+        {visiblePointsSnapshot ? (
+          transactions.length > 0 ? (
+            <ol className="points-record-list">
+              {transactions.map((transaction) => (
+                <PointRecordItem
+                  key={transaction.id}
+                  transaction={transaction}
+                />
+              ))}
+            </ol>
+          ) : (
+            <p className="points-empty-state">目前沒有點數紀錄。</p>
+          )
         ) : null}
-      </div>
+      </section>
     </section>
+  )
+}
+
+function PointRecordItem({ transaction }: { transaction: PointTransaction }) {
+  const isPositive = transaction.amount > 0
+  const amountClassName = isPositive
+    ? 'points-record-amount points-record-amount-positive'
+    : 'points-record-amount points-record-amount-negative'
+
+  return (
+    <li className="points-record-card">
+      <div className="points-record-main">
+        <img
+          className="points-record-icon"
+          src={isPositive ? pointsAddIcon : pointsDeductIcon}
+          alt=""
+          aria-hidden="true"
+        />
+        <div className="points-record-copy">
+          <strong>{getTransactionTypeLabel(transaction.type)}</strong>
+          <span>{formatTransactionDate(transaction.created_at)}</span>
+        </div>
+      </div>
+
+      <div className="points-record-meta">
+        <span className={amountClassName}>{formatPointAmount(transaction.amount)}</span>
+        <small>餘額 {transaction.balance_after.toLocaleString('zh-TW')}</small>
+      </div>
+    </li>
   )
 }
 
 function formatPointAmount(amount: number) {
   if (amount > 0) {
-    return `+${amount}`
+    return `+${amount.toLocaleString('zh-TW')}`
   }
 
-  return String(amount)
+  return amount.toLocaleString('zh-TW')
 }
 
 function formatTransactionDate(value: string) {
   const date = new Date(value)
 
   if (Number.isNaN(date.getTime())) {
-    return '未知時間'
+    return '時間未明'
   }
 
   return new Intl.DateTimeFormat('zh-TW', {
