@@ -16,6 +16,8 @@ import {
   loginPromptMessage,
   loginPromptTitle,
 } from '../utils/loginPrompt'
+import favoriteTitleArt from '../assets/mascot/favorite-title-art.png'
+import historyBottomBg from '../assets/mascot/history-bottom-bg.png'
 
 const RECORD_SYNC_TIMEOUT_MS = 8000
 
@@ -129,23 +131,46 @@ export function FavoritesPage() {
   }
 
   return (
-    <section className="page">
-      <p className="page-kicker">已收藏行程</p>
-      <h1 className="page-title">收藏</h1>
-      {user && isRecordsLoading ? (
-        <div className="empty-record-panel" role="status" aria-live="polite">
-          <h2>正在讀取收藏...</h2>
-          <p>我們正在同步你的收藏行程。</p>
-        </div>
-      ) : null}
-      {user && !isRecordsLoading ? (
-        <TripRecordList
-          records={visibleRecords}
-          emptyTitle="還沒有收藏任何方案呢"
-          source="favorites"
-          onRemove={(recordId) => void handleRemove(recordId)}
+    <section className="history-page history-page-favorites">
+      <section className="history-hero" aria-label="收藏">
+        <img
+          className="history-title-art"
+          src={favoriteTitleArt}
+          alt="收藏"
+          decoding="async"
         />
-      ) : null}
+      </section>
+      <div className="history-scroll">
+        {user && !isRecordsLoading ? (
+          <div className="history-status-row" aria-label={`已收藏 ${visibleRecords.length} 個`}>
+            <span className="history-status-chip">
+              已收藏 {visibleRecords.length} 個
+            </span>
+          </div>
+        ) : null}
+        {user && isRecordsLoading ? (
+          <div className="empty-record-panel" role="status" aria-live="polite">
+            <h2>正在讀取收藏...</h2>
+            <p>我們正在同步你的收藏行程。</p>
+          </div>
+        ) : null}
+        {user && !isRecordsLoading ? (
+          <TripRecordList
+            records={visibleRecords}
+            emptyTitle="還沒有收藏任何方案呢"
+            source="favorites"
+            onRemove={(recordId) => void handleRemove(recordId)}
+          />
+        ) : null}
+      </div>
+      <img
+        className="history-bottom-art"
+        src={historyBottomBg}
+        alt=""
+        aria-hidden="true"
+        decoding="async"
+        loading="lazy"
+      />
     </section>
   )
 }
