@@ -1,5 +1,36 @@
-const CACHE_NAME = 'tripneeder-shell-v1'
+const CACHE_NAME = 'tripneeder-shell-v2'
 const APP_SHELL = ['/', '/manifest.webmanifest', '/tripneeder-icon.svg']
+const STATIC_EXTENSIONS = [
+  '.webp',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.svg',
+  '.css',
+  '.js',
+  '.woff',
+  '.woff2',
+]
+
+const isStaticAsset = (url) =>
+  url.origin === self.location.origin &&
+  (url.pathname.startsWith('/assets/') ||
+    STATIC_EXTENSIONS.some((extension) => url.pathname.endsWith(extension)))
+
+const isNavigationRequest = (request) =>
+  request.mode === 'navigate' ||
+  request.headers.get('accept')?.includes('text/html')
+
+const fetchAndCache = async (request) => {
+  const response = await fetch(request)
+
+  if (response.ok) {
+    const cache = await caches.open(CACHE_NAME)
+    await cache.put(request, response.clone())
+  }
+
+  return response
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -28,19 +59,28 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const copy = response.clone()
+  const url = new URL(event.request.url)
 
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, copy)
-        })
+  if (url.origin !== self.location.origin || url.hostname.includes('supabase.co')) {
+    return
+  }
 
-        return response
-      })
-      .catch(() =>
-        caches.match(event.request).then((cached) => cached || caches.match('/')),
-      ),
-  )
+  if (url.pathname.startsWith('/api/')) {
+    return
+  }
+
+  if (isStaticAsset(url)) {
+    event.respondWith(
+      caches
+        .match(event.request)
+        .then((cached) => cached || fetchAndCache(event.request)),
+    )
+    return
+  }
+
+  if (isNavigationRequest(event.request)) {
+    event.respondWith(
+      fetchAndCache(event.request).catch(() => caches.match('/')),
+    )
+  }
 })
