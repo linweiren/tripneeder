@@ -13,19 +13,20 @@ import {
   loginPromptMessage,
   loginPromptTitle,
 } from '../utils/loginPrompt'
-import pointsHeaderArt from '../assets/mascot/points-header-art.png'
-import pointsBalanceCoin from '../assets/mascot/points-balance-coin.png'
-import pointsRecordsIcon from '../assets/mascot/points-records-icon.png'
-import pointsAddIcon from '../assets/mascot/points-add-icon.png'
-import pointsDeductIcon from '../assets/mascot/points-deduct-icon.png'
-import pointsAccountIcon from '../assets/mascot/points-account-icon.png'
-import historyBottomBg from '../assets/mascot/history-bottom-bg.png'
+import pointsHeaderArt from '../assets/mascot/points-header-art.webp'
+import pointsBalanceCoin from '../assets/mascot/points-balance-coin.webp'
+import pointsRecordsIcon from '../assets/mascot/points-records-icon.webp'
+import pointsAddIcon from '../assets/mascot/points-add-icon.webp'
+import pointsDeductIcon from '../assets/mascot/points-deduct-icon.webp'
+import pointsAccountIcon from '../assets/mascot/points-account-icon.webp'
+import historyBottomBg from '../assets/mascot/history-bottom-bg.webp'
 
 export function PointsPage() {
   const navigate = useNavigate()
   const dialog = useDialog()
   const { user, isAuthLoading } = useAuth()
   const hasPromptedLoginRef = useRef(false)
+  const userId = user?.id
 
   const [pointsSnapshot, setPointsSnapshot] = useState<PointsSnapshot | null>(() => getCachedPointsSnapshot())
   const [pointsError, setPointsError] = useState('')
@@ -53,14 +54,14 @@ export function PointsPage() {
   }, [dialog, isAuthLoading, navigate, user])
 
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       return
     }
 
     let isMounted = true
 
     async function loadPoints() {
-      if (!pointsSnapshot) {
+      if (!pointsSnapshot || pointsSnapshot.profile.id !== userId) {
         setIsPointsLoading(true)
       }
       setPointsError('')
@@ -90,30 +91,39 @@ export function PointsPage() {
     return () => {
       isMounted = false
     }
-  }, [pointsSnapshot, user])
-
-  if (!user) {
-    return <section className="page" />
-  }
+  }, [userId])
 
   const transactions = visiblePointsSnapshot?.transactions ?? []
   const currentBalance = visiblePointsSnapshot?.profile.points_balance
-  const accountEmail = user.email ?? '尚未取得帳號'
+  const accountEmail = user?.email ?? '尚未取得帳號'
+  const statusMessage = isAuthLoading
+    ? '正在確認登入狀態...'
+    : user
+      ? '正在讀取點數資料...'
+      : '登入後顯示點數資料'
 
   return (
     <section className="points-page" aria-label="點數管理">
       <img
         className="points-bottom-art"
         src={historyBottomBg}
+        width={864}
+        height={258}
         alt=""
         aria-hidden="true"
+        decoding="async"
+        loading="eager"
       />
 
       <section className="points-fixed-top">
         <img
           className="points-header-art"
           src={pointsHeaderArt}
+          width={866}
+          height={288}
           alt="點數管理"
+          decoding="async"
+          loading="eager"
         />
 
         <div className="points-summary-card" aria-label="帳號與點數摘要">
@@ -121,8 +131,12 @@ export function PointsPage() {
             <img
               className="points-summary-icon"
               src={pointsAccountIcon}
+              width={192}
+              height={192}
               alt=""
               aria-hidden="true"
+              decoding="async"
+              loading="eager"
             />
             <div className="points-summary-copy">
               <span>目前帳號</span>
@@ -136,8 +150,12 @@ export function PointsPage() {
             <img
               className="points-summary-icon points-coin-icon"
               src={pointsBalanceCoin}
+              width={192}
+              height={192}
               alt=""
               aria-hidden="true"
+              decoding="async"
+              loading="eager"
             />
             <div className="points-summary-copy">
               <span>目前點數</span>
@@ -154,8 +172,8 @@ export function PointsPage() {
           僅保留最近 30 筆紀錄，後續將自動移除較舊紀錄
         </p>
 
-        {isPointsLoading && !visiblePointsSnapshot ? (
-          <p className="points-status">正在讀取點數資料...</p>
+        {(isAuthLoading || isPointsLoading) && !visiblePointsSnapshot ? (
+          <p className="points-status">{statusMessage}</p>
         ) : null}
 
         {pointsError ? (
@@ -168,8 +186,12 @@ export function PointsPage() {
           <img
             className="points-history-title-icon"
             src={pointsRecordsIcon}
+            width={192}
+            height={192}
             alt=""
             aria-hidden="true"
+            decoding="async"
+            loading="eager"
           />
           <h2>點數紀錄</h2>
         </div>
@@ -207,8 +229,12 @@ function PointRecordItem({ transaction }: { transaction: PointTransaction }) {
         <img
           className="points-record-icon"
           src={isPositive ? pointsAddIcon : pointsDeductIcon}
+          width={192}
+          height={192}
           alt=""
           aria-hidden="true"
+          decoding="async"
+          loading="eager"
         />
         <div className="points-record-copy">
           <strong>{getTransactionTypeLabel(transaction.type)}</strong>
