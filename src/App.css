@@ -551,7 +551,7 @@
       rgba(255, 252, 246, 0.06) 68%,
       rgba(255, 252, 246, 0.68) 100%
     ),
-    url('./assets/mascot/mascot-scenic-watercolor.png');
+    url('./assets/mascot/mascot-scenic-watercolor.webp');
   background-position: center 54%;
   background-size: min(650px, 118%) auto;
   background-repeat: no-repeat;
