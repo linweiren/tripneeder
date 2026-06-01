@@ -161,6 +161,13 @@ export function HomePage() {
   const isAnalysisInProgress = session?.status === 'analyzing'
   const analysisError = session?.status === 'error' ? session.error : ''
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    document
+      .querySelector<HTMLElement>('.app-main')
+      ?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [])
+
   const preferenceSources = useMemo(
     () => getPreferenceSources(input, profile),
     [input, profile],
@@ -873,7 +880,12 @@ export function HomePage() {
             <img
               className="home-title-image"
               src={homeDurationTitleArt}
+              width={866}
+              height={288}
               alt="想在這玩多久？"
+              decoding="async"
+              fetchPriority="high"
+              loading="eager"
             />
           </div>
 
@@ -898,7 +910,12 @@ export function HomePage() {
                         className={`duration-option-icon duration-option-icon-${option.value}`}
                         aria-hidden="true"
                       >
-                        <img src={option.iconSrc} alt="" />
+                        <img
+                          src={option.iconSrc}
+                          alt=""
+                          decoding="async"
+                          loading="eager"
+                        />
                       </span>
                       <span className="duration-option-copy">
                         <span>{option.label}</span>
@@ -944,7 +961,14 @@ export function HomePage() {
 
               <div className="home-action-footer">
                 <div className="duration-display">
-                  <img className="duration-display-icon" src={calendarIcon} alt="" aria-hidden="true" />
+                  <img
+                    className="duration-display-icon"
+                    src={calendarIcon}
+                    alt=""
+                    aria-hidden="true"
+                    decoding="async"
+                    loading="eager"
+                  />
                   <span>預計玩到</span> <strong>{input.endTime || '--:--'}</strong>
                   {isCrossDay && <span className="cross-day-note"> (明天)</span>}
                 </div>
