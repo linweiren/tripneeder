@@ -16,8 +16,8 @@ import {
   loginPromptMessage,
   loginPromptTitle,
 } from '../utils/loginPrompt'
-import favoriteTitleArt from '../assets/mascot/favorite-title-art.png'
-import historyBottomBg from '../assets/mascot/history-bottom-bg.png'
+import favoriteTitleArt from '../assets/mascot/favorite-title-art.webp'
+import historyBottomBg from '../assets/mascot/history-bottom-bg.webp'
 
 const RECORD_SYNC_TIMEOUT_MS = 8000
 
@@ -136,8 +136,11 @@ export function FavoritesPage() {
         <img
           className="history-title-art"
           src={favoriteTitleArt}
+          width={1040}
+          height={347}
           alt="收藏"
           decoding="async"
+          loading="eager"
         />
       </section>
       <div className="history-scroll">
@@ -166,10 +169,12 @@ export function FavoritesPage() {
       <img
         className="history-bottom-art"
         src={historyBottomBg}
+        width={864}
+        height={258}
         alt=""
         aria-hidden="true"
         decoding="async"
-        loading="lazy"
+        loading="eager"
       />
     </section>
   )

@@ -16,8 +16,8 @@ import {
   loginPromptMessage,
   loginPromptTitle,
 } from '../utils/loginPrompt'
-import historyBottomBg from '../assets/mascot/history-bottom-bg.png'
-import recentTitleArt from '../assets/mascot/recent-title-art.png'
+import historyBottomBg from '../assets/mascot/history-bottom-bg.webp'
+import recentTitleArt from '../assets/mascot/recent-title-art.webp'
 
 const RECORD_SYNC_TIMEOUT_MS = 8000
 
@@ -113,8 +113,11 @@ export function RecentPage() {
         <img
           className="history-title-art"
           src={recentTitleArt}
+          width={1040}
+          height={347}
           alt="最近生成"
           decoding="async"
+          loading="eager"
         />
       </section>
       <div className="history-scroll">
@@ -140,10 +143,12 @@ export function RecentPage() {
       <img
         className="history-bottom-art"
         src={historyBottomBg}
+        width={864}
+        height={258}
         alt=""
         aria-hidden="true"
         decoding="async"
-        loading="lazy"
+        loading="eager"
       />
     </section>
   )

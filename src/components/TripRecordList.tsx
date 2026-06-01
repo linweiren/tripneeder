@@ -6,7 +6,7 @@ import {
   savePlanForDetail,
   type StoredTripRecord,
 } from '../utils/tripPlanStorage'
-import mascotEmptyState from '../assets/mascot/mascot-empty-state.png'
+import mascotEmptyState from '../assets/mascot/mascot-empty-state.webp'
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -47,9 +47,11 @@ export function TripRecordList({
         <img
           className="empty-record-mascot"
           src={mascotEmptyState}
+          width={320}
+          height={382}
           alt="TripNeeder 奶油白旅行貓休息中"
           decoding="async"
-          loading="lazy"
+          loading="eager"
         />
         <h2>{emptyTitle}</h2>
       </div>
