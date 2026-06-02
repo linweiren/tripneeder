@@ -82,6 +82,9 @@ export function getOpeningHoursSearchStartMinutes(start: number, end: number) {
 }
 
 export function shouldUseEarlyMorningActiveWindow(start: number, end: number) {
+  // This handles trips that start before 06:00 and have enough usable time after
+  // 06:00. It is separate from dawn tail tolerance for cross-day trips ending
+  // around 05:30-07:00, and should not be used as a general gap filler.
   return (
     start < EARLY_MORNING_ACTIVE_START_MINUTES &&
     end > EARLY_MORNING_ACTIVE_START_MINUTES &&

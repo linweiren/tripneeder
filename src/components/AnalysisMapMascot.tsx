@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import mascotMapReference from '../assets/mascot/mascot-map-reference.png'
+import mascotMapReference from '../assets/mascot/mascot-map-reference.webp'
 
 type AnalysisMapMascotProps = {
   className?: string

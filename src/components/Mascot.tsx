@@ -1,4 +1,4 @@
-import mascotMain from '../assets/mascot/mascot-main.png'
+import mascotMain from '../assets/mascot/mascot-main.webp'
 
 type MascotSize = 'small' | 'medium' | 'large'
 type MascotVariant = 'hero' | 'empty' | 'loading' | 'success'
@@ -28,6 +28,8 @@ export function Mascot({
       <img
         src={mascotMain}
         alt="TripNeeder 奶油白旅行貓吉祥物"
+        width="640"
+        height="640"
         decoding="async"
         loading={variant === 'hero' ? 'eager' : 'lazy'}
       />

@@ -4,8 +4,8 @@ import { useAnalysisSession } from '../contexts/analysisSession'
 import type { TransportMode, TripPlan } from '../types/trip'
 import { loadGeneratedPlans } from '../utils/tripPlanStorage'
 import { getPlanActualDuration } from '../utils/tripTiming'
-import mascotComplete from '../assets/mascot/mascot-complete.png'
-import mascotError from '../assets/mascot/mascot-error.png'
+import mascotComplete from '../assets/mascot/mascot-complete.webp'
+import mascotError from '../assets/mascot/mascot-error.webp'
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -28,6 +28,10 @@ export function ResultsPage() {
             className="empty-record-mascot error-mascot"
             src={mascotError}
             alt="分析失敗吉祥物"
+            width="480"
+            height="720"
+            decoding="async"
+            loading="eager"
           />
           <h2 style={{ whiteSpace: 'nowrap' }}>這次沒有找到可用方案</h2>
           <p style={{ whiteSpace: 'nowrap' }}>沒有符合營業時間與條件的行程</p>
@@ -51,6 +55,10 @@ export function ResultsPage() {
         src={mascotComplete}
         alt=""
         aria-hidden="true"
+        width="384"
+        height="576"
+        decoding="async"
+        loading="eager"
       />
       <div className="results-hero">
         <button className="back-link" type="button" onClick={resetAnalysisFlow}>
