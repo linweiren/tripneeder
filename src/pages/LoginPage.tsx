@@ -1,9 +1,9 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/auth'
 import { useDialog } from '../contexts/dialog'
-import loginBgCorner from '../assets/mascot/login-bg-corner.png'
+import loginBgCorner from '../assets/mascot/login-bg-corner.webp'
 import loginBgLeaves from '../assets/mascot/login-bg-leaves.png'
-import loginEmblem from '../assets/mascot/login-emblem.png'
+import loginEmblem from '../assets/mascot/login-emblem.webp'
 import loginLock from '../assets/mascot/login-lock.png'
 
 export function LoginPage() {
@@ -46,6 +46,10 @@ export function LoginPage() {
             src={loginEmblem}
             alt=""
             aria-hidden="true"
+            width="512"
+            height="512"
+            decoding="async"
+            loading="eager"
           />
 
           <h1 id="login-title">登入 TripNeeder</h1>
@@ -97,6 +101,10 @@ export function LoginPage() {
           src={loginBgCorner}
           alt=""
           aria-hidden="true"
+          width="1000"
+          height="1000"
+          decoding="async"
+          loading="eager"
         />
       </main>
     </section>

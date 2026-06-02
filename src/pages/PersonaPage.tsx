@@ -15,7 +15,7 @@ import { initializeUserProfile, getCachedUserProfile } from '../services/points/
 import { useAuth } from '../contexts/auth'
 import { AppSelect, type AppSelectOption } from '../components/ui/AppSelect'
 import type { TransportMode } from '../types/trip'
-import personaTitleArt from '../assets/mascot/persona-title-art.png'
+import personaTitleArt from '../assets/mascot/persona-title-art.webp'
 
 const transportModeOptions: Array<{ value: TransportMode; label: string }> = [
   { value: 'scooter', label: '機車' },
@@ -214,8 +214,8 @@ export function PersonaPage() {
           src={personaTitleArt}
           alt=""
           aria-hidden="true"
-          width="1672"
-          height="941"
+          width="1200"
+          height="449"
           decoding="async"
           loading="eager"
         />

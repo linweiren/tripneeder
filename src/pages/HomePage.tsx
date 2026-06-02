@@ -22,8 +22,8 @@ import {
   type UserProfile,
 } from '../services/points/pointsService'
 import { AppSelect, type AppSelectOption } from '../components/ui/AppSelect'
-import mascotError from '../assets/mascot/mascot-error.png'
-import mascotMapReference from '../assets/mascot/mascot-map-reference.png'
+import mascotError from '../assets/mascot/mascot-error.webp'
+import mascotMapReference from '../assets/mascot/mascot-map-reference.webp'
 import homeDurationTitleArt from '../assets/mascot/home-duration-title-art.png'
 import duration2hIcon from '../assets/mascot/2h.webp'
 import duration3hIcon from '../assets/mascot/3h.webp'
@@ -724,6 +724,10 @@ export function HomePage() {
               className="empty-record-mascot error-mascot"
               src={mascotError}
               alt="分析失敗"
+              width="480"
+              height="720"
+              decoding="async"
+              loading="eager"
             />
           ) : (
             <>
@@ -736,6 +740,10 @@ export function HomePage() {
                   src={mascotMapReference}
                   alt=""
                   aria-hidden="true"
+                  width="640"
+                  height="766"
+                  decoding="async"
+                  loading="eager"
                 />
                 <div className="analysis-progress-panel">
                   <div className="analysis-progress-meta">

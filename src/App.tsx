@@ -7,7 +7,7 @@ import { AuthProvider } from './contexts/AuthContext'
 import { DialogProvider } from './contexts/DialogContext'
 import { useAnalysisSession } from './contexts/analysisSession'
 import { useAuth } from './contexts/auth'
-import mascotMain from './assets/mascot/mascot-main.png'
+import mascotMain from './assets/mascot/mascot-main.webp'
 import './App.css'
 
 const navItems = [
@@ -53,6 +53,10 @@ function SplashScreen() {
           className="splash-mascot"
           src={mascotMain}
           alt="TripNeeder 奶油白旅行貓吉祥物"
+          width="640"
+          height="640"
+          decoding="async"
+          loading="eager"
         />
         <div className="splash-wordmark" aria-label="TripNeeder">
           TripNeeder
