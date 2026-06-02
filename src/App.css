@@ -4918,7 +4918,7 @@
 
 .persona-page {
   display: grid;
-  gap: 18px;
+  gap: 0;
   width: 100vw;
   margin-left: calc(50% - 50vw);
   padding: 0 0 20px;
@@ -4926,114 +4926,30 @@
 }
 
 .persona-hero {
-  position: relative;
   width: 100%;
-  min-height: auto;
   margin: 0;
-  padding: 34px 28px 0;
+  padding: 0 16px;
   background: transparent;
-  overflow: visible;
   box-sizing: border-box;
 }
 
 .persona-title-art {
-  position: absolute;
-  left: 18px;
-  top: 34px;
-  z-index: 4;
-  width: 54px;
-  height: auto;
-  object-fit: contain;
-  opacity: 0.95;
-  pointer-events: none;
-  user-select: none;
-}
-
-.persona-hero-title-block {
-  position: relative;
-  z-index: 3;
+  display: block;
   width: 100%;
-  max-width: none;
-  padding-left: 46px;
-  box-sizing: border-box;
-}
-
-.persona-hero .page-title {
-  margin: 0;
-  color: #26372d;
-  font-size: 40px;
-  font-weight: 600;
-  line-height: 1.12;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-}
-
-.persona-hero .page-copy {
-  max-width: 300px;
-  margin-top: 12px;
-  margin-left: -22px;
-  position: relative;
-  left: 0;
-  transform: none;
-  font-size: 14px;
-  line-height: 1.55;
-  letter-spacing: 0.01em;
-  color: rgba(70, 70, 70, 0.72);
-}
-
-.persona-hero-art {
-  position: absolute;
-  top: 6px;
-  right: 0;
-  z-index: 1;
-  width: 220px;
+  max-width: 1100px;
   height: auto;
+  aspect-ratio: 1672 / 941;
+  margin: -20px auto -24px;
   object-fit: contain;
-  opacity: 0.40;
-  transform: translate(36px, -24px);
-  filter: brightness(0.72) contrast(1.16) sepia(0.18);
-  pointer-events: none;
-  user-select: none;
 }
 
 @media (min-width: 768px) {
   .persona-hero {
-    width: calc(100% - 64px);
-    max-width: 900px;
-    margin: 0 auto;
-    min-height: auto;
-    padding: 42px 0 0;
+    padding: 0 32px;
   }
 
   .persona-title-art {
-    left: 18px;
-    top: 34px;
-    width: 54px;
-  }
-
-  .persona-hero-title-block {
-    padding-left: 64px;
-  }
-
-  .persona-hero .page-title {
-    font-size: 64px;
-    letter-spacing: 0.05em;
-  }
-
-  .persona-hero .page-copy {
-    max-width: 540px;
-    margin-top: 18px;
-    margin-left: -28px;
-    font-size: 17px;
-    line-height: 1.6;
-  }
-
-  .persona-hero-art {
-    top: 6px;
-    right: 0;
-    width: 220px;
-    opacity: 0.40;
-    transform: translate(36px, -24px);
+    margin: -30px auto -32px;
   }
 }
 

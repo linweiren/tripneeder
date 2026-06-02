@@ -135,6 +135,22 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
 const ANALYSIS_COST = 20
 const ENABLE_LOCAL_FALLBACK_REFILL = process.env.ENABLE_LOCAL_FALLBACK_REFILL === 'true'
 const GENERATE_DEBUG_LOG_PATH = '.tripneeder-generate-debug.log'
+// Product rule: this is a dawn tail tolerance, not a general coverage backfill.
+// It only applies to cross-day trips ending from 05:30 through 07:00, and only
+// after final repair still fails because a tail stop violates opening-hours or
+// the closing buffer. Opening-hours validation and the closing buffer must stay
+// intact; daytime trips and ordinary coverage shortfalls should not use this.
+// Early-morning departures such as 03:00 -> noon still use the separate
+// early-morning active window. If they need better gaps later, design a
+// structured waiting_for_opening_hours block instead of expanding this rule.
+const DAWN_CROSS_DAY_END_START_MINUTES = 5 * 60 + 30
+const DAWN_CROSS_DAY_END_END_MINUTES = 7 * 60
+const DAWN_TAIL_COVERAGE_SHORTFALL_ALLOWANCE_MINUTES = 60
+const DAWN_TAIL_NEAR_END_MINUTES = 90
+
+type DeliveryPlanIssueOptions = {
+  coverageShortfallAllowanceMinutes?: number
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Cache-Control', 'no-store')
@@ -1475,12 +1491,46 @@ async function repairAndValidatePlanForDelivery(
     }
   }
 
+  const dawnTailAttempt = await trimDawnTailAfterOpeningHoursFailure(
+    coverageAttempt.plan,
+    input,
+    `${phase}-dawn-tail-trim`,
+  )
+
+  if (dawnTailAttempt.plan) {
+    console.info('[plan-repair-dawn-tail-trim-applied]', {
+      phase,
+      planId: plan.id,
+      originalIssues: firstIssues,
+      coverageIssues,
+      trimmedStopCount: coverageAttempt.plan.stops.length - dawnTailAttempt.plan.stops.length,
+      actualMinutes: getPlanActualDuration(dawnTailAttempt.plan),
+      minimumMinutes: getDawnTailMinimumRequiredActualMinutes(input),
+    })
+    writeGenerateDebugLog('plan-repair-dawn-tail-trim-applied', {
+      phase,
+      planId: plan.id,
+      originalIssues: firstIssues,
+      coverageIssues,
+      trimmedStopCount: coverageAttempt.plan.stops.length - dawnTailAttempt.plan.stops.length,
+      actualMinutes: getPlanActualDuration(dawnTailAttempt.plan),
+      minimumMinutes: getDawnTailMinimumRequiredActualMinutes(input),
+    })
+
+    return {
+      plan: await annotatePlanWithScheduleStart(dawnTailAttempt.plan, input),
+      routesFailed: firstAttempt.routesFailed || coverageAttempt.routesFailed || dawnTailAttempt.routesFailed,
+      issues: [],
+    }
+  }
+
   if (avoidedPlaceIds.size === 0) {
     const coverageFailedPayload = {
       phase,
       planId: plan.id,
       originalIssues: firstIssues,
       coverageIssues,
+      dawnTailIssues: dawnTailAttempt.issues,
     }
     console.info('[plan-repair-coverage-failed]', coverageFailedPayload)
     writeGenerateDebugLog('plan-repair-coverage-failed', coverageFailedPayload)
@@ -1514,14 +1564,77 @@ async function repairAndValidatePlanForDelivery(
   }
 }
 
+async function trimDawnTailAfterOpeningHoursFailure(
+  plan: TripPlan,
+  input: GenerateTripPlansRequest['input'],
+  phase: string,
+): Promise<{ plan: TripPlan | null; routesFailed: boolean; issues: string[] }> {
+  // Keep this narrow: when a dawn tail stop cannot pass availability checks, we
+  // may end about 60-90 minutes early rather than reject an otherwise usable
+  // overnight plan. This is not a fallback for closed daytime stops.
+  if (!shouldAllowDawnTailShortfall(input)) {
+    return { plan: null, routesFailed: false, issues: [] }
+  }
+
+  let nextPlan = normalizePlanTotalTime(plan)
+  let lastIssues = await getDeliveryPlanIssues(nextPlan, input, phase, {
+    coverageShortfallAllowanceMinutes: DAWN_TAIL_COVERAGE_SHORTFALL_ALLOWANCE_MINUTES,
+  })
+
+  if (lastIssues.length === 0) {
+    return { plan: nextPlan, routesFailed: false, issues: [] }
+  }
+
+  let routesFailed = false
+  let trimmedStopCount = 0
+
+  while (nextPlan.stops.length > 2 && isTailStopNearDawnTripEnd(nextPlan, input)) {
+    const stops = nextPlan.stops.slice(0, -1)
+    const routeRepair = await repairTransportSegments(
+      nextPlan.transportSegments ?? [],
+      stops,
+      nextPlan.transportMode,
+    )
+    routesFailed = routesFailed || routeRepair.routesFailed
+
+    const candidatePlan = normalizePlanTotalTime({
+      ...nextPlan,
+      stops,
+      transportSegments: routeRepair.segments,
+    })
+
+    if (!isAboveDawnTailMinimumCoverage(candidatePlan, input)) {
+      break
+    }
+
+    trimmedStopCount += 1
+    nextPlan = candidatePlan
+    lastIssues = await getDeliveryPlanIssues(
+      nextPlan,
+      input,
+      `${phase}-${trimmedStopCount}`,
+      {
+        coverageShortfallAllowanceMinutes: DAWN_TAIL_COVERAGE_SHORTFALL_ALLOWANCE_MINUTES,
+      },
+    )
+
+    if (lastIssues.length === 0) {
+      return { plan: nextPlan, routesFailed, issues: [] }
+    }
+  }
+
+  return { plan: null, routesFailed, issues: lastIssues }
+}
+
 async function getDeliveryPlanIssues(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
   phase: string,
+  options: DeliveryPlanIssueOptions = {},
 ) {
   logPlanQualitySummary(plan, input, phase)
 
-  const hardIssues = getHardPlanQualityIssues(plan, input, [])
+  const hardIssues = getHardPlanQualityIssues(plan, input, [], options)
   if (hardIssues.length > 0) {
     return hardIssues
   }
@@ -2314,6 +2427,66 @@ function isAboveMinimumCoverage(plan: TripPlan, input: GenerateTripPlansRequest[
   return getPlanActualDuration(plan) >= minimumMinutes
 }
 
+function isAboveDawnTailMinimumCoverage(
+  plan: TripPlan,
+  input: GenerateTripPlansRequest['input'],
+) {
+  const minimumMinutes = getDawnTailMinimumRequiredActualMinutes(input)
+  if (!minimumMinutes) return true
+
+  return getPlanActualDuration(plan) >= minimumMinutes
+}
+
+export function getDawnTailMinimumRequiredActualMinutes(input: GenerateTripPlansRequest['input']) {
+  const minimumMinutes = getMinimumRequiredActualMinutes(input)
+  if (!minimumMinutes) return null
+
+  return Math.max(0, minimumMinutes - DAWN_TAIL_COVERAGE_SHORTFALL_ALLOWANCE_MINUTES)
+}
+
+export function shouldAllowDawnTailShortfall(input: GenerateTripPlansRequest['input']) {
+  const window = getNormalizedTripWindowMinutes(input)
+  if (!window) return false
+
+  return (
+    window.rawEnd <= window.start &&
+    window.rawEnd >= DAWN_CROSS_DAY_END_START_MINUTES &&
+    window.rawEnd <= DAWN_CROSS_DAY_END_END_MINUTES
+  )
+}
+
+export function isTailStopNearDawnTripEnd(plan: TripPlan, input: GenerateTripPlansRequest['input']) {
+  const window = getNormalizedTripWindowMinutes(input)
+  if (!window || !shouldAllowDawnTailShortfall(input)) return false
+
+  const tailIndex = plan.stops.length - 1
+  const tailStop = plan.stops[tailIndex]
+  if (!tailStop) return false
+
+  const arrivalMinutes = getEstimatedArrivalMinutesForStop(
+    plan.stops,
+    tailIndex,
+    input,
+    plan.transportSegments,
+  )
+  const leaveMinutes = arrivalMinutes + Math.max(0, Number(tailStop.duration) || 0)
+
+  return leaveMinutes >= window.end - DAWN_TAIL_NEAR_END_MINUTES
+}
+
+function getNormalizedTripWindowMinutes(input: GenerateTripPlansRequest['input']) {
+  const start = parseTimeToMinutes(input.startTime)
+  const rawEnd = parseTimeToMinutes(input.endTime)
+
+  if (start === null || rawEnd === null) return null
+
+  return {
+    start,
+    rawEnd,
+    end: rawEnd <= start ? rawEnd + 24 * 60 : rawEnd,
+  }
+}
+
 function applyCandidateToStop(stop: Stop, candidate: VerifiedPlaceCandidate): Stop {
   const nextType = getStopTypeForCandidate(stop, candidate)
 
@@ -2593,6 +2766,7 @@ function getHardPlanQualityIssues(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
   placesIssues: PlacesValidationResult['issues'],
+  options: DeliveryPlanIssueOptions = {},
 ) {
   const issues = placesIssues.map(formatPlacesValidationIssue)
   const scheduleCapacityMinutes = getScheduleCapacityMinutes(input)
@@ -2606,7 +2780,11 @@ function getHardPlanQualityIssues(
 
   if (scheduleCapacityMinutes) {
     const actualMinutes = getPlanActualDuration(plan)
-    const minimumMinutes = getMinimumRequiredActualMinutes(input) ?? 0
+    const minimumMinutes = Math.max(
+      0,
+      (getMinimumRequiredActualMinutes(input) ?? 0) -
+        (options.coverageShortfallAllowanceMinutes ?? 0),
+    )
 
     if (actualMinutes < minimumMinutes) {
       issues.push(

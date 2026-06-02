@@ -15,8 +15,7 @@ import { initializeUserProfile, getCachedUserProfile } from '../services/points/
 import { useAuth } from '../contexts/auth'
 import { AppSelect, type AppSelectOption } from '../components/ui/AppSelect'
 import type { TransportMode } from '../types/trip'
-import personaHeroLeaf from '../assets/mascot/葉子.png'
-import personaHeroSignpost from '../assets/mascot/山指示牌.png'
+import personaTitleArt from '../assets/mascot/persona-title-art.png'
 
 const transportModeOptions: Array<{ value: TransportMode; label: string }> = [
   { value: 'scooter', label: '機車' },
@@ -210,16 +209,15 @@ export function PersonaPage() {
   return (
     <div className="persona-page">
       <div className="persona-hero">
-        <img className="persona-title-art" src={personaHeroLeaf} alt="" aria-hidden="true" />
-        <div className="persona-hero-title-block">
-          <h1 className="page-title">個性化設定</h1>
-          <p className="page-copy">設定您的旅遊人設，讓 AI 產生更貼近您偏好的行程（隨時可修改）。</p>
-        </div>
         <img
-          className="persona-hero-art"
-          src={personaHeroSignpost}
+          className="persona-title-art"
+          src={personaTitleArt}
           alt=""
           aria-hidden="true"
+          width="1672"
+          height="941"
+          decoding="async"
+          loading="eager"
         />
       </div>
 
