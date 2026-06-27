@@ -278,11 +278,7 @@ export async function getNearbyPlaceCandidates(
 
     logCandidatePoolSummary(input, candidates, candidateGaps, gapQueries.length)
 
-    const firstStopCandidates = candidates.filter(
-      (candidate) =>
-        typeof candidate.distanceKm === 'number' &&
-        candidate.distanceKm <= FIRST_STOP_MAX_DISTANCE_KM,
-    )
+    const firstStopCandidates = getFirstStopCandidates(candidates, input)
     const mainCandidates = candidates.filter(
       (candidate) =>
         typeof candidate.distanceKm !== 'number' ||
@@ -445,12 +441,15 @@ export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): 
   return sections.join('\n\n')
 }
 
-function buildCandidateSearchQueries(input: TripInput, persona?: Persona) {
+export function buildCandidateSearchQueries(input: TripInput, persona?: Persona) {
   const name = input.location.name || ''
   const hasCoords = typeof input.location.lat === 'number' && typeof input.location.lng === 'number'
   const includesEvening = tripOverlapsWindow(input, 17 * 60, 22 * 60)
   const includesLateNight = tripOverlapsWindow(input, 21 * 60, 26 * 60)
   const includesEarlyMorning = tripOverlapsClockWindow(input, 0, EARLY_MORNING_ACTIVE_START_MINUTES)
+  const shouldReserveOvernightQueries = isCrossDayTripEndingNearDawn(input)
+  let lateNightQuery = ''
+  let earlyMorningQuery = ''
   
   // 若有座標，我們可以使用更廣泛的類別搜尋，而不必在地名後面附加關鍵字
   // 這能避免當起點是特定景點（如「境園農場」）時，搜尋結果被侷限在該景點內
@@ -475,15 +474,13 @@ function buildCandidateSearchQueries(input: TripInput, persona?: Persona) {
     }
 
     if (includesLateNight) {
-      queries.push(
-        '24小時 營業 深夜景點 late night 24 hours',
-      )
+      lateNightQuery = '24小時 營業 深夜景點 late night 24 hours'
+      queries.push(lateNightQuery)
     }
 
     if (includesEarlyMorning) {
-      queries.push(
-        '24小時 營業 清晨 凌晨 可停留 places open 24 hours early morning',
-      )
+      earlyMorningQuery = '24小時 營業 清晨 凌晨 可停留 places open 24 hours early morning'
+      queries.push(earlyMorningQuery)
     }
   } else {
     // 缺乏座標時，才依賴地名作為前綴
@@ -501,18 +498,38 @@ function buildCandidateSearchQueries(input: TripInput, persona?: Persona) {
     }
 
     if (includesLateNight) {
-      queries.push(`${name} 24小時 深夜 營業`)
+      lateNightQuery = `${name} 24小時 深夜 營業`
+      queries.push(lateNightQuery)
     }
 
     if (includesEarlyMorning) {
-      queries.push(`${name} 24小時 清晨 凌晨 營業`)
+      earlyMorningQuery = `${name} 24小時 清晨 凌晨 營業`
+      queries.push(earlyMorningQuery)
     }
   }
 
-  return Array.from(new Set(queries.map((query) => query.trim()).filter(Boolean))).slice(
-    0,
-    MAX_GAP_SEARCH_QUERIES,
-  )
+  const uniqueQueries = Array.from(new Set(queries.map((query) => query.trim()).filter(Boolean)))
+  if (!shouldReserveOvernightQueries) {
+    return uniqueQueries.slice(0, MAX_GAP_SEARCH_QUERIES)
+  }
+
+  const requiredQueries = [lateNightQuery, earlyMorningQuery].filter(Boolean)
+  const prioritizedQueries = [
+    uniqueQueries[0],
+    ...requiredQueries,
+    ...uniqueQueries.slice(1).filter((query) => !requiredQueries.includes(query)),
+  ].filter((query): query is string => Boolean(query))
+
+  return prioritizedQueries.slice(0, MAX_GAP_SEARCH_QUERIES)
+}
+
+function isCrossDayTripEndingNearDawn(input: TripInput) {
+  if (!isCompleteTime(input.startTime) || !isCompleteTime(input.endTime)) return false
+
+  const start = parseTimeToMinutes(input.startTime)
+  const end = parseTimeToMinutes(input.endTime)
+
+  return end < start && end <= 7 * 60
 }
 
 function buildCandidateGapSearchQueries(
@@ -579,11 +596,7 @@ function buildCandidateGapSearchQueries(
 function getCandidateGaps(candidates: VerifiedPlaceCandidate[], input: TripInput): CandidateGaps {
   const includesEvening = tripOverlapsWindow(input, 17 * 60, 22 * 60)
   const includesLateNight = tripOverlapsWindow(input, 21 * 60, 26 * 60)
-  const firstStopCount = candidates.filter(
-    (candidate) =>
-      typeof candidate.distanceKm === 'number' &&
-      candidate.distanceKm <= FIRST_STOP_MAX_DISTANCE_KM,
-  ).length
+  const firstStopCount = getFirstStopCandidates(candidates, input).length
   const mainDistanceCandidates = candidates.filter(
     (candidate) =>
       typeof candidate.distanceKm !== 'number' ||
@@ -635,11 +648,7 @@ function logCandidatePoolSummary(
   initialGaps: CandidateGaps,
   gapQueryCount: number,
 ) {
-  const firstStopCount = candidates.filter(
-    (candidate) =>
-      typeof candidate.distanceKm === 'number' &&
-      candidate.distanceKm <= FIRST_STOP_MAX_DISTANCE_KM,
-  ).length
+  const firstStopCount = getFirstStopCandidates(candidates, input).length
   const foodCount = candidates.filter((candidate) => candidate.role === 'food').length
   const activityCount = candidates.filter((candidate) =>
     ['main_activity', 'open_space', 'shopping'].includes(candidate.role ?? ''),
@@ -670,7 +679,8 @@ function tripOverlapsClockWindow(input: TripInput, windowStartMinutes: number, w
 
   const start = parseTimeToMinutes(input.startTime)
   let end = parseTimeToMinutes(input.endTime)
-  if (end <= start) end += 24 * 60
+  if (end === start) return false
+  if (end < start) end += 24 * 60
 
   return (
     (start < windowEndMinutes && end > windowStartMinutes) ||
@@ -738,7 +748,8 @@ function buildTripWindow(input: TripInput) {
 
   const startMinutes = parseTimeToMinutes(input.startTime)
   let endMinutes = parseTimeToMinutes(input.endTime)
-  if (endMinutes <= startMinutes) {
+  if (endMinutes === startMinutes) return null
+  if (endMinutes < startMinutes) {
     endMinutes += 24 * 60
   }
   const activeStartMinutes = shouldUseEarlyMorningActiveWindow(startMinutes, endMinutes)
@@ -749,6 +760,25 @@ function buildTripWindow(input: TripInput) {
     startMinutes: activeStartMinutes,
     endMinutes,
   }
+}
+
+export function getFirstStopCandidates(
+  candidates: VerifiedPlaceCandidate[],
+  input: TripInput,
+) {
+  const tripWindow = buildTripWindow(input)
+  if (!tripWindow) return []
+
+  return candidates.filter(
+    (candidate) =>
+      typeof candidate.distanceKm === 'number' &&
+      candidate.distanceKm <= FIRST_STOP_MAX_DISTANCE_KM &&
+      isCandidateOpenForVisit(
+        candidate,
+        tripWindow.startMinutes,
+        getMinimumCandidateVisitMinutes(candidate),
+      ),
+  )
 }
 
 function shouldUseEarlyMorningActiveWindow(startMinutes: number, endMinutes: number) {
@@ -1750,7 +1780,8 @@ export async function resolveOpeningHoursTimelineStart(
 
   const originalStart = parseTimeToMinutes(input.startTime)
   let end = parseTimeToMinutes(input.endTime)
-  if (end <= originalStart) end += 24 * 60
+  if (end === originalStart) return { startMinutes: null, issues: [] }
+  if (end < originalStart) end += 24 * 60
 
   const earliestStart = options.earliestStartMinutes ?? originalStart
   const startStepMinutes = Math.max(1, options.startStepMinutes ?? 1)

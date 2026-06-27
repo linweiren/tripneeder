@@ -53,7 +53,8 @@ export function getCoverageBasisMinutes(input: TripWindowInput) {
   let end = parseTimeToMinutes(input.endTime)
 
   if (start === null || end === null) return null
-  if (end <= start) end += 24 * 60
+  if (end === start) return 0
+  if (end < start) end += 24 * 60
 
   if (shouldUseEarlyMorningActiveWindow(start, end)) {
     return end - EARLY_MORNING_ACTIVE_START_MINUTES
@@ -109,7 +110,8 @@ export function getTripWindowOverlapMinutes(
   let end = parseTimeToMinutes(input.endTime)
 
   if (start === null || end === null) return 0
-  if (end <= start) end += 24 * 60
+  if (end === start) return 0
+  if (end < start) end += 24 * 60
 
   return [0, 24 * 60].reduce((maxOverlap, dayOffset) => {
     const windowStart = windowStartMinutes + dayOffset
@@ -184,7 +186,8 @@ function getNormalizedTripWindow(input: TripWindowInput) {
   let end = parseTimeToMinutes(input.endTime)
 
   if (start === null || end === null) return null
-  if (end <= start) end += 24 * 60
+  if (end === start) return null
+  if (end < start) end += 24 * 60
 
   return { start, end }
 }

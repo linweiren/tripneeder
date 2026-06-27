@@ -26,7 +26,7 @@ export function getEstimatedArrivalMinutesForStop(
   if (startMinutes === null || endMinutes === null) {
     return offsetMinutes
   }
-  if (endMinutes <= startMinutes) endMinutes += 24 * 60
+  if (endMinutes < startMinutes) endMinutes += 24 * 60
 
   return getOpeningHoursSearchStartMinutes(startMinutes, endMinutes) + offsetMinutes
 }
@@ -61,7 +61,7 @@ export function findMealWindowInsertionIndex(
     return clamp(Math.ceil(nonFoodStops.length * 0.65), 0, nonFoodStops.length)
   }
 
-  if (endMinutes <= startMinutes) endMinutes += 24 * 60
+  if (endMinutes < startMinutes) endMinutes += 24 * 60
   const scheduleStartMinutes = getOpeningHoursSearchStartMinutes(startMinutes, endMinutes)
   const targetOffsetMinutes = Math.max(0, mealWindowStartMinutes - scheduleStartMinutes)
   let bestIndex = 0
@@ -115,7 +115,7 @@ export function getEstimatedPlanArrivalMinutes(
   let endMinutes = parseTimeToMinutes(input.endTime)
 
   if (startMinutes === null || endMinutes === null) return []
-  if (endMinutes <= startMinutes) endMinutes += 24 * 60
+  if (endMinutes < startMinutes) endMinutes += 24 * 60
 
   const timelineStartMinutes = getOpeningHoursSearchStartMinutes(startMinutes, endMinutes)
 

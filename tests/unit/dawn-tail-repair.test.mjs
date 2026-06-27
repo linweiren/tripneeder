@@ -29,6 +29,15 @@ test('cross-day trips ending after the dawn repair window keep strict coverage',
   assert.equal(shouldAllowDawnTailShortfall(tripInput), false)
 })
 
+test('dawn tail tolerance keeps exact 05:30 and 07:00 boundaries', () => {
+  assert.equal(shouldAllowDawnTailShortfall(input('20:00', '05:29')), false)
+  assert.equal(shouldAllowDawnTailShortfall(input('20:00', '05:30')), true)
+  assert.equal(shouldAllowDawnTailShortfall(input('20:00', '06:00')), true)
+  assert.equal(shouldAllowDawnTailShortfall(input('20:00', '07:00')), true)
+  assert.equal(shouldAllowDawnTailShortfall(input('20:00', '07:01')), false)
+  assert.equal(shouldAllowDawnTailShortfall(input('06:00', '06:00')), false)
+})
+
 test('dawn tail repair only targets stops near the cross-day end time', () => {
   const nearEndPlan = plan([
     stop('a', 120),

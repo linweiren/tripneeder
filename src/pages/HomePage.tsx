@@ -574,6 +574,11 @@ export function HomePage() {
       return
     }
 
+    if (input.startTime === input.endTime) {
+      setFormError('開始時間與結束時間不可相同。')
+      return
+    }
+
     if (!user) {
       const confirmed = await dialog.confirm({
         title: loginPromptTitle,
@@ -1295,6 +1300,7 @@ function isValidInput(input: TripInput) {
       Boolean(input.customCategory && input.customCategory.trim())) &&
     isCompleteTime(input.startTime) &&
     isCompleteTime(input.endTime) &&
+    input.startTime !== input.endTime &&
     (input.budget === undefined || input.budget.length > 0) &&
     (input.people === undefined || (input.people >= 1 && input.people <= 10)) &&
     hasLocation

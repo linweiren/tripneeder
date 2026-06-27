@@ -168,6 +168,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
+  if (getAllowedTripMinutes(request.input) === 0) {
+    res.status(400).json({ error: '開始時間與結束時間不可相同。' })
+    return
+  }
+
   if (!accessToken) {
     res.status(401).json({ error: '請登入以繼續使用本服務。' })
     return
@@ -2449,7 +2454,7 @@ export function shouldAllowDawnTailShortfall(input: GenerateTripPlansRequest['in
   if (!window) return false
 
   return (
-    window.rawEnd <= window.start &&
+    window.rawEnd < window.start &&
     window.rawEnd >= DAWN_CROSS_DAY_END_START_MINUTES &&
     window.rawEnd <= DAWN_CROSS_DAY_END_END_MINUTES
   )
@@ -2478,12 +2483,12 @@ function getNormalizedTripWindowMinutes(input: GenerateTripPlansRequest['input']
   const start = parseTimeToMinutes(input.startTime)
   const rawEnd = parseTimeToMinutes(input.endTime)
 
-  if (start === null || rawEnd === null) return null
+  if (start === null || rawEnd === null || rawEnd === start) return null
 
   return {
     start,
     rawEnd,
-    end: rawEnd <= start ? rawEnd + 24 * 60 : rawEnd,
+    end: rawEnd < start ? rawEnd + 24 * 60 : rawEnd,
   }
 }
 
@@ -2538,15 +2543,33 @@ function expandStopsForLongTrip(
     expandedStops.length < getMinimumStopCountForLongTrip(input) ||
     getReasonablePlanDuration(expandedStops) + estimateTransportTotal(expandedStops) < expansionTargetMinutes
   ) {
+    const insertionIndex = Math.min(
+      Math.max(expandedStops.length - 1, 1),
+      expandedStops.length,
+    )
+    const estimatedArrivalMinutes = getEstimatedArrivalMinutesForStop(
+      expandedStops,
+      insertionIndex,
+      input,
+    )
     const rotationOffset = getPlanDiversityOffset(planId, supplementalSelectionIndex)
     const nextCandidate =
-      selectSupplementalCandidate(candidatePool, usedPlaceIds, rotationOffset) ??
-      selectSupplementalCandidate(allCandidatePool, usedPlaceIds, rotationOffset)
+      selectSupplementalCandidate(
+        candidatePool,
+        usedPlaceIds,
+        estimatedArrivalMinutes,
+        rotationOffset,
+      ) ??
+      selectSupplementalCandidate(
+        allCandidatePool,
+        usedPlaceIds,
+        estimatedArrivalMinutes,
+        rotationOffset,
+      )
     if (!nextCandidate) break
 
     supplementalSelectionIndex += 1
     usedPlaceIds.add(nextCandidate.placeId)
-    const insertionIndex = Math.max(expandedStops.length - 1, 1)
     expandedStops.splice(
       insertionIndex,
       0,
@@ -2592,12 +2615,21 @@ function mergeCandidatePools(...pools: VerifiedPlaceCandidate[][]) {
   return merged
 }
 
-function selectSupplementalCandidate(
+export function selectSupplementalCandidate(
   candidatePool: VerifiedPlaceCandidate[],
   usedPlaceIds: Set<string>,
+  estimatedArrivalMinutes: number,
   rotationOffset = 0,
 ) {
-  const unusedCandidates = candidatePool.filter((candidate) => !usedPlaceIds.has(candidate.placeId))
+  const unusedCandidates = candidatePool.filter((candidate) => {
+    if (usedPlaceIds.has(candidate.placeId)) return false
+
+    return isCandidateOpenForVisit(
+      candidate,
+      estimatedArrivalMinutes,
+      getDefaultStopDuration(inferStopTypeFromCandidate(candidate)),
+    )
+  })
   const nonShortCandidates = unusedCandidates.filter((candidate) => !isShortVisitCandidate(candidate))
   const pool = nonShortCandidates.length > 0 ? nonShortCandidates : unusedCandidates
 
@@ -2818,7 +2850,8 @@ async function getOpeningHoursTimelineInput(
   let endMinutes = parseTimeToMinutes(input.endTime)
 
   if (originalStartMinutes === null || endMinutes === null) return input
-  if (endMinutes <= originalStartMinutes) endMinutes += 24 * 60
+  if (endMinutes === originalStartMinutes) return input
+  if (endMinutes < originalStartMinutes) endMinutes += 24 * 60
 
   const searchStartMinutes = getOpeningHoursSearchStartMinutes(originalStartMinutes, endMinutes)
   const resolution = await resolveOpeningHoursTimelineStart(plan, input, {

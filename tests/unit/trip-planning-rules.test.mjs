@@ -40,6 +40,27 @@ test('凌晨短時間窗不被硬平移到 06:00', () => {
   assert.equal(getOpeningHoursSearchStartMinutes(3 * 60, 6 * 60), 3 * 60)
 })
 
+test('06:00 邊界的跨夜與清晨時間窗維持各自容量', () => {
+  assert.equal(getAllowedTripMinutes(input('20:00', '06:00')), 10 * 60)
+  assert.equal(getCoverageBasisMinutes(input('20:00', '06:00')), 10 * 60)
+  assert.equal(getAllowedTripMinutes(input('22:00', '06:00')), 8 * 60)
+  assert.equal(getCoverageBasisMinutes(input('22:00', '06:00')), 8 * 60)
+  assert.equal(getAllowedTripMinutes(input('03:00', '06:00')), 3 * 60)
+  assert.equal(getCoverageBasisMinutes(input('03:00', '06:00')), 3 * 60)
+  assert.equal(getAllowedTripMinutes(input('03:00', '12:00')), 9 * 60)
+  assert.equal(getCoverageBasisMinutes(input('03:00', '12:00')), 6 * 60)
+})
+
+test('開始與結束相同視為零長行程，不推定為 24 小時', () => {
+  const sameTimeInput = input('06:00', '06:00')
+
+  assert.equal(getAllowedTripMinutes(sameTimeInput), 0)
+  assert.equal(getCoverageBasisMinutes(sameTimeInput), 0)
+  assert.equal(getMinimumRequiredActualMinutes(sameTimeInput), null)
+  assert.equal(getTripWindowOverlapMinutes(sameTimeInput, 0, 24 * 60), 0)
+  assert.deepEqual(getRequiredMealWindows(sameTimeInput), [])
+})
+
 test('覆蓋率門檻與補長目標維持現行策略', () => {
   assert.equal(getMinimumRequiredActualMinutes(input('12:45', '14:45')), 84)
   assert.equal(getMinimumRequiredActualMinutes(input('12:45', '22:45')), 480)
