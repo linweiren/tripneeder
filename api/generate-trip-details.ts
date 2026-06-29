@@ -7,12 +7,21 @@ import {
   parseTripPlanDetailsResponse,
 } from '../src/services/ai/tripPlanPrompt.js'
 import { tripPlanDetailsResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
-import type { TripInput, TripPlan } from '../src/types/trip.js'
+import type { Stop, TripInput, TripPlan } from '../src/types/trip.js'
+import {
+  getCoverageBasisMinutes,
+  getOpeningHoursSearchStartMinutes,
+} from './_lib/trip-planning-rules.js'
 import {
   validateStopsWithPlaces,
   getNearbyPlaceCandidates,
   resolveLocation,
-  formatNearbyRecommendations,
+  formatRainBackupRecommendations,
+  getRainBackupCandidatePool,
+  isCandidateOpenForVisit,
+  isRainBackupCandidate,
+  type NearbyPlaceCandidates,
+  type VerifiedPlaceCandidate,
 } from './_lib/google-places.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
 
@@ -33,6 +42,19 @@ type VercelResponse = {
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
 const DETAIL_PERFORMANCE_LOG_EVENT = '[detail-performance]'
+const MIN_RAIN_BACKUP_STOPS = 2
+const MAX_RAIN_BACKUP_STOPS = 4
+const RAIN_BACKUP_SUPPLEMENT_TRAVEL_MINUTES = 30
+const MAX_RAIN_ACTIVITY_DURATION_MINUTES = 120
+const MAX_RAIN_FOOD_DURATION_MINUTES = 90
+const RAIN_FOOD_PLACE_TYPES = new Set([
+  'cafe',
+  'restaurant',
+  'meal_takeaway',
+  'meal_delivery',
+  'bakery',
+  'food',
+])
 
 const SYSTEM_DEFAULT_PERSONA = {
   companion: '情侶 / 約會',
@@ -103,6 +125,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const includeRainBackup = shouldRequestRainBackup(request.input)
     let nearbyIndoorPlaces = ''
     let nearbyIndoorCandidateCount = 0
+    let nearbyIndoorCandidates: NearbyPlaceCandidates = {
+      firstStopCandidates: [],
+      otherCandidates: [],
+      allCandidates: [],
+    }
 
     if (includeRainBackup) {
       // 獲取室內地點候選，供雨天備案使用
@@ -110,11 +137,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ...request.input,
         tags: [...request.input.tags, 'indoor_first' as const],
       }
-      const nearbyIndoorCandidates = await getNearbyPlaceCandidates({
+      const nearbyCandidates = await getNearbyPlaceCandidates({
         input: indoorInput,
         persona,
       })
-      nearbyIndoorPlaces = formatNearbyRecommendations(nearbyIndoorCandidates)
+      nearbyIndoorCandidates = getRainBackupCandidatePool(nearbyCandidates)
+      nearbyIndoorPlaces =
+        formatRainBackupRecommendations(nearbyIndoorCandidates) ||
+        'NO_VERIFIED_RAIN_BACKUP_CANDIDATES（沒有符合室內分類與已知營業時間的候選，rainBackup 請回傳空陣列）'
       nearbyIndoorCandidateCount = nearbyIndoorCandidates.allCandidates.length
     }
 
@@ -207,7 +237,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? { lat: request.input.location.lat, lng: request.input.location.lng }
       : undefined
     const stableDetailedPlan = preserveMainStopIdentity(detailedPlan, request.plan)
-    const stablePlan = await validateRainBackupWithPlaces(stableDetailedPlan, bias, request.input)
+    const stablePlan = await validateRainBackupWithPlaces(
+      stableDetailedPlan,
+      bias,
+      request.input,
+      nearbyIndoorCandidates.allCandidates,
+    )
     logPhase('rain-places-validation-complete', {
       rainStopCount: stablePlan.rainBackup?.length ?? 0,
     })
@@ -249,16 +284,10 @@ async function validateRainBackupWithPlaces(
   plan: TripPlan,
   bias: { lat: number; lng: number } | undefined,
   input: TripInput,
+  rainCandidates: VerifiedPlaceCandidate[],
 ): Promise<TripPlan> {
   const rainBackup = plan.rainBackup ?? []
-
-  if (rainBackup.length === 0) {
-    return {
-      ...plan,
-      rainBackup: [],
-      rainTransportSegments: [],
-    }
-  }
+  const validationInput = getRainBackupValidationInput(plan, input)
 
   const validationPlan: TripPlan = {
     ...plan,
@@ -267,7 +296,7 @@ async function validateRainBackupWithPlaces(
     rainBackup,
     rainTransportSegments: plan.rainTransportSegments ?? [],
   }
-  const validation = await validateStopsWithPlaces(validationPlan, bias, input)
+  const validation = await validateStopsWithPlaces(validationPlan, bias, validationInput)
   const invalidRainBackupStopIds = new Set(
     validation.issues
       .map((issue) => issue.stopId)
@@ -276,20 +305,31 @@ async function validateRainBackupWithPlaces(
   const validRainBackup = (validation.validatedPlan.rainBackup ?? []).filter(
     (stop) => !invalidRainBackupStopIds.has(stop.id),
   )
-  const dedupedRainBackup = dedupeRainBackupStops(validRainBackup)
-  const rainBackupChanged = dedupedRainBackup.length !== validRainBackup.length
+  const indoorRainBackup = validRainBackup.filter((stop) =>
+    isStopGroundedInRainCandidates(stop, rainCandidates),
+  )
+  const dedupedRainBackup = dedupeRainBackupStops(indoorRainBackup)
+  const repairedRainBackup = repairRainBackupStops(
+    dedupedRainBackup,
+    rainCandidates,
+    validationInput,
+    plan.id,
+  )
+  const rainBackupChanged = !areRainBackupStopsEqual(repairedRainBackup, rainBackup)
 
   if (rainBackupChanged) {
-    console.warn('[rain-backup-deduped]', {
+    console.warn('[rain-backup-repaired]', {
       planId: plan.id,
-      before: validRainBackup.map((stop) => stop.name),
-      after: dedupedRainBackup.map((stop) => stop.name),
+      before: rainBackup.map((stop) => stop.name),
+      after: repairedRainBackup.map((stop) => stop.name),
+      invalidCount: invalidRainBackupStopIds.size,
+      nonIndoorCount: validRainBackup.length - indoorRainBackup.length,
     })
   }
 
   return {
     ...plan,
-    rainBackup: dedupedRainBackup,
+    rainBackup: repairedRainBackup,
     rainTransportSegments: rainBackupChanged
       ? []
       : (validation.validatedPlan.rainTransportSegments ?? []).filter(
@@ -298,6 +338,240 @@ async function validateRainBackupWithPlaces(
             !invalidRainBackupStopIds.has(segment.toStopId),
         ),
   }
+}
+
+export function getRainBackupValidationInput(plan: TripPlan, input: TripInput): TripInput {
+  if (plan.scheduleStartTime && parseTimeToMinutes(plan.scheduleStartTime) !== null) {
+    return { ...input, startTime: plan.scheduleStartTime }
+  }
+
+  const start = parseTimeToMinutes(input.startTime)
+  let end = parseTimeToMinutes(input.endTime)
+  if (start === null || end === null || start === end) return input
+  if (end < start) end += 24 * 60
+
+  const activeStart = getOpeningHoursSearchStartMinutes(start, end)
+
+  return { ...input, startTime: formatMinutesAsTime(activeStart) }
+}
+
+export function repairRainBackupStops(
+  stops: Stop[],
+  candidates: VerifiedPlaceCandidate[],
+  input: TripInput,
+  planId = 'plan',
+) {
+  const indoorCandidates = candidates.filter(isRainBackupCandidate)
+  const scheduleStartMinutes = parseTimeToMinutes(input.startTime)
+  let repairedStops = dedupeRainBackupStops(stops)
+
+  if (scheduleStartMinutes === null) {
+    return repairedStops.length >= MIN_RAIN_BACKUP_STOPS ? repairedStops : []
+  }
+
+  repairedStops = replaceExcessRainFoodStops(
+    repairedStops,
+    indoorCandidates,
+    scheduleStartMinutes,
+    planId,
+  )
+  if (repairedStops.length >= MIN_RAIN_BACKUP_STOPS) return repairedStops
+
+  const usedKeys = new Set(repairedStops.map(getRainBackupStopKey))
+  const coverageBasisMinutes = getCoverageBasisMinutes(input)
+  const minimumCoverageMinutes = coverageBasisMinutes
+    ? Math.ceil(coverageBasisMinutes * getRequiredCoverageRatio(coverageBasisMinutes))
+    : 0
+
+  while (
+    repairedStops.length < MAX_RAIN_BACKUP_STOPS &&
+    (repairedStops.length < MIN_RAIN_BACKUP_STOPS ||
+      getRainBackupStopDuration(repairedStops) < minimumCoverageMinutes)
+  ) {
+    const arrivalMinutes =
+      scheduleStartMinutes +
+      getRainBackupStopDuration(repairedStops) +
+      repairedStops.length * RAIN_BACKUP_SUPPLEMENT_TRAVEL_MINUTES
+    const remainingCoverage = Math.max(
+      0,
+      minimumCoverageMinutes - getRainBackupStopDuration(repairedStops),
+    )
+    const unusedCandidates = indoorCandidates.filter(
+      (candidate) => !usedKeys.has(getRainBackupCandidateKey(candidate)),
+    )
+    const candidatesWithDuration = unusedCandidates.map((candidate) => ({
+      candidate,
+      duration: getRainBackupSupplementDuration(candidate, remainingCoverage),
+    }))
+    const candidateWithDuration =
+      candidatesWithDuration.find(({ candidate, duration }) =>
+        isCandidateOpenForVisit(candidate, arrivalMinutes, duration),
+      ) ??
+      unusedCandidates
+        .map((candidate) => ({
+          candidate,
+          duration: isRainFoodCandidate(candidate) ? 45 : 40,
+        }))
+        .find(({ candidate, duration }) =>
+          isCandidateOpenForVisit(candidate, arrivalMinutes, duration),
+        )
+
+    if (!candidateWithDuration) break
+
+    const stop = buildRainBackupStop(
+      candidateWithDuration.candidate,
+      candidateWithDuration.duration,
+      planId,
+      repairedStops,
+    )
+    repairedStops.push(stop)
+    usedKeys.add(getRainBackupStopKey(stop))
+  }
+
+  repairedStops = replaceExcessRainFoodStops(
+    repairedStops,
+    indoorCandidates,
+    scheduleStartMinutes,
+    planId,
+  )
+
+  return repairedStops.length >= MIN_RAIN_BACKUP_STOPS ? repairedStops : []
+}
+
+function replaceExcessRainFoodStops(
+  stops: Stop[],
+  indoorCandidates: VerifiedPlaceCandidate[],
+  scheduleStartMinutes: number,
+  planId: string,
+) {
+  const repairedStops = [...stops]
+  const foodStopIndexes = repairedStops
+    .map((stop, index) => (isRainFoodStop(stop, indoorCandidates) ? index : -1))
+    .filter((index) => index >= 0)
+
+  if (foodStopIndexes.length <= 1) return repairedStops
+
+  const usedKeys = new Set(repairedStops.map(getRainBackupStopKey))
+  for (const index of foodStopIndexes.slice(1)) {
+    const arrivalMinutes =
+      scheduleStartMinutes +
+      getRainBackupStopDuration(repairedStops.slice(0, index)) +
+      index * RAIN_BACKUP_SUPPLEMENT_TRAVEL_MINUTES
+    const duration = Math.min(
+      MAX_RAIN_ACTIVITY_DURATION_MINUTES,
+      Math.max(40, Number(repairedStops[index]?.duration) || 0),
+    )
+    const replacement = indoorCandidates.find(
+      (candidate) =>
+        !isRainFoodCandidate(candidate) &&
+        !usedKeys.has(getRainBackupCandidateKey(candidate)) &&
+        isCandidateOpenForVisit(candidate, arrivalMinutes, duration),
+    )
+
+    if (!replacement) continue
+
+    const originalStop = repairedStops[index]
+    const replacementStop = buildRainBackupStop(
+      replacement,
+      duration,
+      planId,
+      repairedStops,
+    )
+    repairedStops[index] = { ...replacementStop, id: originalStop.id }
+    usedKeys.delete(getRainBackupStopKey(originalStop))
+    usedKeys.add(getRainBackupStopKey(repairedStops[index]))
+  }
+
+  return repairedStops
+}
+
+function isRainFoodStop(stop: Stop, candidates: VerifiedPlaceCandidate[]) {
+  const candidate = candidates.find(
+    (item) => getRainBackupCandidateKey(item) === getRainBackupStopKey(stop),
+  )
+
+  return stop.type === 'food' || Boolean(candidate && isRainFoodCandidate(candidate))
+}
+
+function isRainFoodCandidate(candidate: VerifiedPlaceCandidate) {
+  return (
+    candidate.role === 'food' ||
+    (candidate.types ?? []).some((type) => RAIN_FOOD_PLACE_TYPES.has(type))
+  )
+}
+
+function getRainBackupSupplementDuration(
+  candidate: VerifiedPlaceCandidate,
+  remainingCoverage: number,
+) {
+  const isFood = isRainFoodCandidate(candidate)
+  const minimumDuration = isFood ? 45 : 40
+  const maximumDuration =
+    isFood
+      ? MAX_RAIN_FOOD_DURATION_MINUTES
+      : MAX_RAIN_ACTIVITY_DURATION_MINUTES
+
+  return Math.min(maximumDuration, Math.max(minimumDuration, remainingCoverage))
+}
+
+function buildRainBackupStop(
+  candidate: VerifiedPlaceCandidate,
+  duration: number,
+  planId: string,
+  existingStops: Stop[],
+): Stop {
+  const isFood = isRainFoodCandidate(candidate)
+  let suffix = existingStops.length + 1
+  let id = `${planId}-rain-repair-${suffix}`
+  const usedIds = new Set(existingStops.map((stop) => stop.id))
+  while (usedIds.has(id)) {
+    suffix += 1
+    id = `${planId}-rain-repair-${suffix}`
+  }
+
+  return {
+    id,
+    name: candidate.name,
+    type: isFood ? 'food' : 'main_activity',
+    description:
+      isFood
+        ? '雨天在室內用餐休息，保留舒適且從容的停留時間。'
+        : '雨天改到有遮蔽的室內空間，安心參觀並從容停留。',
+    address: candidate.address,
+    duration,
+    googleMapsUrl: candidate.googleMapsUrl,
+    placeId: candidate.placeId,
+    lat: candidate.lat,
+    lng: candidate.lng,
+  }
+}
+
+function getRainBackupStopDuration(stops: Stop[]) {
+  return stops.reduce((total, stop) => total + Math.max(0, Number(stop.duration) || 0), 0)
+}
+
+function getRainBackupCandidateKey(candidate: VerifiedPlaceCandidate) {
+  return (
+    candidate.placeId.trim() ||
+    `${normalizeRainBackupText(candidate.name)}|${normalizeRainBackupText(candidate.address)}`
+  )
+}
+
+function isStopGroundedInRainCandidates(
+  stop: Stop,
+  candidates: VerifiedPlaceCandidate[],
+) {
+  const candidateKeys = new Set(
+    candidates.filter(isRainBackupCandidate).map(getRainBackupCandidateKey),
+  )
+  return candidateKeys.has(getRainBackupStopKey(stop))
+}
+
+function areRainBackupStopsEqual(left: Stop[], right: Stop[]) {
+  return (
+    left.length === right.length &&
+    left.every((stop, index) => getRainBackupStopKey(stop) === getRainBackupStopKey(right[index]))
+  )
 }
 
 function dedupeRainBackupStops(stops: TripPlan['stops']) {
@@ -428,18 +702,21 @@ function preserveMainStopIdentity(plan: TripPlan, originalPlan: TripPlan): TripP
   }
 }
 
-function getRainBackupQualityIssues(plan: TripPlan, input: TripInput) {
+export function getRainBackupQualityIssues(plan: TripPlan, input: TripInput) {
   const issues: string[] = []
   const stops = plan.rainBackup ?? []
-  const allowedMinutes = getAllowedTripMinutes(input)
+  const allowedMinutes = getCoverageBasisMinutes(input)
   const actualMinutes = getRainBackupActualDuration(plan)
 
   if (stops.length > 0 && stops.length < 2) {
     issues.push('雨天備案站點數不足')
   }
+  if (stops.length > MAX_RAIN_BACKUP_STOPS) {
+    issues.push('雨天備案站點數超過四站')
+  }
 
   stops.forEach((stop) => {
-    const minimumDuration = stop.type === 'food' ? 45 : 35
+    const minimumDuration = stop.type === 'food' ? 45 : 40
     if (stop.duration < minimumDuration) {
       issues.push(`${stop.name} 雨天備案停留時間過短`)
     }
@@ -465,17 +742,8 @@ function getRainBackupActualDuration(plan: TripPlan) {
   )
 }
 
-function getAllowedTripMinutes(input: TripInput) {
-  const start = parseTimeToMinutes(input.startTime)
-  const end = parseTimeToMinutes(input.endTime)
-
-  if (start === null || end === null) return null
-
-  return end >= start ? end - start : end + 24 * 60 - start
-}
-
-function shouldRequestRainBackup(input: TripInput) {
-  const allowedMinutes = getAllowedTripMinutes(input)
+export function shouldRequestRainBackup(input: TripInput) {
+  const allowedMinutes = getCoverageBasisMinutes(input)
 
   return allowedMinutes === null || allowedMinutes <= 8 * 60
 }
@@ -485,6 +753,14 @@ function parseTimeToMinutes(value?: string) {
 
   const [hour, minute] = value.split(':').map(Number)
   return hour * 60 + minute
+}
+
+function formatMinutesAsTime(totalMinutes: number) {
+  const minutesInDay = ((totalMinutes % (24 * 60)) + 24 * 60) % (24 * 60)
+  const hour = Math.floor(minutesInDay / 60)
+  const minute = minutesInDay % 60
+
+  return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
 }
 
 function getRequiredCoverageRatio(allowedMinutes: number) {

@@ -22,6 +22,29 @@ const MIN_CANDIDATE_VISIT_MINUTES = 40
 const MIN_FOOD_CANDIDATE_VISIT_MINUTES = 45
 const EARLY_MORNING_ACTIVE_START_MINUTES = 6 * 60
 const MIN_EARLY_MORNING_ACTIVE_WINDOW_MINUTES = MIN_CANDIDATE_VISIT_MINUTES * 2 + 18
+const TRUSTED_INDOOR_PLACE_TYPES = new Set([
+  'museum',
+  'art_gallery',
+  'shopping_mall',
+  'department_store',
+  'book_store',
+  'movie_theater',
+  'aquarium',
+  'cafe',
+  'restaurant',
+])
+const OUTDOOR_PLACE_TYPES = new Set([
+  'outdoor',
+  'park',
+  'natural_feature',
+  'amusement_park',
+  'campground',
+  'rv_park',
+  'hiking_area',
+  'beach',
+  'marina',
+  'zoo',
+])
 const PLACES_FIELD_MASK =
   'id,displayName,formattedAddress,location,rating,types,businessStatus,googleMapsUri,currentOpeningHours,regularOpeningHours,utcOffsetMinutes'
 
@@ -405,21 +428,23 @@ function isTaiwanPlace(place: GooglePlace) {
 }
 
 export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): string {
-  const nearStops = candidates.firstStopCandidates.slice(0, 12).map(formatCandidateForPrompt)
+  const nearStops = candidates.firstStopCandidates
+    .slice(0, 12)
+    .map((candidate) => formatCandidateForPrompt(candidate))
   const foodStops = candidates.otherCandidates
     .filter((candidate) => candidate.role === 'food')
     .slice(0, 12)
-    .map(formatCandidateForPrompt)
+    .map((candidate) => formatCandidateForPrompt(candidate))
   const mainStops = candidates.otherCandidates
     .filter((candidate) =>
       ['main_activity', 'open_space', 'shopping'].includes(candidate.role ?? ''),
     )
     .slice(0, 18)
-    .map(formatCandidateForPrompt)
+    .map((candidate) => formatCandidateForPrompt(candidate))
   const fallbackStops = candidates.otherCandidates
     .filter((candidate) => !['food', 'short_visit'].includes(candidate.role ?? ''))
     .slice(0, 18)
-    .map(formatCandidateForPrompt)
+    .map((candidate) => formatCandidateForPrompt(candidate))
 
   const sections: string[] = []
   if (nearStops.length > 0) {
@@ -436,6 +461,41 @@ export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): 
     sections.push(['MAIN_ACTIVITY_CANDIDATES:', ...mainStops].join('\n'))
   } else if (fallbackStops.length > 0) {
     sections.push(['MAIN_ACTIVITY_CANDIDATES:', ...fallbackStops].join('\n'))
+  }
+
+  return sections.join('\n\n')
+}
+
+export function getRainBackupCandidatePool(
+  candidates: NearbyPlaceCandidates,
+): NearbyPlaceCandidates {
+  const filterCandidates = (items: VerifiedPlaceCandidate[]) =>
+    items.filter(isRainBackupCandidate)
+
+  return {
+    firstStopCandidates: filterCandidates(candidates.firstStopCandidates),
+    otherCandidates: filterCandidates(candidates.otherCandidates),
+    allCandidates: filterCandidates(candidates.allCandidates),
+  }
+}
+
+export function formatRainBackupRecommendations(candidates: NearbyPlaceCandidates): string {
+  const indoorCandidates = getRainBackupCandidatePool(candidates).allCandidates
+  const foodStops = indoorCandidates
+    .filter((candidate) => candidate.role === 'food')
+    .slice(0, 12)
+    .map((candidate) => formatCandidateForPrompt(candidate, { rainBackup: true }))
+  const activityStops = indoorCandidates
+    .filter((candidate) => candidate.role !== 'food')
+    .slice(0, 18)
+    .map((candidate) => formatCandidateForPrompt(candidate, { rainBackup: true }))
+  const sections: string[] = []
+
+  if (foodStops.length > 0) {
+    sections.push(['FOOD_CANDIDATES:', ...foodStops].join('\n'))
+  }
+  if (activityStops.length > 0) {
+    sections.push(['MAIN_ACTIVITY_CANDIDATES:', ...activityStops].join('\n'))
   }
 
   return sections.join('\n\n')
@@ -620,25 +680,28 @@ function getCandidateGaps(candidates: VerifiedPlaceCandidate[], input: TripInput
   }
 }
 
-function isIndoorCandidate(candidate: VerifiedPlaceCandidate) {
+export function isIndoorCandidate(candidate: VerifiedPlaceCandidate) {
   const types = candidate.types ?? []
-  const text = `${candidate.name} ${candidate.address}`.toLocaleLowerCase('zh-TW')
 
+  if (
+    candidate.role === 'open_space' ||
+    types.some(
+      (type) => OUTDOOR_PLACE_TYPES.has(type) || type.toLocaleLowerCase().includes('outdoor'),
+    )
+  ) {
+    return false
+  }
+
+  // tourist_attraction alone is not evidence that a place is sheltered. Google
+  // often adds it to museums too, so a trusted indoor type must also be present.
+  return types.some((type) => TRUSTED_INDOOR_PLACE_TYPES.has(type))
+}
+
+export function isRainBackupCandidate(candidate: VerifiedPlaceCandidate) {
   return (
-    candidate.role === 'food' ||
-    candidate.role === 'shopping' ||
-    types.some((type) =>
-      [
-        'museum',
-        'art_gallery',
-        'shopping_mall',
-        'department_store',
-        'book_store',
-        'movie_theater',
-        'aquarium',
-      ].includes(type),
-    ) ||
-    /(室內|展覽|博物館|美術館|百貨|商場|書店|咖啡|影城|水族館|mall|museum|gallery|cafe)/i.test(text)
+    isIndoorCandidate(candidate) &&
+    Boolean(candidate.openingHours?.isKnown) &&
+    !candidate.openingHours?.isNeverOpen
   )
 }
 
@@ -728,7 +791,10 @@ function toVerifiedPlaceCandidate(
   }
 }
 
-function formatCandidateForPrompt(candidate: VerifiedPlaceCandidate) {
+function formatCandidateForPrompt(
+  candidate: VerifiedPlaceCandidate,
+  options: { rainBackup?: boolean } = {},
+) {
   const distanceText =
     candidate.distanceKm === undefined ? '' : `, distance=${candidate.distanceKm.toFixed(1)}km`
   const ratingText = candidate.rating ? `, rating=${candidate.rating}` : ''
@@ -739,8 +805,13 @@ function formatCandidateForPrompt(candidate: VerifiedPlaceCandidate) {
   const slotsText = candidate.availabilitySlots?.length
     ? `, bestSlots="${candidate.availabilitySlots.join(',')}"`
     : ''
+  const typesText =
+    options.rainBackup && candidate.types?.length
+      ? `, types="${candidate.types.join(',')}"`
+      : ''
+  const rainyText = options.rainBackup ? ', indoor=true, rainySuitable=true' : ''
 
-  return `- name="${candidate.name}", address="${candidate.address}", placeId="${candidate.placeId}"${distanceText}${ratingText}${roleText}${foodSubtypeText}${scoreText}${hoursText}${slotsText}`
+  return `- name="${candidate.name}", address="${candidate.address}", placeId="${candidate.placeId}"${distanceText}${ratingText}${roleText}${foodSubtypeText}${scoreText}${hoursText}${slotsText}${typesText}${rainyText}`
 }
 
 function buildTripWindow(input: TripInput) {
@@ -896,14 +967,31 @@ function scoreCandidate(
     score += getFoodSubtypeScore(candidate, wantsFoodFirst)
   }
   if (role === 'open_space') score += wantsPhoto ? 8 : 2
-  if (role === 'shopping') score += wantsIndoor ? 10 : 3
+  if (role === 'shopping') score += wantsIndoor ? 4 : 3
   if (role === 'main_activity') score += 10
+  if (wantsIndoor && isIndoorCandidate(candidate)) {
+    score += getIndoorTypeScore(candidate.types ?? [])
+  }
   if (isShortVisitCandidatePlace(candidate.name, candidate.address)) score -= 30
 
   return {
     ...candidate,
     score: Math.round(score * 10) / 10,
   }
+}
+
+function getIndoorTypeScore(types: string[]) {
+  if (types.some((type) => ['museum', 'art_gallery', 'movie_theater', 'aquarium'].includes(type))) {
+    return 12
+  }
+  if (types.some((type) => ['shopping_mall', 'department_store', 'book_store'].includes(type))) {
+    return 10
+  }
+  if (types.some((type) => ['cafe', 'restaurant'].includes(type))) {
+    return 8
+  }
+
+  return 0
 }
 
 function getFoodSubtypeScore(candidate: VerifiedPlaceCandidate, wantsFoodFirst: boolean) {
