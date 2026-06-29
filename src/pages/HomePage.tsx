@@ -886,7 +886,7 @@ export function HomePage() {
   }
 
   return (
-    <section className="page home-page">
+    <section className={`page home-page${showAdvanced ? ' home-page--advanced' : ''}`}>
       <form className="trip-form home-trip-form" onSubmit={handleSubmit}>
         <div className="home-top-panel">
           <div className="home-hero">

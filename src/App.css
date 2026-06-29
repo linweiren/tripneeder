@@ -3192,6 +3192,19 @@
   overflow: visible;
 }
 
+.app-shell:has(.home-page--advanced) {
+  height: auto;
+  min-height: 100vh;
+  min-height: 100svh;
+  overflow-x: clip;
+}
+
+.app-shell:has(.home-page--advanced) .app-main {
+  flex: 1 0 auto;
+  align-items: flex-start;
+  padding-bottom: calc(40px + env(safe-area-inset-bottom));
+}
+
 .app-shell:has(.points-page) {
   height: 100dvh;
   display: flex;
@@ -5616,7 +5629,41 @@
 .advanced-settings-panel {
   display: grid;
   gap: 0;
+  min-width: 0;
+  margin-top: 4px;
+  scroll-margin-top: 96px;
   animation: slideDown 0.3s ease-out;
+}
+
+.home-page--advanced {
+  height: auto;
+  min-height: 100%;
+  align-self: flex-start;
+}
+
+.home-page--advanced .home-trip-form {
+  grid-template-rows: auto auto;
+  gap: clamp(20px, 3vw, 28px);
+  height: auto;
+  min-height: 100%;
+}
+
+.home-page--advanced .home-top-panel {
+  grid-template-rows: auto auto;
+  height: auto;
+}
+
+.home-page--advanced .home-action-card {
+  align-self: start;
+}
+
+.home-page--advanced .home-action-content {
+  grid-template-rows: auto auto;
+  height: auto;
+}
+
+.home-page--advanced .home-action-footer .advanced-toggle-area {
+  margin: 6px 0 10px;
 }
 
 .preference-source-panel {
@@ -5632,6 +5679,7 @@
   font-size: 14px;
   font-weight: 800;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .preference-source-grid {
@@ -5690,11 +5738,18 @@
 
 @media (max-width: 480px) {
   .preference-source-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-page--advanced .advanced-toggle-copy {
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: center;
+    white-space: normal;
   }
 }
 
 @keyframes slideDown {
-  from { opacity: 0; transform: translateY(-10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
