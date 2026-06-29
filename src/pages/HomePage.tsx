@@ -1275,6 +1275,7 @@ function TimeSelect({ label, value, onChange }: TimeSelectProps) {
           options={hourSelectOptions}
           placeholder="時"
           className="app-select--compact"
+          autoPlacement
           onChange={(nextHour) => updateTime(nextHour, minute)}
         />
         <span aria-hidden="true">:</span>
@@ -1284,6 +1285,7 @@ function TimeSelect({ label, value, onChange }: TimeSelectProps) {
           options={minuteSelectOptions}
           placeholder="分"
           className="app-select--compact"
+          autoPlacement
           onChange={(nextMinute) => updateTime(hour, nextMinute)}
         />
       </div>

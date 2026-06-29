@@ -31,3 +31,5 @@ dist-ssr
 # Local testing
 tests/data/
 tests/output/
+.vercel
+.env*

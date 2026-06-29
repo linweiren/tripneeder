@@ -1,4 +1,12 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 
 export type AppSelectOption<T extends string | number> = {
@@ -15,6 +23,7 @@ type AppSelectProps<T extends string | number> = {
   placeholder?: string
   className?: string
   disabled?: boolean
+  autoPlacement?: boolean
 }
 
 export function AppSelect<T extends string | number>({
@@ -26,12 +35,16 @@ export function AppSelect<T extends string | number>({
   placeholder,
   className,
   disabled = false,
+  autoPlacement = false,
 }: AppSelectProps<T>) {
   const generatedId = useId()
   const triggerId = id ?? `app-select-${generatedId}`
   const listboxId = `${triggerId}-${generatedId}-listbox`
   const wrapperRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
   const [isOpen, setIsOpen] = useState(false)
+  const [opensUpward, setOpensUpward] = useState(false)
+  const [availablePanelHeight, setAvailablePanelHeight] = useState<number>()
   const selectedIndex = useMemo(
     () => options.findIndex((option) => option.value === value),
     [options, value],
@@ -40,6 +53,29 @@ export function AppSelect<T extends string | number>({
   const [highlightedIndex, setHighlightedIndex] = useState(fallbackIndex)
   const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : undefined
   const displayLabel = selectedOption?.label ?? placeholder ?? options[0]?.label ?? ''
+
+  const updatePanelPlacement = useCallback(() => {
+    if (!autoPlacement || !triggerRef.current) return
+
+    const triggerRect = triggerRef.current.getBoundingClientRect()
+    const viewportPadding = 12
+    const panelGap = 8
+    const desiredPanelHeight = Math.min(options.length * 46 + 12, 280)
+    const bottomSpace = Math.max(
+      0,
+      window.innerHeight - triggerRect.bottom - panelGap - viewportPadding,
+    )
+    const topSpace = Math.max(0, triggerRect.top - panelGap - viewportPadding)
+    const shouldOpenUpward = bottomSpace < desiredPanelHeight && topSpace > bottomSpace
+
+    setOpensUpward(shouldOpenUpward)
+    setAvailablePanelHeight(Math.floor(shouldOpenUpward ? topSpace : bottomSpace))
+  }, [autoPlacement, options.length])
+
+  function openSelect() {
+    updatePanelPlacement()
+    setIsOpen(true)
+  }
 
   useEffect(() => {
     setHighlightedIndex(fallbackIndex)
@@ -63,6 +99,18 @@ export function AppSelect<T extends string | number>({
     return () => document.removeEventListener('pointerdown', handleDocumentPointerDown)
   }, [isOpen])
 
+  useEffect(() => {
+    if (!isOpen || !autoPlacement) return
+
+    updatePanelPlacement()
+    window.addEventListener('resize', updatePanelPlacement)
+    window.addEventListener('scroll', updatePanelPlacement, true)
+    return () => {
+      window.removeEventListener('resize', updatePanelPlacement)
+      window.removeEventListener('scroll', updatePanelPlacement, true)
+    }
+  }, [autoPlacement, isOpen, updatePanelPlacement])
+
   function selectOption(option: AppSelectOption<T> | undefined) {
     if (!option) return
     onChange(option.value)
@@ -71,7 +119,7 @@ export function AppSelect<T extends string | number>({
 
   function moveHighlight(direction: 1 | -1) {
     if (disabled || options.length === 0) return
-    setIsOpen(true)
+    openSelect()
     setHighlightedIndex((currentIndex) => {
       const nextIndex = currentIndex + direction
       if (nextIndex < 0) return options.length - 1
@@ -98,7 +146,7 @@ export function AppSelect<T extends string | number>({
       if (isOpen) {
         selectOption(options[highlightedIndex])
       } else if (!disabled && options.length > 0) {
-        setIsOpen(true)
+        openSelect()
       }
       return
     }
@@ -109,8 +157,14 @@ export function AppSelect<T extends string | number>({
   }
 
   return (
-    <div className={`app-select ${isOpen ? 'is-open' : ''} ${className ?? ''}`} ref={wrapperRef}>
+    <div
+      className={`app-select ${isOpen ? 'is-open' : ''} ${
+        opensUpward ? 'opens-upward' : ''
+      } ${className ?? ''}`}
+      ref={wrapperRef}
+    >
       <button
+        ref={triggerRef}
         id={triggerId}
         type="button"
         className="app-select-trigger"
@@ -121,7 +175,11 @@ export function AppSelect<T extends string | number>({
         disabled={disabled}
         onClick={() => {
           if (!disabled && options.length > 0) {
-            setIsOpen((current) => !current)
+            if (isOpen) {
+              setIsOpen(false)
+            } else {
+              openSelect()
+            }
           }
         }}
         onKeyDown={handleKeyDown}
@@ -133,7 +191,17 @@ export function AppSelect<T extends string | number>({
       </button>
 
       {isOpen && (
-        <div className="app-select-panel" role="listbox" id={listboxId} aria-labelledby={triggerId}>
+        <div
+          className="app-select-panel"
+          role="listbox"
+          id={listboxId}
+          aria-labelledby={triggerId}
+          style={
+            autoPlacement && availablePanelHeight !== undefined
+              ? { maxHeight: availablePanelHeight }
+              : undefined
+          }
+        >
           {options.map((option, index) => {
             const isSelected = option.value === value
             const isHighlighted = index === highlightedIndex
