@@ -46,7 +46,7 @@ const OUTDOOR_PLACE_TYPES = new Set([
   'zoo',
 ])
 const PLACES_FIELD_MASK =
-  'id,displayName,formattedAddress,location,rating,types,businessStatus,googleMapsUri,currentOpeningHours,regularOpeningHours,utcOffsetMinutes'
+  'id,displayName,formattedAddress,location,rating,userRatingCount,types,businessStatus,googleMapsUri,currentOpeningHours,regularOpeningHours,utcOffsetMinutes'
 
 const placeDetailsCache = new Map<string, GooglePlace | null>()
 
@@ -81,6 +81,7 @@ interface GooglePlace {
   formattedAddress: string
   types?: string[]
   rating?: number
+  userRatingCount?: number
   businessStatus?: 'OPERATIONAL' | 'CLOSED_TEMPORARILY' | 'CLOSED_PERMANENTLY'
   googleMapsUri?: string
   currentOpeningHours?: GoogleOpeningHours
@@ -121,6 +122,7 @@ export type VerifiedPlaceCandidate = {
   googleMapsUrl: string
   distanceKm?: number
   rating?: number
+  reviewCount?: number
   types?: string[]
   role?: 'food' | 'main_activity' | 'open_space' | 'shopping' | 'short_visit'
   foodSubtype?: 'cafe' | 'dessert' | 'restaurant' | 'snack'
@@ -157,6 +159,52 @@ export type NearbyPlaceCandidates = {
   firstStopCandidates: VerifiedPlaceCandidate[]
   otherCandidates: VerifiedPlaceCandidate[]
   allCandidates: VerifiedPlaceCandidate[]
+}
+
+export type CandidateDebugPlace = {
+  name: string
+  placeId: string | null
+  types: string[]
+  role: VerifiedPlaceCandidate['role'] | null
+  score: number | null
+  distanceKm: number | null
+  rating: number | null
+  reviewCount: number | null
+  openingHoursKnown: boolean
+  availabilitySlotCount: number
+  availabilitySlots: string[]
+  excluded: boolean
+  exclusionReason: string | null
+}
+
+export type CandidateSearchQueryPlanDebug = {
+  phase: 'initial' | 'gap'
+  queries: string[]
+  requestedQueryCount: number
+  queryLimit: number | null
+  truncated: boolean
+}
+
+export type CandidateSearchDebugSink = {
+  recordQueryPlan: (plan: CandidateSearchQueryPlanDebug) => void
+  recordQueryResult: (result: {
+    phase: 'initial' | 'gap'
+    query: string
+    rawPlaceCount: number
+  }) => void
+  recordCandidatePool: (snapshot: {
+    rawCandidateCount: number
+    usableCandidateCount: number
+    candidates: CandidateDebugPlace[]
+  }) => void
+}
+
+export type PromptCandidateSelection = {
+  nearStops: VerifiedPlaceCandidate[]
+  foodStops: VerifiedPlaceCandidate[]
+  mainStops: VerifiedPlaceCandidate[]
+  fallbackStops: VerifiedPlaceCandidate[]
+  promptCandidates: VerifiedPlaceCandidate[]
 }
 
 export type PlacesValidationIssue =
@@ -247,6 +295,7 @@ export async function getNearbyRecommendations(request: GenerateTripPlansRequest
 
 export async function getNearbyPlaceCandidates(
   request: GenerateTripPlansRequest,
+  debugSink?: CandidateSearchDebugSink,
 ): Promise<NearbyPlaceCandidates> {
   if (!GOOGLE_PLACES_API_KEY) {
     return { firstStopCandidates: [], otherCandidates: [], allCandidates: [] }
@@ -255,17 +304,25 @@ export async function getNearbyPlaceCandidates(
   const input = request.input
   const lat = input.location.lat
   const lng = input.location.lng
-  const queries = buildCandidateSearchQueries(input, request.persona)
+  const queryPlan = buildCandidateSearchQueryPlan(input, request.persona)
+  const queries = queryPlan.queries
+  debugSink?.recordQueryPlan({ phase: 'initial', ...queryPlan })
 
   try {
     const results = await Promise.all(
-      queries.map((textQuery) =>
-        searchPlaces(textQuery, {
+      queries.map(async (textQuery) => {
+        const queryPlaces = await searchPlaces(textQuery, {
           bias: lat && lng ? { lat, lng } : undefined,
           maxResultCount: 20,
           radiusMeters: MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000,
-        }),
-      ),
+        })
+        debugSink?.recordQueryResult({
+          phase: 'initial',
+          query: textQuery,
+          rawPlaceCount: queryPlaces.length,
+        })
+        return queryPlaces
+      }),
     )
     let places = dedupePlaces(results.flat())
 
@@ -274,20 +331,33 @@ export async function getNearbyPlaceCandidates(
     }
 
     const tripWindow = buildTripWindow(input)
-    let candidates = prepareCandidates(places, input, tripWindow, lat, lng)
+    let candidates = prepareCandidates(places, input, tripWindow, lat, lng, debugSink)
     const candidateGaps = getCandidateGaps(candidates, input)
     const gapQueries = buildCandidateGapSearchQueries(input, request.persona, candidateGaps)
 
     if (gapQueries.length > 0) {
+      debugSink?.recordQueryPlan({
+        phase: 'gap',
+        queries: gapQueries,
+        requestedQueryCount: gapQueries.length,
+        queryLimit: null,
+        truncated: false,
+      })
       const knownPlaceIds = new Set(places.map((place) => place.id).filter(Boolean))
       const gapResults = await Promise.all(
-        gapQueries.map((textQuery) =>
-          searchPlaces(textQuery, {
+        gapQueries.map(async (textQuery) => {
+          const queryPlaces = await searchPlaces(textQuery, {
             bias: lat && lng ? { lat, lng } : undefined,
             maxResultCount: 20,
             radiusMeters: BACKUP_CANDIDATE_MAX_DISTANCE_KM * 1000,
-          }),
-        ),
+          })
+          debugSink?.recordQueryResult({
+            phase: 'gap',
+            query: textQuery,
+            rawPlaceCount: queryPlaces.length,
+          })
+          return queryPlaces
+        }),
       )
       const newPlaces = dedupePlaces(gapResults.flat()).filter(
         (place) => place.id && !knownPlaceIds.has(place.id),
@@ -295,7 +365,7 @@ export async function getNearbyPlaceCandidates(
 
       if (newPlaces.length > 0) {
         places = dedupePlaces([...places, ...newPlaces])
-        candidates = prepareCandidates(places, input, tripWindow, lat, lng)
+        candidates = prepareCandidates(places, input, tripWindow, lat, lng, debugSink)
       }
     }
 
@@ -332,14 +402,96 @@ function prepareCandidates(
   tripWindow: ReturnType<typeof buildTripWindow>,
   lat?: number,
   lng?: number,
+  debugSink?: CandidateSearchDebugSink,
 ) {
-  return places
-    .map((place) => toVerifiedPlaceCandidate(place, lat, lng))
-    .filter((candidate): candidate is VerifiedPlaceCandidate => Boolean(candidate))
-    .filter((candidate) => isCandidateUsableDuringTrip(candidate, tripWindow))
-    .map((candidate) => addAvailabilitySlots(candidate, tripWindow))
-    .map((candidate) => scoreCandidate(candidate, input))
-    .sort(compareCandidates)
+  const debugCandidates: CandidateDebugPlace[] = []
+  const candidates = places.flatMap((place) => {
+    const candidate = toVerifiedPlaceCandidate(place, lat, lng)
+    if (!candidate) {
+      debugCandidates.push(toExcludedDebugPlace(place, lat, lng))
+      return []
+    }
+
+    const exclusionReason = getCandidateExclusionReason(candidate, tripWindow)
+    if (exclusionReason) {
+      debugCandidates.push(toCandidateDebugPlace(candidate, true, exclusionReason))
+      return []
+    }
+
+    const scoredCandidate = scoreCandidate(addAvailabilitySlots(candidate, tripWindow), input)
+    debugCandidates.push(toCandidateDebugPlace(scoredCandidate, false, null))
+    return [scoredCandidate]
+  }).sort(compareCandidates)
+
+  debugSink?.recordCandidatePool({
+    rawCandidateCount: places.length,
+    usableCandidateCount: candidates.length,
+    candidates: debugCandidates,
+  })
+
+  return candidates
+}
+
+function getCandidateExclusionReason(
+  candidate: VerifiedPlaceCandidate,
+  tripWindow: ReturnType<typeof buildTripWindow>,
+) {
+  if (isCandidateUsableDuringTrip(candidate, tripWindow)) return null
+  if (!candidate.openingHours?.isKnown) return 'unknown_opening_hours'
+  if (candidate.openingHours.isNeverOpen) return 'never_open'
+  return 'no_usable_opening_window_for_minimum_visit_and_closing_buffer'
+}
+
+function toExcludedDebugPlace(place: GooglePlace, lat?: number, lng?: number): CandidateDebugPlace {
+  const openingHours = buildOpeningHoursMetadata(place)
+  const distanceKm =
+    lat && lng && place.location
+      ? calculateDistance(lat, lng, place.location.latitude, place.location.longitude)
+      : null
+
+  return {
+    name: place.displayName?.text ?? '(missing display name)',
+    placeId: place.id || null,
+    types: place.types ?? [],
+    role: inferCandidateRole(
+      place.types ?? [],
+      place.displayName?.text ?? '',
+      place.formattedAddress ?? '',
+    ),
+    score: null,
+    distanceKm,
+    rating: place.rating ?? null,
+    reviewCount: place.userRatingCount ?? null,
+    openingHoursKnown: Boolean(openingHours?.isKnown),
+    availabilitySlotCount: 0,
+    availabilitySlots: [],
+    excluded: true,
+    exclusionReason: !place.id
+      ? 'missing_place_id'
+      : `business_status_${(place.businessStatus ?? 'unknown').toLocaleLowerCase()}`,
+  }
+}
+
+function toCandidateDebugPlace(
+  candidate: VerifiedPlaceCandidate,
+  excluded: boolean,
+  exclusionReason: string | null,
+): CandidateDebugPlace {
+  return {
+    name: candidate.name,
+    placeId: candidate.placeId,
+    types: candidate.types ?? [],
+    role: candidate.role ?? null,
+    score: candidate.score ?? null,
+    distanceKm: candidate.distanceKm ?? null,
+    rating: candidate.rating ?? null,
+    reviewCount: candidate.reviewCount ?? null,
+    openingHoursKnown: Boolean(candidate.openingHours?.isKnown),
+    availabilitySlotCount: candidate.availabilitySlots?.length ?? 0,
+    availabilitySlots: candidate.availabilitySlots ?? [],
+    excluded,
+    exclusionReason,
+  }
 }
 
 export async function resolveLocation(
@@ -428,23 +580,11 @@ function isTaiwanPlace(place: GooglePlace) {
 }
 
 export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): string {
-  const nearStops = candidates.firstStopCandidates
-    .slice(0, 12)
-    .map((candidate) => formatCandidateForPrompt(candidate))
-  const foodStops = candidates.otherCandidates
-    .filter((candidate) => candidate.role === 'food')
-    .slice(0, 12)
-    .map((candidate) => formatCandidateForPrompt(candidate))
-  const mainStops = candidates.otherCandidates
-    .filter((candidate) =>
-      ['main_activity', 'open_space', 'shopping'].includes(candidate.role ?? ''),
-    )
-    .slice(0, 18)
-    .map((candidate) => formatCandidateForPrompt(candidate))
-  const fallbackStops = candidates.otherCandidates
-    .filter((candidate) => !['food', 'short_visit'].includes(candidate.role ?? ''))
-    .slice(0, 18)
-    .map((candidate) => formatCandidateForPrompt(candidate))
+  const selection = getPromptCandidateSelection(candidates)
+  const nearStops = selection.nearStops.map((candidate) => formatCandidateForPrompt(candidate))
+  const foodStops = selection.foodStops.map((candidate) => formatCandidateForPrompt(candidate))
+  const mainStops = selection.mainStops.map((candidate) => formatCandidateForPrompt(candidate))
+  const fallbackStops = selection.fallbackStops.map((candidate) => formatCandidateForPrompt(candidate))
 
   const sections: string[] = []
   if (nearStops.length > 0) {
@@ -464,6 +604,32 @@ export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): 
   }
 
   return sections.join('\n\n')
+}
+
+export function getPromptCandidateSelection(
+  candidates: NearbyPlaceCandidates,
+): PromptCandidateSelection {
+  const nearStops = candidates.firstStopCandidates.slice(0, 12)
+  const foodStops = candidates.otherCandidates
+    .filter((candidate) => candidate.role === 'food')
+    .slice(0, 12)
+  const mainStops = candidates.otherCandidates
+    .filter((candidate) =>
+      ['main_activity', 'open_space', 'shopping'].includes(candidate.role ?? ''),
+    )
+    .slice(0, 18)
+  const fallbackStops = candidates.otherCandidates
+    .filter((candidate) => !['food', 'short_visit'].includes(candidate.role ?? ''))
+    .slice(0, 18)
+  const activityStops = mainStops.length > 0 ? mainStops : fallbackStops
+
+  return {
+    nearStops,
+    foodStops,
+    mainStops,
+    fallbackStops,
+    promptCandidates: [...nearStops, ...foodStops, ...activityStops],
+  }
 }
 
 export function getRainBackupCandidatePool(
@@ -502,6 +668,13 @@ export function formatRainBackupRecommendations(candidates: NearbyPlaceCandidate
 }
 
 export function buildCandidateSearchQueries(input: TripInput, persona?: Persona) {
+  return buildCandidateSearchQueryPlan(input, persona).queries
+}
+
+export function buildCandidateSearchQueryPlan(
+  input: TripInput,
+  persona?: Persona,
+): Omit<CandidateSearchQueryPlanDebug, 'phase'> {
   const name = input.location.name || ''
   const hasCoords = typeof input.location.lat === 'number' && typeof input.location.lng === 'number'
   const includesEvening = tripOverlapsWindow(input, 17 * 60, 22 * 60)
@@ -570,7 +743,12 @@ export function buildCandidateSearchQueries(input: TripInput, persona?: Persona)
 
   const uniqueQueries = Array.from(new Set(queries.map((query) => query.trim()).filter(Boolean)))
   if (!shouldReserveOvernightQueries) {
-    return uniqueQueries.slice(0, MAX_GAP_SEARCH_QUERIES)
+    return {
+      queries: uniqueQueries.slice(0, MAX_GAP_SEARCH_QUERIES),
+      requestedQueryCount: uniqueQueries.length,
+      queryLimit: MAX_GAP_SEARCH_QUERIES,
+      truncated: uniqueQueries.length > MAX_GAP_SEARCH_QUERIES,
+    }
   }
 
   const requiredQueries = [lateNightQuery, earlyMorningQuery].filter(Boolean)
@@ -580,7 +758,12 @@ export function buildCandidateSearchQueries(input: TripInput, persona?: Persona)
     ...uniqueQueries.slice(1).filter((query) => !requiredQueries.includes(query)),
   ].filter((query): query is string => Boolean(query))
 
-  return prioritizedQueries.slice(0, MAX_GAP_SEARCH_QUERIES)
+  return {
+    queries: prioritizedQueries.slice(0, MAX_GAP_SEARCH_QUERIES),
+    requestedQueryCount: prioritizedQueries.length,
+    queryLimit: MAX_GAP_SEARCH_QUERIES,
+    truncated: prioritizedQueries.length > MAX_GAP_SEARCH_QUERIES,
+  }
 }
 
 function isCrossDayTripEndingNearDawn(input: TripInput) {
@@ -781,6 +964,7 @@ function toVerifiedPlaceCandidate(
     googleMapsUrl: buildGoogleMapsPlaceUrl(place),
     distanceKm,
     rating: place.rating,
+    reviewCount: place.userRatingCount,
     types: place.types,
     role: inferCandidateRole(place.types ?? [], place.displayName.text, place.formattedAddress),
     foodSubtype: inferFoodSubtype(place.types ?? [], place.displayName.text, place.formattedAddress),

@@ -18,11 +18,16 @@ import {
   getNearbyPlaceCandidates,
   resolveLocation,
   formatNearbyRecommendations,
+  getPromptCandidateSelection,
   type OpeningHoursValidationIssue,
   type PlacesValidationResult,
   type NearbyPlaceCandidates,
   type VerifiedPlaceCandidate,
 } from './_lib/google-places.js'
+import {
+  createTripCandidateDebugSession,
+  writeTripCandidateDebugReport,
+} from './_lib/trip-candidate-debug.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
 import {
   PLAN_IDS,
@@ -253,10 +258,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     label: request.input.location.name,
   })
 
+  const candidateDebugSession = createTripCandidateDebugSession(request.input)
   const nearbyPlaceCandidates = await getNearbyPlaceCandidates({
     ...request,
     persona,
-  })
+  }, candidateDebugSession ?? undefined)
+  candidateDebugSession?.recordCandidateSets(nearbyPlaceCandidates)
+  candidateDebugSession?.recordAiInput(getPromptCandidateSelection(nearbyPlaceCandidates))
   const nearbyPlaces = formatNearbyRecommendations(nearbyPlaceCandidates)
   if (nearbyPlaceCandidates.allCandidates.length === 0) {
     const message = '目前這個時間窗附近沒有可驗證且營業時間已知的候選地點，系統不會用 AI 自創地點硬湊方案。請調整開始時間或拉長行程後再試。'
@@ -265,6 +273,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       endTime: request.input.endTime,
       location: request.input.location,
     })
+    writeTripCandidateDebugReport(
+      candidateDebugSession,
+      [],
+      new Map(),
+      'candidate_pool_empty',
+      { log: (label, report) => console.info(label, report) },
+    )
     res.status(422).json({ error: message })
     return
   }
@@ -280,6 +295,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       location: request.input.location,
       candidateCount: nearbyPlaceCandidates.allCandidates.length,
     })
+    writeTripCandidateDebugReport(
+      candidateDebugSession,
+      [],
+      new Map(),
+      'first_stop_candidate_pool_empty',
+      { log: (label, report) => console.info(label, report) },
+    )
     res.status(422).json({ error: message })
     return
   }
@@ -328,6 +350,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!openAiResponse.ok || !openAiResponse.body) {
       const message = await buildOpenAiErrorMessage(openAiResponse)
+      writeTripCandidateDebugReport(
+        candidateDebugSession,
+        [],
+        new Map(),
+        'openai_request_failed',
+        { log: (label, report) => console.info(label, report) },
+      )
       writeEvent({ event: 'error', message })
       res.end()
       return
@@ -374,6 +403,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             nearbyPlaceCandidates,
           )
           const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
+          candidateDebugSession?.recordValidation(groundedPlan, validation, 'stream')
           if (!validation.validationPerformed) {
             placesValidationPerformed = false
           }
@@ -416,6 +446,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             nearbyPlaceCandidates,
           )
           const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
+          candidateDebugSession?.recordValidation(groundedPlan, validation, 'stream-tail')
           if (!validation.validationPerformed) {
             placesValidationPerformed = false
           }
@@ -467,6 +498,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!finalResponse || !Array.isArray(finalResponse.plans)) {
         finalResponse = { plans: validatedPlans || [], warnings: [] }
       }
+      candidateDebugSession?.recordAiOutput(finalResponse.plans, 'initial-ai-output')
 
       for (const plan of finalResponse.plans) {
         const bias = request.input.location.lat && request.input.location.lng
@@ -477,6 +509,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           nearbyPlaceCandidates,
         )
         const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
+        candidateDebugSession?.recordValidation(groundedPlan, validation, 'final-parse')
         if (!validation.validationPerformed) {
           placesValidationPerformed = false
         }
@@ -541,6 +574,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
             const retryText = retryData.choices[0].message.content
             const retryParsed = parseTripPlanSkeletonResponse(retryText)
+            candidateDebugSession?.recordAiOutput(retryParsed.plans, 'retry-ai-output')
 
             for (const plan of retryParsed.plans) {
               if (invalidPlanIds.includes(plan.id)) {
@@ -552,6 +586,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   nearbyPlaceCandidates,
                 )
                 const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
+                candidateDebugSession?.recordValidation(groundedPlan, validation, 'retry')
                 if (!validation.validationPerformed) {
                   placesValidationPerformed = false
                 }
@@ -626,6 +661,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const openingHoursSafePlans: TripPlan[] = []
       for (const repairResult of finalRepairResults) {
+        candidateDebugSession?.recordRepair(
+          repairResult.sourcePlan,
+          repairResult.plan,
+          repairResult.issues,
+          'final-repair',
+        )
         if (repairResult.routesFailed) routesApiFailed = true
         if (!repairResult.plan) {
           validationSummaries.set(repairResult.sourcePlan.id, repairResult.issues)
@@ -651,6 +692,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 nearbyPlaces,
                 validationSummaries,
               )
+              candidateDebugSession?.recordAiOutput(retryPlans, 'refill-ai-output')
               if (retryPlans.length === 0) {
                 validationSummaries.set(missingPlanId, ['補案模型未回傳方案'])
                 continue
@@ -676,6 +718,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   nearbyPlaceCandidates,
                 )
                 const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
+                candidateDebugSession?.recordValidation(groundedPlan, validation, 'refill')
                 if (!validation.validationPerformed) {
                   placesValidationPerformed = false
                 }
@@ -705,6 +748,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   request.input,
                   nearbyPlaceCandidates,
                   new Set(),
+                  'refill-final-repair',
+                )
+                candidateDebugSession?.recordRepair(
+                  validatedPlan,
+                  repairResult.plan,
+                  repairResult.issues,
                   'refill-final-repair',
                 )
                 if (repairResult.routesFailed) routesApiFailed = true
@@ -764,6 +813,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               request.input,
               nearbyPlaceCandidates,
               new Set(),
+              'local-refill-final-repair',
+            )
+            candidateDebugSession?.recordRepair(
+              localPlan,
+              repairResult.plan,
+              repairResult.issues,
               'local-refill-final-repair',
             )
             if (repairResult.routesFailed) routesApiFailed = true
@@ -835,6 +890,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         )
       }
 
+      writeTripCandidateDebugReport(
+        candidateDebugSession,
+        finalResponse.plans,
+        validationSummaries,
+        'completed',
+        { log: (label, report) => console.info(label, report) },
+      )
       validationSummaries.clear()
 
       if (!pointsConsumed) {
@@ -852,6 +914,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
     } catch (error) {
+      writeTripCandidateDebugReport(
+        candidateDebugSession,
+        validatedPlans,
+        validationSummaries,
+        'generation_failed',
+        { log: (label, report) => console.info(label, report) },
+      )
       writeEvent({
         event: 'error',
         message:
@@ -871,6 +940,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     writeEvent({ event: 'done', response: finalResponse })
     res.end()
   } catch (error) {
+    writeTripCandidateDebugReport(
+      candidateDebugSession,
+      [],
+      new Map(),
+      'generation_failed',
+      { log: (label, report) => console.info(label, report) },
+    )
     writeEvent({
       event: 'error',
       message:
