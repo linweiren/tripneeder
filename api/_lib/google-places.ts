@@ -16,6 +16,13 @@ const MIN_FOOD_CANDIDATES = 6
 const MIN_ACTIVITY_CANDIDATES = 12
 const MIN_INDOOR_CANDIDATES = 8
 const MAX_GAP_SEARCH_QUERIES = 6
+const PROMPT_NEAR_CANDIDATE_LIMIT = 12
+const PROMPT_FOOD_CANDIDATE_LIMIT = 12
+const PROMPT_ACTIVITY_CANDIDATE_LIMIT = 18
+const PROMPT_FOOD_CAFE_DESSERT_LIMIT = 7
+const PROMPT_ACTIVITY_CAFE_DESSERT_LIMIT = 2
+const PROMPT_LOCAL_CANDIDATE_MINIMUM = 2
+const PROMPT_ACTIVITY_BUCKET_MINIMUM = 2
 const MIN_PLACE_MATCH_SCORE = 0.6
 const CLOSING_BUFFER_MINUTES = 30
 const MIN_CANDIDATE_VISIT_MINUTES = 40
@@ -609,18 +616,89 @@ export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): 
 export function getPromptCandidateSelection(
   candidates: NearbyPlaceCandidates,
 ): PromptCandidateSelection {
-  const nearStops = candidates.firstStopCandidates.slice(0, 12)
-  const foodStops = candidates.otherCandidates
-    .filter((candidate) => candidate.role === 'food')
-    .slice(0, 12)
-  const mainStops = candidates.otherCandidates
-    .filter((candidate) =>
+  const usedPlaceIds = new Set<string>()
+  const nearStops = uniqueEligiblePromptCandidates(candidates.firstStopCandidates, usedPlaceIds)
+    .slice(0, PROMPT_NEAR_CANDIDATE_LIMIT)
+  addPromptCandidateIds(usedPlaceIds, nearStops)
+
+  const foodPool = uniqueEligiblePromptCandidates(
+    candidates.otherCandidates.filter((candidate) => candidate.role === 'food'),
+    usedPlaceIds,
+  )
+  const foodStops = selectBucketedPromptCandidates(foodPool, {
+    limit: PROMPT_FOOD_CANDIDATE_LIMIT,
+    cafeDessertLimit: PROMPT_FOOD_CAFE_DESSERT_LIMIT,
+    bucketMinimums: [
+      { matches: isNonCafeFoodCandidate, minimum: 3 },
+      { matches: isCafeDessertCandidate, minimum: 1 },
+      { matches: isLocalLifestylePromptCandidate, minimum: 1 },
+    ],
+  })
+  addPromptCandidateIds(usedPlaceIds, foodStops)
+
+  const selectedBeforeActivities = [...nearStops, ...foodStops]
+  const activityPool = uniqueEligiblePromptCandidates(
+    candidates.otherCandidates.filter((candidate) =>
       ['main_activity', 'open_space', 'shopping'].includes(candidate.role ?? ''),
-    )
-    .slice(0, 18)
-  const fallbackStops = candidates.otherCandidates
-    .filter((candidate) => !['food', 'short_visit'].includes(candidate.role ?? ''))
-    .slice(0, 18)
+    ),
+    usedPlaceIds,
+  )
+  const mainStops = selectBucketedPromptCandidates(activityPool, {
+    limit: PROMPT_ACTIVITY_CANDIDATE_LIMIT,
+    cafeDessertLimit: PROMPT_ACTIVITY_CAFE_DESSERT_LIMIT,
+    bucketMinimums: [
+      {
+        matches: isLocalLifestylePromptCandidate,
+        minimum: getRemainingBucketMinimum(
+          selectedBeforeActivities,
+          isLocalLifestylePromptCandidate,
+          PROMPT_LOCAL_CANDIDATE_MINIMUM,
+        ),
+      },
+      {
+        matches: isOutdoorPromptCandidate,
+        minimum: getRemainingBucketMinimum(
+          selectedBeforeActivities,
+          isOutdoorPromptCandidate,
+          PROMPT_ACTIVITY_BUCKET_MINIMUM,
+        ),
+      },
+      {
+        matches: isShoppingPromptCandidate,
+        minimum: getRemainingBucketMinimum(
+          selectedBeforeActivities,
+          isShoppingPromptCandidate,
+          PROMPT_ACTIVITY_BUCKET_MINIMUM,
+        ),
+      },
+      {
+        matches: isIndoorCulturePromptCandidate,
+        minimum: getRemainingBucketMinimum(
+          selectedBeforeActivities,
+          isIndoorCulturePromptCandidate,
+          PROMPT_ACTIVITY_BUCKET_MINIMUM,
+        ),
+      },
+    ],
+  })
+  addPromptCandidateIds(usedPlaceIds, mainStops)
+
+  const fallbackStops =
+    mainStops.length > 0
+      ? []
+      : selectBucketedPromptCandidates(
+          uniqueEligiblePromptCandidates(
+            candidates.otherCandidates.filter(
+              (candidate) => !['food', 'short_visit'].includes(candidate.role ?? ''),
+            ),
+            usedPlaceIds,
+          ),
+          {
+            limit: PROMPT_ACTIVITY_CANDIDATE_LIMIT,
+            cafeDessertLimit: PROMPT_ACTIVITY_CAFE_DESSERT_LIMIT,
+            bucketMinimums: [],
+          },
+        )
   const activityStops = mainStops.length > 0 ? mainStops : fallbackStops
 
   return {
@@ -630,6 +708,155 @@ export function getPromptCandidateSelection(
     fallbackStops,
     promptCandidates: [...nearStops, ...foodStops, ...activityStops],
   }
+}
+
+type PromptBucketMinimum = {
+  matches: (candidate: VerifiedPlaceCandidate) => boolean
+  minimum: number
+}
+
+function selectBucketedPromptCandidates(
+  candidates: VerifiedPlaceCandidate[],
+  options: {
+    limit: number
+    cafeDessertLimit: number
+    bucketMinimums: PromptBucketMinimum[]
+  },
+) {
+  const selectedPlaceIds = new Set<string>()
+  let cafeDessertCount = 0
+
+  const addCandidate = (candidate: VerifiedPlaceCandidate) => {
+    if (selectedPlaceIds.has(candidate.placeId) || selectedPlaceIds.size >= options.limit) {
+      return false
+    }
+
+    const isCafeDessert = isCafeDessertCandidate(candidate)
+    if (isCafeDessert && cafeDessertCount >= options.cafeDessertLimit) return false
+
+    selectedPlaceIds.add(candidate.placeId)
+    if (isCafeDessert) cafeDessertCount += 1
+    return true
+  }
+
+  options.bucketMinimums.forEach(({ matches, minimum }) => {
+    if (minimum <= 0) return
+    let selectedForBucket = 0
+    for (const candidate of candidates) {
+      if (!matches(candidate)) continue
+      if (selectedPlaceIds.has(candidate.placeId)) {
+        selectedForBucket += 1
+      } else if (addCandidate(candidate)) {
+        selectedForBucket += 1
+      }
+      if (selectedForBucket >= minimum) break
+    }
+  })
+
+  for (const candidate of candidates) {
+    if (selectedPlaceIds.size >= options.limit) break
+    addCandidate(candidate)
+  }
+
+  // Candidate pools arrive score-sorted. Bucket representatives are marked first,
+  // then emitted in their original relative order so diversity does not replace
+  // the existing ranking with a new ranking system.
+  return candidates.filter((candidate) => selectedPlaceIds.has(candidate.placeId))
+}
+
+function uniqueEligiblePromptCandidates(
+  candidates: VerifiedPlaceCandidate[],
+  excludedPlaceIds: Set<string>,
+) {
+  const seenPlaceIds = new Set(excludedPlaceIds)
+  return candidates.filter((candidate) => {
+    if (!isPromptEligibleCandidate(candidate) || seenPlaceIds.has(candidate.placeId)) return false
+    seenPlaceIds.add(candidate.placeId)
+    return true
+  })
+}
+
+function isPromptEligibleCandidate(candidate: VerifiedPlaceCandidate) {
+  return (
+    Boolean(candidate.placeId) &&
+    candidate.openingHours?.isKnown === true &&
+    candidate.openingHours.isNeverOpen === false &&
+    Boolean(candidate.availabilitySlots?.length)
+  )
+}
+
+function addPromptCandidateIds(target: Set<string>, candidates: VerifiedPlaceCandidate[]) {
+  candidates.forEach((candidate) => target.add(candidate.placeId))
+}
+
+function getRemainingBucketMinimum(
+  selected: VerifiedPlaceCandidate[],
+  matches: (candidate: VerifiedPlaceCandidate) => boolean,
+  target: number,
+) {
+  return Math.max(0, target - selected.filter(matches).length)
+}
+
+function isCafeDessertCandidate(candidate: VerifiedPlaceCandidate) {
+  const types = candidate.types ?? []
+  const text = `${candidate.name} ${candidate.address}`
+  return (
+    candidate.foodSubtype === 'cafe' ||
+    candidate.foodSubtype === 'dessert' ||
+    types.some((type) => ['cafe', 'coffee_shop', 'bakery', 'dessert_shop'].includes(type)) ||
+    /(咖啡|甜點|蛋糕|烘焙|coffee|cafe|dessert|bakery)/i.test(text)
+  )
+}
+
+function isNonCafeFoodCandidate(candidate: VerifiedPlaceCandidate) {
+  return candidate.role === 'food' && !isCafeDessertCandidate(candidate)
+}
+
+function isLocalLifestylePromptCandidate(candidate: VerifiedPlaceCandidate) {
+  const types = new Set(candidate.types ?? [])
+  const text = `${candidate.name} ${candidate.address}`
+  return (
+    ['market', 'book_store', 'community_center', 'cultural_center'].some((type) =>
+      types.has(type),
+    ) || /(老街|夜市|市場|市集|文創|眷村|文化|生活)/.test(text)
+  )
+}
+
+function isOutdoorPromptCandidate(candidate: VerifiedPlaceCandidate) {
+  const types = candidate.types ?? []
+  return (
+    candidate.role === 'open_space' ||
+    types.some(
+      (type) =>
+        OUTDOOR_PLACE_TYPES.has(type) ||
+        ['scenic_spot', 'observation_deck'].includes(type) ||
+        type.toLocaleLowerCase().includes('outdoor'),
+    )
+  )
+}
+
+function isShoppingPromptCandidate(candidate: VerifiedPlaceCandidate) {
+  const types = candidate.types ?? []
+  return (
+    candidate.role === 'shopping' ||
+    types.some((type) => ['shopping_mall', 'department_store', 'market'].includes(type))
+  )
+}
+
+function isIndoorCulturePromptCandidate(candidate: VerifiedPlaceCandidate) {
+  const types = candidate.types ?? []
+  return types.some((type) =>
+    [
+      'museum',
+      'art_gallery',
+      'cultural_center',
+      'community_center',
+      'aquarium',
+      'movie_theater',
+      'library',
+      'book_store',
+    ].includes(type),
+  )
 }
 
 export function getRainBackupCandidatePool(
