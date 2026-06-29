@@ -1261,7 +1261,6 @@ function TimeSelect({ label, value, onChange }: TimeSelectProps) {
   const [hour = '', minute = ''] = value.split(':')
 
   function updateTime(nextHour: string, nextMinute: string) {
-    if (!nextHour || !nextMinute) return
     onChange(`${nextHour}:${nextMinute}`)
   }
 
