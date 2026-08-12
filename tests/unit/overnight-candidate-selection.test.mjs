@@ -5,7 +5,13 @@ import {
   buildCandidateSearchQueries,
   getFirstStopCandidates,
 } from '../../api/_lib/google-places.ts'
-import { selectSupplementalCandidate } from '../../api/generate-trip.ts'
+import {
+  getDeliveryPlanIssues,
+  getFirstStopDistanceIssue,
+  pickCandidateForStop,
+  pickSoftDiverseCandidate,
+  selectSupplementalCandidate,
+} from '../../api/generate-trip.ts'
 
 test('跨夜到清晨的六個 query 名額保留深夜與清晨搜尋', () => {
   for (const [startTime, endTime] of [
@@ -79,6 +85,130 @@ test('coverage supplemental selection 不把白天地點補到 04:00，並保留
   assert.equal(selected?.placeId, 'dawn-open')
 })
 
+test('soft diversity chooses a close alternative when top was used by another plan', () => {
+  const candidates = [
+    candidate('used-top', 0.5, [[9 * 60, 18 * 60]], 90),
+    candidate('near-alternative', 1.2, [[9 * 60, 18 * 60]], 86),
+  ]
+
+  const selected = pickSoftDiverseCandidate(candidates, new Set(['used-top']))
+
+  assert.equal(selected?.placeId, 'near-alternative')
+})
+
+test('soft diversity keeps top when alternatives are too weak or too far', () => {
+  const lowScoreCandidates = [
+    candidate('used-top', 0.5, [[9 * 60, 18 * 60]], 90),
+    candidate('low-score', 0.7, [[9 * 60, 18 * 60]], 72),
+  ]
+  const farCandidates = [
+    candidate('used-top', 0.5, [[9 * 60, 18 * 60]], 90),
+    candidate('too-far', 3, [[9 * 60, 18 * 60]], 88),
+  ]
+
+  assert.equal(
+    pickSoftDiverseCandidate(lowScoreCandidates, new Set(['used-top']))?.placeId,
+    'used-top',
+  )
+  assert.equal(
+    pickSoftDiverseCandidate(farCandidates, new Set(['used-top']))?.placeId,
+    'used-top',
+  )
+})
+
+test('soft diversity allows reuse when the candidate pool is constrained', () => {
+  const candidates = [
+    candidate('used-top', 0.5, [[9 * 60, 18 * 60]], 90),
+  ]
+
+  const selected = pickSoftDiverseCandidate(candidates, new Set(['used-top']))
+
+  assert.equal(selected?.placeId, 'used-top')
+})
+
+test('soft diversity does not select unknown opening hours candidates', () => {
+  const candidates = [
+    candidateWithoutKnownHours('unknown-hours', 0.5, 95),
+    candidate('known-hours', 1, [[9 * 60, 18 * 60]], 88),
+  ]
+
+  const selected = pickSoftDiverseCandidate(candidates, new Set())
+
+  assert.equal(selected?.placeId, 'known-hours')
+})
+
+test('supplemental soft diversity keeps opening-hours and closing-buffer behavior', () => {
+  const candidates = [
+    candidate('used-top-closes-too-soon', 0.5, [[24 * 60, 29 * 60 + 30]], 90),
+    candidate('near-dawn-open', 1, [[24 * 60, 31 * 60]], 86),
+    candidateWithoutKnownHours('unknown-hours', 0.5, 95),
+  ]
+
+  const selected = selectSupplementalCandidate(
+    candidates,
+    new Set(),
+    28 * 60,
+    0,
+    new Set(['used-top-closes-too-soon']),
+  )
+
+  assert.equal(selected?.placeId, 'near-dawn-open')
+})
+
+test('final delivery validation reports first_stop_too_far after repair', async () => {
+  const farFirstStop = candidate('far-first-stop', 2.5, [[9 * 60, 18 * 60]], 90, 'food')
+  const plan = planWithStops([stopFromCandidate(farFirstStop, 0, 'food')])
+  const nearbyCandidates = nearbyPlaceCandidates([farFirstStop], [], [farFirstStop])
+
+  const distanceIssue = getFirstStopDistanceIssue(
+    plan,
+    input('14:00', '18:00'),
+    nearbyCandidates,
+  )
+  const deliveryIssues = await getDeliveryPlanIssues(
+    plan,
+    input('14:00', '18:00'),
+    'unit-final-repair',
+    { candidates: nearbyCandidates },
+  )
+
+  assert.equal(distanceIssue?.reason, 'first_stop_too_far')
+  assert.equal(deliveryIssues.some((issue) => issue.includes('far-first-stop')), true)
+  assert.equal(deliveryIssues.some((issue) => issue.includes('2.5km')), true)
+})
+
+test('first stop replacement does not select candidates outside 2km', () => {
+  const farFood = candidate('far-food', 2.6, [[9 * 60, 18 * 60]], 100, 'food')
+  const nearFood = candidate('near-food', 1.4, [[9 * 60, 18 * 60]], 80, 'food')
+  const selected = pickCandidateForStop(
+    stop('requested-food', 'food'),
+    0,
+    nearbyPlaceCandidates([farFood, nearFood], [farFood, nearFood], [nearFood]),
+    new Set(),
+    new Set(),
+    new Set(),
+    null,
+  )
+
+  assert.equal(selected?.placeId, 'near-food')
+})
+
+test('non-first stop replacement is not limited by first-stop distance', () => {
+  const farFood = candidate('far-food', 2.6, [[9 * 60, 18 * 60]], 100, 'food')
+  const nearFood = candidate('near-food', 1.4, [[9 * 60, 18 * 60]], 80, 'food')
+  const selected = pickCandidateForStop(
+    stop('requested-food', 'food'),
+    1,
+    nearbyPlaceCandidates([farFood, nearFood], [farFood, nearFood], [nearFood]),
+    new Set(),
+    new Set(),
+    new Set(),
+    null,
+  )
+
+  assert.equal(selected?.placeId, 'far-food')
+})
+
 function input(startTime, endTime) {
   return {
     startTime,
@@ -93,14 +223,18 @@ function input(startTime, endTime) {
   }
 }
 
-function candidate(placeId, distanceKm, ranges) {
+function candidate(placeId, distanceKm, ranges, score, role = 'main_activity') {
   return {
     name: placeId,
     address: `${placeId} address`,
     placeId,
     googleMapsUrl: `https://example.com/${placeId}`,
     distanceKm,
-    role: 'main_activity',
+    score,
+    role,
+    types: role === 'food' ? ['food', 'cafe'] : [],
+    lat: 22.63 + distanceKm / 111,
+    lng: 120.3,
     openingHours: {
       windows: ranges.map(([start, end]) => ({
         openAt: dateAtTripMinute(start),
@@ -114,13 +248,62 @@ function candidate(placeId, distanceKm, ranges) {
   }
 }
 
-function candidateWithoutKnownHours(placeId, distanceKm) {
+function nearbyPlaceCandidates(allCandidates, otherCandidates = allCandidates, firstStopCandidates = []) {
+  return {
+    allCandidates,
+    otherCandidates,
+    firstStopCandidates,
+  }
+}
+
+function planWithStops(stops) {
+  return {
+    id: 'unit-plan',
+    type: 'safe',
+    title: 'unit plan',
+    subtitle: '',
+    summary: '',
+    totalTime: 0,
+    budget: 0,
+    transportMode: 'scooter',
+    stops,
+    transportSegments: [],
+    rainBackup: [],
+    rainTransportSegments: [],
+  }
+}
+
+function stop(id, type = 'main_activity') {
+  return {
+    id,
+    name: id,
+    type,
+    description: '',
+    address: `${id} address`,
+    duration: type === 'food' ? 45 : 40,
+  }
+}
+
+function stopFromCandidate(source, index, type = 'main_activity') {
+  return {
+    ...stop(`${source.placeId}-${index}`, type),
+    name: source.name,
+    address: source.address,
+    placeId: source.placeId,
+    googleMapsUrl: source.googleMapsUrl,
+    lat: source.lat,
+    lng: source.lng,
+  }
+}
+
+function candidateWithoutKnownHours(placeId, distanceKm, score) {
   return {
     name: placeId,
     address: `${placeId} address`,
     placeId,
     googleMapsUrl: `https://example.com/${placeId}`,
     distanceKm,
+    score,
     role: 'main_activity',
   }
 }

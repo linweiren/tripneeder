@@ -215,6 +215,9 @@ export class TripCandidateDebugSession implements CandidateSearchDebugSink {
         usableCandidateCount: this.candidatePool.usableCandidateCount,
         firstStopCandidateCount: this.candidateSets.firstStopCandidates.length,
         otherCandidateCount: this.candidateSets.otherCandidates.length,
+        firstStopRejectionBreakdown: countFirstStopRejectionReasons(
+          this.candidatePool.candidates,
+        ),
         buckets: countCandidateBuckets(usableCandidates),
         bucketCounting: 'multi_label',
         candidates: this.candidatePool.candidates.map((candidate) => ({
@@ -346,6 +349,25 @@ function countCandidateBuckets(candidates: CandidateDebugPlace[]) {
     getCandidateBuckets(candidate).forEach((bucket) => {
       counts[bucket] += 1
     })
+  })
+
+  return counts
+}
+
+function countFirstStopRejectionReasons(candidates: CandidateDebugPlace[]) {
+  const counts: Record<string, number> = {
+    distance_over_2km: 0,
+    unknown_opening_hours: 0,
+    no_opening_overlap: 0,
+    closing_buffer: 0,
+    minimum_visit_duration: 0,
+  }
+
+  candidates.forEach((candidate) => {
+    if (!candidate.firstStopRejectionReason) return
+
+    counts[candidate.firstStopRejectionReason] =
+      (counts[candidate.firstStopRejectionReason] ?? 0) + 1
   })
 
   return counts

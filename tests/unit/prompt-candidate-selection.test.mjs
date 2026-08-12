@@ -238,6 +238,7 @@ test('candidate debug report 會標示分桶後更平均的 AI input', () => {
       availabilitySlots: candidate.availabilitySlots,
       excluded: false,
       exclusionReason: null,
+      firstStopRejectionReason: null,
     })),
   })
   session.recordCandidateSets({ firstStopCandidates: [], otherCandidates: allCandidates, allCandidates })
@@ -254,3 +255,54 @@ test('candidate debug report 會標示分桶後更平均的 AI input', () => {
   assert.ok(sentToAi.some((candidate) => candidate.buckets.includes('shopping')))
   assert.ok(sentToAi.some((candidate) => candidate.types.includes('museum')))
 })
+
+test('candidate debug report includes first-stop rejection breakdown', () => {
+  const session = new TripCandidateDebugSession({
+    category: 'explore',
+    startTime: '23:00',
+    endTime: '01:00',
+    tags: [],
+    location: { name: '高雄市仁武區', lat: 22.69, lng: 120.33 },
+  })
+
+  session.recordCandidatePool({
+    rawCandidateCount: 5,
+    usableCandidateCount: 0,
+    candidates: [
+      debugCandidate('far', 'distance_over_2km'),
+      debugCandidate('unknown', 'unknown_opening_hours'),
+      debugCandidate('no-overlap', 'no_opening_overlap'),
+      debugCandidate('buffer', 'closing_buffer'),
+      debugCandidate('short', 'minimum_visit_duration'),
+    ],
+  })
+
+  const report = session.buildReport([])
+
+  assert.deepEqual(report.candidatePool.firstStopRejectionBreakdown, {
+    distance_over_2km: 1,
+    unknown_opening_hours: 1,
+    no_opening_overlap: 1,
+    closing_buffer: 1,
+    minimum_visit_duration: 1,
+  })
+})
+
+function debugCandidate(placeId, firstStopRejectionReason) {
+  return {
+    name: placeId,
+    placeId,
+    types: ['restaurant'],
+    role: 'food',
+    score: null,
+    distanceKm: 1,
+    rating: null,
+    reviewCount: null,
+    openingHoursKnown: firstStopRejectionReason !== 'unknown_opening_hours',
+    availabilitySlotCount: 0,
+    availabilitySlots: [],
+    excluded: true,
+    exclusionReason: firstStopRejectionReason,
+    firstStopRejectionReason,
+  }
+}
