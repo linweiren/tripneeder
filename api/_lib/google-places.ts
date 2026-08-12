@@ -182,6 +182,7 @@ export type CandidateDebugPlace = {
   availabilitySlots: string[]
   excluded: boolean
   exclusionReason: string | null
+  firstStopRejectionReason: string | null
 }
 
 export type CandidateSearchQueryPlanDebug = {
@@ -309,6 +310,7 @@ export async function getNearbyPlaceCandidates(
   }
 
   const input = request.input
+  await ensureSearchableLocationName(input)
   const lat = input.location.lat
   const lng = input.location.lng
   const queryPlan = buildCandidateSearchQueryPlan(input, request.persona)
@@ -376,6 +378,44 @@ export async function getNearbyPlaceCandidates(
       }
     }
 
+    if (getFirstStopCandidates(candidates, input).length === 0) {
+      const firstStopGapQueries = buildFirstStopGapSearchQueries(input, request.persona)
+
+      if (firstStopGapQueries.length > 0) {
+        debugSink?.recordQueryPlan({
+          phase: 'gap',
+          queries: firstStopGapQueries,
+          requestedQueryCount: firstStopGapQueries.length,
+          queryLimit: null,
+          truncated: false,
+        })
+        const knownPlaceIds = new Set(places.map((place) => place.id).filter(Boolean))
+        const firstStopGapResults = await Promise.all(
+          firstStopGapQueries.map(async (textQuery) => {
+            const queryPlaces = await searchPlaces(textQuery, {
+              bias: lat && lng ? { lat, lng } : undefined,
+              maxResultCount: 20,
+              radiusMeters: FIRST_STOP_MAX_DISTANCE_KM * 1000,
+            })
+            debugSink?.recordQueryResult({
+              phase: 'gap',
+              query: textQuery,
+              rawPlaceCount: queryPlaces.length,
+            })
+            return queryPlaces
+          }),
+        )
+        const firstStopGapPlaces = dedupePlaces(firstStopGapResults.flat())
+          .filter((place) => place.id && !knownPlaceIds.has(place.id))
+          .filter((place) => isPlaceWithinFirstStopDistance(place, lat, lng))
+
+        if (firstStopGapPlaces.length > 0) {
+          places = dedupePlaces([...places, ...firstStopGapPlaces])
+          candidates = prepareCandidates(places, input, tripWindow, lat, lng, debugSink)
+        }
+      }
+    }
+
     logCandidatePoolSummary(input, candidates, candidateGaps, gapQueries.length)
 
     const firstStopCandidates = getFirstStopCandidates(candidates, input)
@@ -421,12 +461,12 @@ function prepareCandidates(
 
     const exclusionReason = getCandidateExclusionReason(candidate, tripWindow)
     if (exclusionReason) {
-      debugCandidates.push(toCandidateDebugPlace(candidate, true, exclusionReason))
+      debugCandidates.push(toCandidateDebugPlace(candidate, true, exclusionReason, tripWindow))
       return []
     }
 
     const scoredCandidate = scoreCandidate(addAvailabilitySlots(candidate, tripWindow), input)
-    debugCandidates.push(toCandidateDebugPlace(scoredCandidate, false, null))
+    debugCandidates.push(toCandidateDebugPlace(scoredCandidate, false, null, tripWindow))
     return [scoredCandidate]
   }).sort(compareCandidates)
 
@@ -446,10 +486,18 @@ function getCandidateExclusionReason(
   if (isCandidateUsableDuringTrip(candidate, tripWindow)) return null
   if (!candidate.openingHours?.isKnown) return 'unknown_opening_hours'
   if (candidate.openingHours.isNeverOpen) return 'never_open'
-  return 'no_usable_opening_window_for_minimum_visit_and_closing_buffer'
+  return getOpeningRangeExclusionReason(
+    candidate.openingHours,
+    tripWindow,
+    getMinimumCandidateVisitMinutes(candidate),
+  )
 }
 
-function toExcludedDebugPlace(place: GooglePlace, lat?: number, lng?: number): CandidateDebugPlace {
+function toExcludedDebugPlace(
+  place: GooglePlace,
+  lat?: number,
+  lng?: number,
+): CandidateDebugPlace {
   const openingHours = buildOpeningHoursMetadata(place)
   const distanceKm =
     lat && lng && place.location
@@ -476,6 +524,9 @@ function toExcludedDebugPlace(place: GooglePlace, lat?: number, lng?: number): C
     exclusionReason: !place.id
       ? 'missing_place_id'
       : `business_status_${(place.businessStatus ?? 'unknown').toLocaleLowerCase()}`,
+    firstStopRejectionReason: typeof distanceKm === 'number' && distanceKm > FIRST_STOP_MAX_DISTANCE_KM
+      ? 'distance_over_2km'
+      : null,
   }
 }
 
@@ -483,6 +534,7 @@ function toCandidateDebugPlace(
   candidate: VerifiedPlaceCandidate,
   excluded: boolean,
   exclusionReason: string | null,
+  tripWindow?: ReturnType<typeof buildTripWindow>,
 ): CandidateDebugPlace {
   return {
     name: candidate.name,
@@ -498,6 +550,7 @@ function toCandidateDebugPlace(
     availabilitySlots: candidate.availabilitySlots ?? [],
     excluded,
     exclusionReason,
+    firstStopRejectionReason: getFirstStopRejectionReason(candidate, tripWindow),
   }
 }
 
@@ -561,6 +614,68 @@ export async function resolveLocation(
   }
 
   return null
+}
+
+async function ensureSearchableLocationName(input: TripInput) {
+  if (input.location.name.trim()) return
+  if (typeof input.location.lat !== 'number' || typeof input.location.lng !== 'number') return
+
+  const resolvedName = await resolveLocationNameFromCoordinates(
+    input.location.lat,
+    input.location.lng,
+  )
+  if (resolvedName) {
+    input.location.name = resolvedName
+  }
+}
+
+export async function resolveLocationNameFromCoordinates(lat: number, lng: number) {
+  if (!GOOGLE_PLACES_API_KEY) return null
+
+  try {
+    const response = await googleFetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?latlng=${encodeURIComponent(
+        `${lat},${lng}`,
+      )}&key=${GOOGLE_PLACES_API_KEY}&language=zh-TW&region=tw&result_type=administrative_area_level_3|administrative_area_level_2|locality|sublocality|political`,
+    )
+    const data = (await response.json()) as GoogleGeocodeResponse
+    const taiwanResult = data.results?.find(isTaiwanGeocodeResult)
+    if (!taiwanResult) return null
+
+    return formatTaiwanDistrictName(taiwanResult) ?? taiwanResult.formatted_address
+  } catch (error) {
+    console.error('Reverse geocoding location name failed:', error)
+    return null
+  }
+}
+
+function formatTaiwanDistrictName(
+  result: NonNullable<GoogleGeocodeResponse['results']>[number],
+) {
+  const components = result.address_components ?? []
+  const city = findAddressComponent(components, [
+    'administrative_area_level_1',
+    'administrative_area_level_2',
+    'locality',
+  ])
+  const district = findAddressComponent(components, [
+    'administrative_area_level_3',
+    'sublocality_level_1',
+    'sublocality',
+  ])
+
+  return [city, district]
+    .filter((part, index, parts) => Boolean(part && parts.indexOf(part) === index))
+    .join('') || null
+}
+
+function findAddressComponent(
+  components: NonNullable<GoogleGeocodeResponse['results']>[number]['address_components'],
+  expectedTypes: string[],
+) {
+  return components?.find((component) =>
+    expectedTypes.some((type) => component.types?.includes(type)),
+  )?.long_name
 }
 
 function normalizeTaiwanLocationQuery(name: string) {
@@ -1007,9 +1122,8 @@ function buildCandidateGapSearchQueries(
   persona: Persona | undefined,
   gaps: CandidateGaps,
 ) {
-  const name = input.location.name || ''
-  const hasCoords = typeof input.location.lat === 'number' && typeof input.location.lng === 'number'
-  const prefix = hasCoords ? '' : `${name} `
+  const locationLabel = getCandidateSearchLocationLabel(input)
+  const prefix = locationLabel ? `${locationLabel} ` : ''
   const includesEarlyMorning = tripOverlapsClockWindow(input, 0, EARLY_MORNING_ACTIVE_START_MINUTES)
   const queries: string[] = []
 
@@ -1061,6 +1175,37 @@ function buildCandidateGapSearchQueries(
   }
 
   return Array.from(new Set(queries.map((query) => query.trim()).filter(Boolean)))
+}
+
+function buildFirstStopGapSearchQueries(input: TripInput, persona?: Persona) {
+  const locationLabel = getCandidateSearchLocationLabel(input)
+  if (!locationLabel) return []
+
+  const personaQuery = buildSearchQuery(input, persona)
+  return Array.from(new Set([
+    `${locationLabel} 深夜 24小時 公園 咖啡 餐廳 宵夜 室內`,
+    `${locationLabel} 23:00 營業 公園 咖啡 餐廳 宵夜`,
+    `${locationLabel} 24小時 景點 公園 室內 late night`,
+    `${locationLabel} late night 24 hours cafe restaurant park indoor`,
+    personaQuery ? `${locationLabel} ${personaQuery} 深夜 營業中` : '',
+  ].map((query) => query.trim()).filter(Boolean)))
+}
+
+function getCandidateSearchLocationLabel(input: TripInput) {
+  return input.location.name.trim()
+}
+
+function isPlaceWithinFirstStopDistance(
+  place: GooglePlace,
+  lat?: number,
+  lng?: number,
+) {
+  if (typeof lat !== 'number' || typeof lng !== 'number' || !place.location) return false
+
+  return (
+    calculateDistance(lat, lng, place.location.latitude, place.location.longitude) <=
+    FIRST_STOP_MAX_DISTANCE_KM
+  )
 }
 
 function getCandidateGaps(candidates: VerifiedPlaceCandidate[], input: TripInput): CandidateGaps {
@@ -1664,6 +1809,72 @@ function hasUsableOpeningOverlap(
   const latestLeaveAt = new Date(Math.min(comfortableLeaveAt.getTime(), tripEnd.getTime()))
 
   return latestLeaveAt.getTime() - earliestArrivalAt.getTime() >= minimumVisitMinutes * 60 * 1000
+}
+
+function getOpeningRangeExclusionReason(
+  openingHours: OpeningHoursMetadata,
+  tripWindow: ReturnType<typeof buildTripWindow>,
+  minimumVisitMinutes: number,
+) {
+  if (!tripWindow) return 'no_usable_opening_window_for_minimum_visit_and_closing_buffer'
+
+  const tripStart = buildTripDateAtMinutes(tripWindow.startMinutes, openingHours.utcOffsetMinutes)
+  const tripEnd = buildTripDateAtMinutes(tripWindow.endMinutes, openingHours.utcOffsetMinutes)
+  const minimumVisitMs = minimumVisitMinutes * 60 * 1000
+  const hasOpeningOverlap = openingHours.windows.some((window) =>
+    Math.min(window.closeAt.getTime(), tripEnd.getTime()) >
+    Math.max(window.openAt.getTime(), tripStart.getTime()),
+  )
+  if (!hasOpeningOverlap) return 'no_opening_overlap'
+
+  const hasMinimumVisitWithoutBuffer = openingHours.windows.some((window) => {
+    const earliestArrivalAt = new Date(Math.max(window.openAt.getTime(), tripStart.getTime()))
+    const latestLeaveAt = new Date(Math.min(window.closeAt.getTime(), tripEnd.getTime()))
+
+    return latestLeaveAt.getTime() - earliestArrivalAt.getTime() >= minimumVisitMs
+  })
+  if (!hasMinimumVisitWithoutBuffer) return 'minimum_visit_duration'
+
+  return 'closing_buffer'
+}
+
+function getFirstStopRejectionReason(
+  candidate: VerifiedPlaceCandidate,
+  tripWindow?: ReturnType<typeof buildTripWindow>,
+) {
+  if (!tripWindow) return null
+  if (typeof candidate.distanceKm !== 'number') return 'distance_unknown'
+  if (candidate.distanceKm > FIRST_STOP_MAX_DISTANCE_KM) return 'distance_over_2km'
+  if (!candidate.openingHours?.isKnown) return 'unknown_opening_hours'
+  if (candidate.openingHours.isNeverOpen) return 'never_open'
+
+  const minimumVisitMinutes = getMinimumCandidateVisitMinutes(candidate)
+  if (isCandidateOpenForVisit(candidate, tripWindow.startMinutes, minimumVisitMinutes)) {
+    return null
+  }
+
+  return getOpeningVisitExclusionReason(
+    candidate.openingHours,
+    tripWindow.startMinutes,
+    minimumVisitMinutes,
+  )
+}
+
+function getOpeningVisitExclusionReason(
+  openingHours: OpeningHoursMetadata,
+  arrivalMinutes: number,
+  durationMinutes: number,
+) {
+  const arrivalAt = buildTripDateAtMinutes(arrivalMinutes, openingHours.utcOffsetMinutes)
+  const leaveAt = new Date(arrivalAt.getTime() + Math.max(0, durationMinutes) * 60 * 1000)
+  const matchingRawWindow = openingHours.windows.find(
+    (window) => arrivalAt >= window.openAt && arrivalAt < window.closeAt,
+  )
+
+  if (!matchingRawWindow) return 'no_opening_overlap'
+  if (leaveAt <= matchingRawWindow.closeAt) return 'closing_buffer'
+
+  return 'minimum_visit_duration'
 }
 
 function formatOpeningHoursSummary(openingHours?: OpeningHoursMetadata) {
