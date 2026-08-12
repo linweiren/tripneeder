@@ -6,6 +6,9 @@ import {
   getFirstStopCandidates,
 } from '../../api/_lib/google-places.ts'
 import {
+  getDeliveryPlanIssues,
+  getFirstStopDistanceIssue,
+  pickCandidateForStop,
   pickSoftDiverseCandidate,
   selectSupplementalCandidate,
 } from '../../api/generate-trip.ts'
@@ -152,6 +155,60 @@ test('supplemental soft diversity keeps opening-hours and closing-buffer behavio
   assert.equal(selected?.placeId, 'near-dawn-open')
 })
 
+test('final delivery validation reports first_stop_too_far after repair', async () => {
+  const farFirstStop = candidate('far-first-stop', 2.5, [[9 * 60, 18 * 60]], 90, 'food')
+  const plan = planWithStops([stopFromCandidate(farFirstStop, 0, 'food')])
+  const nearbyCandidates = nearbyPlaceCandidates([farFirstStop], [], [farFirstStop])
+
+  const distanceIssue = getFirstStopDistanceIssue(
+    plan,
+    input('14:00', '18:00'),
+    nearbyCandidates,
+  )
+  const deliveryIssues = await getDeliveryPlanIssues(
+    plan,
+    input('14:00', '18:00'),
+    'unit-final-repair',
+    { candidates: nearbyCandidates },
+  )
+
+  assert.equal(distanceIssue?.reason, 'first_stop_too_far')
+  assert.equal(deliveryIssues.some((issue) => issue.includes('far-first-stop')), true)
+  assert.equal(deliveryIssues.some((issue) => issue.includes('2.5km')), true)
+})
+
+test('first stop replacement does not select candidates outside 2km', () => {
+  const farFood = candidate('far-food', 2.6, [[9 * 60, 18 * 60]], 100, 'food')
+  const nearFood = candidate('near-food', 1.4, [[9 * 60, 18 * 60]], 80, 'food')
+  const selected = pickCandidateForStop(
+    stop('requested-food', 'food'),
+    0,
+    nearbyPlaceCandidates([farFood, nearFood], [farFood, nearFood], [nearFood]),
+    new Set(),
+    new Set(),
+    new Set(),
+    null,
+  )
+
+  assert.equal(selected?.placeId, 'near-food')
+})
+
+test('non-first stop replacement is not limited by first-stop distance', () => {
+  const farFood = candidate('far-food', 2.6, [[9 * 60, 18 * 60]], 100, 'food')
+  const nearFood = candidate('near-food', 1.4, [[9 * 60, 18 * 60]], 80, 'food')
+  const selected = pickCandidateForStop(
+    stop('requested-food', 'food'),
+    1,
+    nearbyPlaceCandidates([farFood, nearFood], [farFood, nearFood], [nearFood]),
+    new Set(),
+    new Set(),
+    new Set(),
+    null,
+  )
+
+  assert.equal(selected?.placeId, 'far-food')
+})
+
 function input(startTime, endTime) {
   return {
     startTime,
@@ -166,7 +223,7 @@ function input(startTime, endTime) {
   }
 }
 
-function candidate(placeId, distanceKm, ranges, score) {
+function candidate(placeId, distanceKm, ranges, score, role = 'main_activity') {
   return {
     name: placeId,
     address: `${placeId} address`,
@@ -174,7 +231,10 @@ function candidate(placeId, distanceKm, ranges, score) {
     googleMapsUrl: `https://example.com/${placeId}`,
     distanceKm,
     score,
-    role: 'main_activity',
+    role,
+    types: role === 'food' ? ['food', 'cafe'] : [],
+    lat: 22.63 + distanceKm / 111,
+    lng: 120.3,
     openingHours: {
       windows: ranges.map(([start, end]) => ({
         openAt: dateAtTripMinute(start),
@@ -185,6 +245,54 @@ function candidate(placeId, distanceKm, ranges, score) {
       isKnown: true,
       isNeverOpen: false,
     },
+  }
+}
+
+function nearbyPlaceCandidates(allCandidates, otherCandidates = allCandidates, firstStopCandidates = []) {
+  return {
+    allCandidates,
+    otherCandidates,
+    firstStopCandidates,
+  }
+}
+
+function planWithStops(stops) {
+  return {
+    id: 'unit-plan',
+    type: 'safe',
+    title: 'unit plan',
+    subtitle: '',
+    summary: '',
+    totalTime: 0,
+    budget: 0,
+    transportMode: 'scooter',
+    stops,
+    transportSegments: [],
+    rainBackup: [],
+    rainTransportSegments: [],
+  }
+}
+
+function stop(id, type = 'main_activity') {
+  return {
+    id,
+    name: id,
+    type,
+    description: '',
+    address: `${id} address`,
+    duration: type === 'food' ? 45 : 40,
+  }
+}
+
+function stopFromCandidate(source, index, type = 'main_activity') {
+  return {
+    ...stop(`${source.placeId}-${index}`, type),
+    name: source.name,
+    address: source.address,
+    placeId: source.placeId,
+    googleMapsUrl: source.googleMapsUrl,
+    lat: source.lat,
+    lng: source.lng,
   }
 }
 

@@ -7,7 +7,7 @@ import type { GenerateTripPlansRequest, Persona } from '../../src/services/ai/ty
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY
 const SEARCH_TEXT_URL = 'https://places.googleapis.com/v1/places:searchText'
 const PLACE_DETAILS_URL = 'https://places.googleapis.com/v1/places'
-const FIRST_STOP_MAX_DISTANCE_KM = 2
+export const FIRST_STOP_MAX_DISTANCE_KM = 2
 const MAIN_CANDIDATE_MAX_DISTANCE_KM = 5
 const BACKUP_CANDIDATE_MAX_DISTANCE_KM = 10
 const MIN_MAIN_CANDIDATES = 18
@@ -2061,7 +2061,7 @@ function normalizeText(value: string): string {
     .trim()
 }
 
-function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const earthRadiusKm = 6371
   const dLat = toRadians(lat2 - lat1)
   const dLon = toRadians(lon2 - lon1)
