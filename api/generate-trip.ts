@@ -644,20 +644,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       finalResponse.plans = finalResponse.plans.sort(comparePlansByDisplayPriority)
 
-      const finalRepairResults = await Promise.all((finalResponse.plans || []).map(async (plan) => {
+      const finalRepairResults: Array<{
+        sourcePlan: TripPlan
+        plan: TripPlan | null
+        routesFailed: boolean
+        issues: string[]
+      }> = []
+      const crossPlanUsedPlaceIds = new Set<string>()
+      const sortedFinalPlans = (finalResponse.plans || []).sort(comparePlansByDisplayPriority)
+      for (const plan of sortedFinalPlans) {
         const result = await repairAndValidatePlanForDelivery(
           plan,
           request.input,
           nearbyPlaceCandidates,
           new Set(),
           'final-repair',
+          crossPlanUsedPlaceIds,
         )
 
-        return {
+        finalRepairResults.push({
           sourcePlan: plan,
           ...result,
+        })
+        if (result.plan) {
+          getPlanPlaceIds(result.plan).forEach((placeId) => crossPlanUsedPlaceIds.add(placeId))
         }
-      }))
+      }
 
       const openingHoursSafePlans: TripPlan[] = []
       for (const repairResult of finalRepairResults) {
@@ -749,6 +761,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   nearbyPlaceCandidates,
                   new Set(),
                   'refill-final-repair',
+                  new Set(finalResponse.plans.flatMap(getPlanPlaceIds)),
                 )
                 candidateDebugSession?.recordRepair(
                   validatedPlan,
@@ -814,6 +827,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               nearbyPlaceCandidates,
               new Set(),
               'local-refill-final-repair',
+              new Set(finalResponse.plans.flatMap(getPlanPlaceIds)),
             )
             candidateDebugSession?.recordRepair(
               localPlan,
@@ -1281,12 +1295,20 @@ async function repairPlanForDelivery(
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
   avoidedPlaceIds: Set<string> = new Set(),
-  options: { allowCoverageRepair?: boolean } = {},
+  options: { allowCoverageRepair?: boolean; crossPlanUsedPlaceIds?: Set<string> } = {},
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
   const allowCoverageRepair = options.allowCoverageRepair ?? true
+  const crossPlanUsedPlaceIds = options.crossPlanUsedPlaceIds ?? new Set<string>()
   const usedPlaceIds = new Set<string>()
   const repairedStops = plan.stops.map((stop, index) =>
-    ensureStopHasVerifiedPlace(stop, index, candidates, usedPlaceIds, avoidedPlaceIds),
+    ensureStopHasVerifiedPlace(
+      stop,
+      index,
+      candidates,
+      usedPlaceIds,
+      avoidedPlaceIds,
+      crossPlanUsedPlaceIds,
+    ),
   )
   const scheduleAlignedStops = allowCoverageRepair
     ? alignStopsWithCandidateAvailability(
@@ -1294,6 +1316,7 @@ async function repairPlanForDelivery(
         input,
         candidates,
         avoidedPlaceIds,
+        crossPlanUsedPlaceIds,
         plan.transportSegments,
       )
     : repairedStops
@@ -1302,10 +1325,24 @@ async function repairPlanForDelivery(
     if (stop.placeId) usedPlaceIds.add(stop.placeId)
   })
   const expandedStops = allowCoverageRepair
-    ? expandStopsForLongTrip(scheduleAlignedStops, input, candidates, usedPlaceIds, plan.id)
+    ? expandStopsForLongTrip(
+        scheduleAlignedStops,
+        input,
+        candidates,
+        usedPlaceIds,
+        plan.id,
+        crossPlanUsedPlaceIds,
+      )
     : scheduleAlignedStops
   const deliveryStops = allowCoverageRepair
-    ? ensureMealStopForTrip(expandedStops, input, candidates, usedPlaceIds, plan.id)
+    ? ensureMealStopForTrip(
+        expandedStops,
+        input,
+        candidates,
+        usedPlaceIds,
+        plan.id,
+        crossPlanUsedPlaceIds,
+      )
     : expandedStops
   const temporallyAlignedStops = allowCoverageRepair
     ? realignFoodStopsForMealWindows(deliveryStops, input)
@@ -1348,6 +1385,7 @@ async function repairPlanForDelivery(
         input,
         candidates,
         avoidedPlaceIds,
+        crossPlanUsedPlaceIds,
       )
     : { plan: postCoverageMealAlignment.plan, routesFailed: false }
   const finalMealAlignment = allowCoverageRepair
@@ -1359,6 +1397,7 @@ async function repairPlanForDelivery(
         input,
         candidates,
         avoidedPlaceIds,
+        crossPlanUsedPlaceIds,
       )
     : { plan: finalMealAlignment.plan, routesFailed: false }
   const finalPlan = normalizePlanTotalTime(finalTimingAlignment.plan)
@@ -1438,6 +1477,7 @@ async function realignPlanCandidatesAfterTiming(
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
   avoidedPlaceIds: Set<string>,
+  crossPlanUsedPlaceIds: Set<string>,
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
   let nextPlan = normalizePlanTotalTime(plan)
   let routesFailed = false
@@ -1449,6 +1489,7 @@ async function realignPlanCandidatesAfterTiming(
       input,
       candidates,
       avoidedPlaceIds,
+      crossPlanUsedPlaceIds,
       nextPlan.transportSegments,
     )
 
@@ -1532,9 +1573,11 @@ async function repairAndValidatePlanForDelivery(
   candidates: NearbyPlaceCandidates,
   avoidedPlaceIds: Set<string>,
   phase: string,
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
 ): Promise<{ plan: TripPlan | null; routesFailed: boolean; issues: string[] }> {
   const firstAttempt = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
     allowCoverageRepair: false,
+    crossPlanUsedPlaceIds,
   })
   const firstIssues = await getDeliveryPlanIssues(firstAttempt.plan, input, phase)
 
@@ -1552,6 +1595,7 @@ async function repairAndValidatePlanForDelivery(
 
   const coverageAttempt = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
     allowCoverageRepair: true,
+    crossPlanUsedPlaceIds,
   })
   const coverageIssues = await getDeliveryPlanIssues(
     coverageAttempt.plan,
@@ -1632,6 +1676,7 @@ async function repairAndValidatePlanForDelivery(
 
   const fallbackAttempt = await repairPlanForDelivery(plan, input, candidates, new Set(), {
     allowCoverageRepair: false,
+    crossPlanUsedPlaceIds,
   })
   const fallbackIssues = await getDeliveryPlanIssues(fallbackAttempt.plan, input, `${phase}-fallback`)
 
@@ -1952,26 +1997,92 @@ function estimateLocalFallbackBudget(stops: Stop[], input: GenerateTripPlansRequ
   return Math.max(300, Math.round(base * Math.max(1, people / 2)))
 }
 
+const SOFT_DIVERSITY_SCORE_TOLERANCE = 6
+const SOFT_DIVERSITY_DISTANCE_TOLERANCE_KM = 1.2
+
+export function pickSoftDiverseCandidate(
+  candidatePool: VerifiedPlaceCandidate[],
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
+  options: { preferredIndex?: number; scoreTolerance?: number; distanceToleranceKm?: number } = {},
+) {
+  const eligibleCandidates = candidatePool.filter(isSoftDiversityEligibleCandidate)
+  const topCandidate = pickRotatedItem(eligibleCandidates, options.preferredIndex ?? 0)
+  if (!topCandidate) return null
+  if (!crossPlanUsedPlaceIds.has(topCandidate.placeId)) return topCandidate
+
+  const scoreTolerance = options.scoreTolerance ?? SOFT_DIVERSITY_SCORE_TOLERANCE
+  const distanceToleranceKm =
+    options.distanceToleranceKm ?? SOFT_DIVERSITY_DISTANCE_TOLERANCE_KM
+  const alternative = eligibleCandidates.find(
+    (candidate) =>
+      candidate.placeId !== topCandidate.placeId &&
+      !crossPlanUsedPlaceIds.has(candidate.placeId) &&
+      isCandidateCloseEnoughForSoftDiversity(
+        candidate,
+        topCandidate,
+        scoreTolerance,
+        distanceToleranceKm,
+      ),
+  )
+
+  return alternative ?? topCandidate
+}
+
+function isSoftDiversityEligibleCandidate(candidate: VerifiedPlaceCandidate) {
+  return Boolean(candidate.placeId && candidate.openingHours?.isKnown && !candidate.openingHours.isNeverOpen)
+}
+
+function isCandidateCloseEnoughForSoftDiversity(
+  candidate: VerifiedPlaceCandidate,
+  topCandidate: VerifiedPlaceCandidate,
+  scoreTolerance: number,
+  distanceToleranceKm: number,
+) {
+  const candidateScore = candidate.score ?? 0
+  const topScore = topCandidate.score ?? 0
+  if (candidateScore < topScore - scoreTolerance) return false
+
+  if (
+    typeof candidate.distanceKm === 'number' &&
+    typeof topCandidate.distanceKm === 'number' &&
+    candidate.distanceKm > topCandidate.distanceKm + distanceToleranceKm
+  ) {
+    return false
+  }
+
+  return true
+}
+
 function ensureStopHasVerifiedPlace(
   stop: Stop,
   index: number,
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
   avoidedPlaceIds: Set<string> = new Set(),
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
 ) {
+  const existingCandidate = findMatchingCandidateForStop(stop, index, candidates)
   if (
     stop.placeId &&
     stop.address &&
     stop.googleMapsUrl &&
     !usedPlaceIds.has(stop.placeId) &&
-    !avoidedPlaceIds.has(stop.placeId)
+    !avoidedPlaceIds.has(stop.placeId) &&
+    !crossPlanUsedPlaceIds.has(stop.placeId)
   ) {
-    const existingCandidate = findMatchingCandidateForStop(stop, index, candidates)
     usedPlaceIds.add(stop.placeId)
     return existingCandidate ? applyCandidateToStop(stop, existingCandidate) : stop
   }
 
-  const candidate = pickCandidateForStop(stop, index, candidates, usedPlaceIds, avoidedPlaceIds)
+  const candidate = pickCandidateForStop(
+    stop,
+    index,
+    candidates,
+    usedPlaceIds,
+    avoidedPlaceIds,
+    crossPlanUsedPlaceIds,
+    existingCandidate,
+  )
   if (!candidate) return stop
 
   usedPlaceIds.add(candidate.placeId)
@@ -1984,13 +2095,16 @@ function pickCandidateForStop(
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
   avoidedPlaceIds: Set<string> = new Set(),
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
+  knownExistingCandidate?: VerifiedPlaceCandidate | null,
 ) {
-  const existingCandidate = findMatchingCandidateForStop(stop, index, candidates)
+  const existingCandidate = knownExistingCandidate ?? findMatchingCandidateForStop(stop, index, candidates)
 
   if (
     existingCandidate &&
     !usedPlaceIds.has(existingCandidate.placeId) &&
-    !avoidedPlaceIds.has(existingCandidate.placeId)
+    !avoidedPlaceIds.has(existingCandidate.placeId) &&
+    !crossPlanUsedPlaceIds.has(existingCandidate.placeId)
   ) {
     return existingCandidate
   }
@@ -2004,29 +2118,37 @@ function pickCandidateForStop(
         : candidates.allCandidates
       : getCandidatePoolByStopType(stop, candidates)
 
-  if (stop.type === 'food') {
+  const primaryPool = existingCandidate ? mergeCandidatePools([existingCandidate], pool) : pool
+  const primaryCandidate = pickSoftDiverseCandidate(
+    primaryPool.filter(
+      (candidate) => !usedPlaceIds.has(candidate.placeId) && !avoidedPlaceIds.has(candidate.placeId),
+    ),
+    crossPlanUsedPlaceIds,
+  )
+  if (primaryCandidate || stop.type === 'food') {
     return (
-      pool.find(
-        (candidate) =>
-          !usedPlaceIds.has(candidate.placeId) && !avoidedPlaceIds.has(candidate.placeId),
-      ) ??
-      pool.find((candidate) => !usedPlaceIds.has(candidate.placeId)) ??
-      null
+      primaryCandidate ??
+      pickSoftDiverseCandidate(
+        pool.filter((candidate) => !usedPlaceIds.has(candidate.placeId)),
+        crossPlanUsedPlaceIds,
+      )
     )
   }
 
   return (
-    pool.find(
-      (candidate) =>
-        !usedPlaceIds.has(candidate.placeId) && !avoidedPlaceIds.has(candidate.placeId),
+    primaryCandidate ??
+    pickSoftDiverseCandidate(
+      candidates.allCandidates.filter(
+        (candidate) =>
+          !usedPlaceIds.has(candidate.placeId) && !avoidedPlaceIds.has(candidate.placeId),
+      ),
+      crossPlanUsedPlaceIds,
     ) ??
-    candidates.allCandidates.find(
-      (candidate) =>
-        !usedPlaceIds.has(candidate.placeId) && !avoidedPlaceIds.has(candidate.placeId),
+    pickSoftDiverseCandidate(
+      pool.filter((candidate) => !usedPlaceIds.has(candidate.placeId)),
+      crossPlanUsedPlaceIds,
     ) ??
-    pool.find((candidate) => !usedPlaceIds.has(candidate.placeId)) ??
-    pool[0] ??
-    null
+    pickSoftDiverseCandidate(pool, crossPlanUsedPlaceIds)
   )
 }
 
@@ -2035,6 +2157,7 @@ function alignStopsWithCandidateAvailability(
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
   avoidedPlaceIds: Set<string>,
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
   transportSegments?: TripPlan['transportSegments'],
 ) {
   const usedPlaceIds = new Set<string>()
@@ -2071,6 +2194,7 @@ function alignStopsWithCandidateAvailability(
       candidates,
       usedPlaceIds,
       avoidedPlaceIds,
+      crossPlanUsedPlaceIds,
       requiredSlot,
       estimatedArrivalMinutes,
       estimatedDuration,
@@ -2111,6 +2235,7 @@ function pickCandidateForStopAvailabilitySlot(
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
   avoidedPlaceIds: Set<string>,
+  crossPlanUsedPlaceIds: Set<string>,
   requiredSlot: string,
   estimatedArrivalMinutes: number,
   estimatedDuration: number,
@@ -2130,16 +2255,19 @@ function pickCandidateForStopAvailabilitySlot(
   const pools = basePool === fallbackPool ? [basePool] : [basePool, fallbackPool]
 
   for (const pool of pools) {
-    const candidate = pool.find(
-      (item) =>
-        !usedPlaceIds.has(item.placeId) &&
-        !avoidedPlaceIds.has(item.placeId) &&
-        isCandidateAvailableForSchedule(
-          item,
-          requiredSlot,
-          estimatedArrivalMinutes,
-          estimatedDuration,
-        ),
+    const candidate = pickSoftDiverseCandidate(
+      pool.filter(
+        (item) =>
+          !usedPlaceIds.has(item.placeId) &&
+          !avoidedPlaceIds.has(item.placeId) &&
+          isCandidateAvailableForSchedule(
+            item,
+            requiredSlot,
+            estimatedArrivalMinutes,
+            estimatedDuration,
+          ),
+      ),
+      crossPlanUsedPlaceIds,
     )
     if (candidate) return candidate
   }
@@ -2246,6 +2374,7 @@ function ensureMealStopForTrip(
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
   planId?: string,
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
 ) {
   const nextStops = [...stops]
   const mealWindows = getRequiredMealWindows(input)
@@ -2255,7 +2384,13 @@ function ensureMealStopForTrip(
   if (missingMealWindows.length === 0) return nextStops
 
   for (const mealWindow of missingMealWindows) {
-    const foodCandidate = selectMealCandidate(candidates, usedPlaceIds, mealWindow, planId)
+    const foodCandidate = selectMealCandidate(
+      candidates,
+      usedPlaceIds,
+      mealWindow,
+      planId,
+      crossPlanUsedPlaceIds,
+    )
     if (!foodCandidate) continue
 
     usedPlaceIds.add(foodCandidate.placeId)
@@ -2330,6 +2465,7 @@ function selectMealCandidate(
   usedPlaceIds: Set<string>,
   mealWindow: RequiredMealWindow,
   planId?: string,
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
 ) {
   const foodCandidates = mergeCandidatePools(
     candidates.otherCandidates,
@@ -2352,9 +2488,12 @@ function selectMealCandidate(
       return (right.score ?? 0) - (left.score ?? 0)
     })
 
-  return pickRotatedItem(
+  return pickSoftDiverseCandidate(
     rankedCandidates.slice(0, Math.min(3, rankedCandidates.length)),
-    getPlanDisplayPriority(planId ?? '') + (mealWindow.id === 'dinner' ? 1 : 0),
+    crossPlanUsedPlaceIds,
+    {
+      preferredIndex: getPlanDisplayPriority(planId ?? '') + (mealWindow.id === 'dinner' ? 1 : 0),
+    },
   )
 }
 
@@ -2597,6 +2736,7 @@ function expandStopsForLongTrip(
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
   planId?: string,
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
 ) {
   const minimumMinutes = getMinimumRequiredActualMinutes(input)
   if (!minimumMinutes) return stops
@@ -2635,12 +2775,14 @@ function expandStopsForLongTrip(
         usedPlaceIds,
         estimatedArrivalMinutes,
         rotationOffset,
+        crossPlanUsedPlaceIds,
       ) ??
       selectSupplementalCandidate(
         allCandidatePool,
         usedPlaceIds,
         estimatedArrivalMinutes,
         rotationOffset,
+        crossPlanUsedPlaceIds,
       )
     if (!nextCandidate) break
 
@@ -2696,6 +2838,7 @@ export function selectSupplementalCandidate(
   usedPlaceIds: Set<string>,
   estimatedArrivalMinutes: number,
   rotationOffset = 0,
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
 ) {
   const unusedCandidates = candidatePool.filter((candidate) => {
     if (usedPlaceIds.has(candidate.placeId)) return false
@@ -2709,7 +2852,7 @@ export function selectSupplementalCandidate(
   const nonShortCandidates = unusedCandidates.filter((candidate) => !isShortVisitCandidate(candidate))
   const pool = nonShortCandidates.length > 0 ? nonShortCandidates : unusedCandidates
 
-  return pickRotatedItem(pool, rotationOffset)
+  return pickSoftDiverseCandidate(pool, crossPlanUsedPlaceIds, { preferredIndex: rotationOffset })
 }
 
 function buildSupplementalStopId(input: GenerateTripPlansRequest['input'], index: number) {
