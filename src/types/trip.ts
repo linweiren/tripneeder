@@ -27,6 +27,15 @@ export type PlanType = 'safe' | 'balanced' | 'explore'
 
 export type StopType = 'main_activity' | 'food' | 'ending_or_transition'
 
+export type CandidateRole =
+  | 'food'
+  | 'main_activity'
+  | 'open_space'
+  | 'shopping'
+  | 'short_visit'
+
+export type FoodSubtype = 'cafe' | 'dessert' | 'restaurant' | 'snack'
+
 export type TripLocation = {
   name: string
   lat?: number
@@ -57,6 +66,9 @@ export type Stop = {
   placeId?: string
   lat?: number
   lng?: number
+  googleTypes?: string[]
+  candidateRole?: CandidateRole
+  foodSubtype?: FoodSubtype
 }
 
 export type TransportSegment = {
@@ -76,6 +88,8 @@ export type VerifiedPlaceCandidate = {
   distanceKm?: number
   rating?: number
   types?: string[]
+  role?: CandidateRole
+  foodSubtype?: FoodSubtype
   lat?: number
   lng?: number
 }

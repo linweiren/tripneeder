@@ -3,6 +3,11 @@
 import https from 'node:https'
 import type { TripPlan, Stop, TripInput } from '../../src/types/trip.js'
 import type { GenerateTripPlansRequest, Persona } from '../../src/services/ai/types.js'
+import type { PreferenceProfile } from '../../src/services/personalization/preferenceProfile.js'
+import {
+  getPersonalizedCandidateScore,
+  type PersonalizationCandidateBoost,
+} from './personalization-candidate-boost.js'
 
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY
 const SEARCH_TEXT_URL = 'https://places.googleapis.com/v1/places:searchText'
@@ -168,6 +173,13 @@ export type NearbyPlaceCandidates = {
   allCandidates: VerifiedPlaceCandidate[]
 }
 
+export type CandidatePersonalizationDebug = {
+  baseScore: number
+  boost: number
+  finalScore: number
+  matchedSignals: string[]
+}
+
 export type CandidateDebugPlace = {
   name: string
   placeId: string | null
@@ -183,6 +195,11 @@ export type CandidateDebugPlace = {
   excluded: boolean
   exclusionReason: string | null
   firstStopRejectionReason: string | null
+  personalization?: CandidatePersonalizationDebug | null
+}
+
+export type CandidatePersonalizationOptions = {
+  preferenceProfile?: PreferenceProfile | null
 }
 
 export type CandidateSearchQueryPlanDebug = {
@@ -304,6 +321,7 @@ export async function getNearbyRecommendations(request: GenerateTripPlansRequest
 export async function getNearbyPlaceCandidates(
   request: GenerateTripPlansRequest,
   debugSink?: CandidateSearchDebugSink,
+  options: CandidatePersonalizationOptions = {},
 ): Promise<NearbyPlaceCandidates> {
   if (!GOOGLE_PLACES_API_KEY) {
     return { firstStopCandidates: [], otherCandidates: [], allCandidates: [] }
@@ -340,7 +358,7 @@ export async function getNearbyPlaceCandidates(
     }
 
     const tripWindow = buildTripWindow(input)
-    let candidates = prepareCandidates(places, input, tripWindow, lat, lng, debugSink)
+    let candidates = prepareCandidates(places, input, tripWindow, lat, lng, debugSink, options)
     const candidateGaps = getCandidateGaps(candidates, input)
     const gapQueries = buildCandidateGapSearchQueries(input, request.persona, candidateGaps)
 
@@ -374,7 +392,7 @@ export async function getNearbyPlaceCandidates(
 
       if (newPlaces.length > 0) {
         places = dedupePlaces([...places, ...newPlaces])
-        candidates = prepareCandidates(places, input, tripWindow, lat, lng, debugSink)
+        candidates = prepareCandidates(places, input, tripWindow, lat, lng, debugSink, options)
       }
     }
 
@@ -411,7 +429,7 @@ export async function getNearbyPlaceCandidates(
 
         if (firstStopGapPlaces.length > 0) {
           places = dedupePlaces([...places, ...firstStopGapPlaces])
-          candidates = prepareCandidates(places, input, tripWindow, lat, lng, debugSink)
+          candidates = prepareCandidates(places, input, tripWindow, lat, lng, debugSink, options)
         }
       }
     }
@@ -450,6 +468,7 @@ function prepareCandidates(
   lat?: number,
   lng?: number,
   debugSink?: CandidateSearchDebugSink,
+  options: CandidatePersonalizationOptions = {},
 ) {
   const debugCandidates: CandidateDebugPlace[] = []
   const candidates = places.flatMap((place) => {
@@ -465,9 +484,21 @@ function prepareCandidates(
       return []
     }
 
-    const scoredCandidate = scoreCandidate(addAvailabilitySlots(candidate, tripWindow), input)
-    debugCandidates.push(toCandidateDebugPlace(scoredCandidate, false, null, tripWindow))
-    return [scoredCandidate]
+    const scored = scoreCandidate(
+      addAvailabilitySlots(candidate, tripWindow),
+      input,
+      options.preferenceProfile,
+    )
+    debugCandidates.push(
+      toCandidateDebugPlace(
+        scored.candidate,
+        false,
+        null,
+        tripWindow,
+        scored.personalization,
+      ),
+    )
+    return [scored.candidate]
   }).sort(compareCandidates)
 
   debugSink?.recordCandidatePool({
@@ -535,6 +566,7 @@ function toCandidateDebugPlace(
   excluded: boolean,
   exclusionReason: string | null,
   tripWindow?: ReturnType<typeof buildTripWindow>,
+  personalization?: CandidatePersonalizationDebug | null,
 ): CandidateDebugPlace {
   return {
     name: candidate.name,
@@ -551,6 +583,7 @@ function toCandidateDebugPlace(
     excluded,
     exclusionReason,
     firstStopRejectionReason: getFirstStopRejectionReason(candidate, tripWindow),
+    personalization: personalization ?? null,
   }
 }
 
@@ -1503,7 +1536,27 @@ export function isCandidateOpenForVisit(
 function scoreCandidate(
   candidate: VerifiedPlaceCandidate,
   input: TripInput,
-): VerifiedPlaceCandidate {
+  preferenceProfile?: PreferenceProfile | null,
+): { candidate: VerifiedPlaceCandidate; personalization: CandidatePersonalizationDebug | null } {
+  const baseScore = calculateBaseCandidateScore(candidate, input)
+  const personalized = getPersonalizedCandidateScore(baseScore, candidate, preferenceProfile)
+  const personalization = preferenceProfile?.sampleCount
+    ? buildCandidatePersonalizationDebug(baseScore, personalized.boost, personalized.finalScore)
+    : null
+
+  return {
+    candidate: {
+      ...candidate,
+      score: personalized.finalScore,
+    },
+    personalization,
+  }
+}
+
+function calculateBaseCandidateScore(
+  candidate: VerifiedPlaceCandidate,
+  input: TripInput,
+) {
   const distanceKm = candidate.distanceKm ?? MAIN_CANDIDATE_MAX_DISTANCE_KM
   const rating = candidate.rating ?? 4
   const role = candidate.role ?? 'main_activity'
@@ -1530,9 +1583,19 @@ function scoreCandidate(
   }
   if (isShortVisitCandidatePlace(candidate.name, candidate.address)) score -= 30
 
+  return Math.round(score * 10) / 10
+}
+
+function buildCandidatePersonalizationDebug(
+  baseScore: number,
+  boost: PersonalizationCandidateBoost,
+  finalScore: number,
+): CandidatePersonalizationDebug {
   return {
-    ...candidate,
-    score: Math.round(score * 10) / 10,
+    baseScore: Math.round(baseScore * 10) / 10,
+    boost: boost.bonus,
+    finalScore,
+    matchedSignals: [...boost.matchedSignals],
   }
 }
 

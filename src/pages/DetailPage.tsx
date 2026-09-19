@@ -66,6 +66,11 @@ import {
   syncUpdatedTripRecordPlan,
   updateStoredTripRecordById,
 } from '../services/tripRecords/tripRecordService'
+import {
+  buildFavoritePlanPersonalizationEvent,
+  buildStopPersonalizationEvent,
+  recordPersonalizationEvent,
+} from '../services/personalization/personalizationEventsService'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import type { PlanDetailSource } from '../contexts/analysisSession'
 import { useAuth } from '../contexts/auth'
@@ -303,6 +308,9 @@ export function DetailPage() {
             googleMapsUrl: candidate.googleMapsUrl,
             lat: candidate.lat,
             lng: candidate.lng,
+            googleTypes: candidate.types,
+            candidateRole: candidate.role,
+            foodSubtype: candidate.foodSubtype,
           }
         }
         return s
@@ -735,6 +743,14 @@ export function DetailPage() {
       setIsSavingFavorite(true)
       setHasSavedFavorite(true)
       await saveFavoriteRecord(snapshotPlan, lastInput, user.id)
+      void recordPersonalizationEvent(
+        buildFavoritePlanPersonalizationEvent({
+          userId: user.id,
+          plan: snapshotPlan,
+          inputCategory: lastInput?.category ?? null,
+          inputTags: lastInput?.tags ?? null,
+        }),
+      )
       setFavoriteRevision((current) => current + 1)
     } catch (error) {
       setHasSavedFavorite(await isFavoriteRecord(snapshotPlan, user.id))
@@ -747,6 +763,24 @@ export function DetailPage() {
     } finally {
       setIsSavingFavorite(false)
     }
+  }
+
+  function trackStopPersonalizationEvent(
+    eventType: 'open_maps' | 'start_navigation',
+    stop: Stop,
+  ) {
+    if (!user || !selectedPlan) return
+
+    void recordPersonalizationEvent(
+      buildStopPersonalizationEvent({
+        userId: user.id,
+        eventType,
+        stop,
+        plan: selectedPlan,
+        inputCategory: lastInput?.category ?? null,
+        inputTags: lastInput?.tags ?? null,
+      }),
+    )
   }
 
   async function applySingleSegmentTransportMode(
@@ -1066,6 +1100,7 @@ export function DetailPage() {
                         href={mapsUrl}
                         target="_blank"
                         rel="noreferrer"
+                        onClick={() => trackStopPersonalizationEvent('open_maps', stop)}
                       >
                         <MapPinned aria-hidden="true" />
                         開啟地圖
@@ -1082,6 +1117,7 @@ export function DetailPage() {
                         href={directionsUrl}
                         target="_blank"
                         rel="noreferrer"
+                        onClick={() => trackStopPersonalizationEvent('start_navigation', stop)}
                       >
                         <Navigation aria-hidden="true" />
                         開始導航

@@ -30,6 +30,7 @@ import {
   createTripCandidateDebugSession,
   writeTripCandidateDebugReport,
 } from './_lib/trip-candidate-debug.js'
+import { loadServerPreferenceProfile } from './_lib/server-personalization-profile.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
 import {
   PLAN_IDS,
@@ -126,6 +127,12 @@ type PointsSupabaseClient = {
     select: (columns: string) => {
       eq: (column: string, value: unknown) => {
         single: () => Promise<{ data: DbPersona | null; error: { message: string } | null }>
+        order: (column: string, options: { ascending: boolean }) => {
+          limit: (count: number) => Promise<{
+            data: Record<string, unknown>[] | null
+            error: { message: string } | null
+          }>
+        }
       }
     }
   }
@@ -242,6 +249,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // 獲取並合併人設
   const persona = await getMergedPersona(supabase, userId, request.input)
+  const preferenceProfile = await loadServerPreferenceProfile(supabase, userId)
 
   // 9D-7: 智慧前置搜尋 (Search-Inject)
   if (!request.input.location.lat || !request.input.location.lng) {
@@ -265,7 +273,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const nearbyPlaceCandidates = await getNearbyPlaceCandidates({
     ...request,
     persona,
-  }, candidateDebugSession ?? undefined)
+  }, candidateDebugSession ?? undefined, { preferenceProfile })
   candidateDebugSession?.recordCandidateSets(nearbyPlaceCandidates)
   candidateDebugSession?.recordAiInput(getPromptCandidateSelection(nearbyPlaceCandidates))
   const nearbyPlaces = formatNearbyRecommendations(nearbyPlaceCandidates)
@@ -2041,6 +2049,9 @@ function buildLocalFallbackStop(
     placeId: candidate.placeId,
     lat: candidate.lat,
     lng: candidate.lng,
+    googleTypes: candidate.types,
+    candidateRole: candidate.role,
+    foodSubtype: candidate.foodSubtype,
   }
 }
 
@@ -2814,6 +2825,9 @@ function applyCandidateToStop(stop: Stop, candidate: VerifiedPlaceCandidate): St
     googleMapsUrl: candidate.googleMapsUrl,
     lat: candidate.lat,
     lng: candidate.lng,
+    googleTypes: candidate.types,
+    candidateRole: candidate.role,
+    foodSubtype: candidate.foodSubtype,
   }
 }
 
