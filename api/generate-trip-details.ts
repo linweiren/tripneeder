@@ -224,6 +224,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           googleMapsUrl: originalStop.googleMapsUrl,
           lat: originalStop.lat,
           lng: originalStop.lng,
+          googleTypes: originalStop.googleTypes,
+          candidateRole: originalStop.candidateRole,
+          foodSubtype: originalStop.foodSubtype,
           // 如果 AI 補完細節後名稱或地址變空泛了，可以用回第一階段 Google 驗證過的正式名稱
           name: originalStop.name,
           address: originalStop.address,
@@ -307,7 +310,7 @@ async function validateRainBackupWithPlaces(
   )
   const indoorRainBackup = validRainBackup.filter((stop) =>
     isStopGroundedInRainCandidates(stop, rainCandidates),
-  )
+  ).map((stop) => applyRainCandidateMetadata(stop, rainCandidates))
   const dedupedRainBackup = dedupeRainBackupStops(indoorRainBackup)
   const repairedRainBackup = repairRainBackupStops(
     dedupedRainBackup,
@@ -543,6 +546,9 @@ function buildRainBackupStop(
     placeId: candidate.placeId,
     lat: candidate.lat,
     lng: candidate.lng,
+    googleTypes: candidate.types,
+    candidateRole: candidate.role,
+    foodSubtype: candidate.foodSubtype,
   }
 }
 
@@ -555,6 +561,21 @@ function getRainBackupCandidateKey(candidate: VerifiedPlaceCandidate) {
     candidate.placeId.trim() ||
     `${normalizeRainBackupText(candidate.name)}|${normalizeRainBackupText(candidate.address)}`
   )
+}
+
+function applyRainCandidateMetadata(stop: Stop, candidates: VerifiedPlaceCandidate[]): Stop {
+  const candidate = candidates.find(
+    (item) => getRainBackupCandidateKey(item) === getRainBackupStopKey(stop),
+  )
+
+  if (!candidate) return stop
+
+  return {
+    ...stop,
+    googleTypes: candidate.types,
+    candidateRole: candidate.role,
+    foodSubtype: candidate.foodSubtype,
+  }
 }
 
 function isStopGroundedInRainCandidates(
@@ -694,6 +715,9 @@ function preserveMainStopIdentity(plan: TripPlan, originalPlan: TripPlan): TripP
         googleMapsUrl: originalStop.googleMapsUrl,
         lat: originalStop.lat,
         lng: originalStop.lng,
+        googleTypes: originalStop.googleTypes,
+        candidateRole: originalStop.candidateRole,
+        foodSubtype: originalStop.foodSubtype,
       }
     }),
     // 確保 rainBackup 與其餘欄位也被包含
