@@ -1,4 +1,5 @@
 import type { PreferenceProfile, PreferenceScoreMap } from '../../src/services/personalization/preferenceProfile.js'
+import { normalizePersonalizationGoogleTypes } from '../../src/services/personalization/googleTypeNormalization.js'
 import type { VerifiedPlaceCandidate } from './google-places.js'
 
 export type PersonalizationCandidateBoost = {
@@ -11,7 +12,8 @@ export type PersonalizationCandidateBoost = {
 const MAX_PERSONALIZATION_BOOST = 3
 const FULL_CONFIDENCE_SAMPLE_COUNT = 15
 const PROFILE_SCORE_SATURATION = 8
-const MAX_GOOGLE_TYPE_MATCHES = 3
+const MAX_GOOGLE_TYPE_MATCHES = 2
+const SECOND_GOOGLE_TYPE_MATCH_WEIGHT = 0.5
 const BOOST_DECIMALS = 2
 
 const SIGNAL_WEIGHTS = {
@@ -98,10 +100,10 @@ function getGoogleTypeSignal(
   scores: PreferenceScoreMap,
   matchedSignals: string[],
 ) {
-  const matches = uniqueStrings(types)
-    .map((type) => ({ type, score: scores[type] ?? 0 }))
-    .filter((match) => match.score > 0)
-    .sort((left, right) => right.score - left.score || left.type.localeCompare(right.type))
+  const matches = normalizePersonalizationGoogleTypes(types)
+    .map((type) => ({ type, signal: saturateScore(scores[type] ?? 0) }))
+    .filter((match) => match.signal > 0)
+    .sort((left, right) => right.signal - left.signal || left.type.localeCompare(right.type))
     .slice(0, MAX_GOOGLE_TYPE_MATCHES)
 
   if (matches.length === 0) return 0
@@ -110,8 +112,10 @@ function getGoogleTypeSignal(
     matchedSignals.push(`googleType:${match.type}`)
   }
 
-  const averageScore = matches.reduce((sum, match) => sum + match.score, 0) / matches.length
-  return saturateScore(averageScore)
+  // Only exact matches contribute; a second match adds evidence within the remaining headroom.
+  const s1 = matches[0].signal
+  const s2 = matches[1]?.signal ?? 0
+  return s1 + SECOND_GOOGLE_TYPE_MATCH_WEIGHT * s2 * (1 - s1)
 }
 
 function getSingleSignal(
@@ -136,11 +140,6 @@ function inferCandidateStopType(candidate: VerifiedPlaceCandidate) {
 function saturateScore(score: number) {
   if (!Number.isFinite(score) || score <= 0) return 0
   return score / (score + PROFILE_SCORE_SATURATION)
-}
-
-function uniqueStrings(values: readonly string[] | null | undefined) {
-  if (!values) return []
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
 }
 
 function roundBoost(value: number) {

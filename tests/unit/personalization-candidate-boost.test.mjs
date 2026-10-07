@@ -83,7 +83,7 @@ test('matching many googleTypes does not multiply without bound', () => {
   assert.ok(boost.bonus < 1.5)
   assert.equal(
     boost.matchedSignals.filter((signal) => signal.startsWith('googleType:')).length,
-    3,
+    2,
   )
 })
 
@@ -153,6 +153,160 @@ test('candidate boost is deterministic', () => {
     getPersonalizationCandidateBoost(candidate, profile),
   )
 })
+
+test('concentrated Thai history distinguishes Thai from unseen Japanese with identical base metadata', () => {
+  for (const genericPrefix of [[], ['establishment', 'point_of_interest', 'food', 'store']]) {
+    const profile = googleOnlyHistory(Array.from({ length: 15 }, () => [
+      ...genericPrefix, 'thai_restaurant', 'restaurant',
+    ]))
+    const thai = googleOnlyCandidate(['thai_restaurant', 'restaurant'])
+    const japanese = googleOnlyCandidate(['japanese_restaurant', 'restaurant'])
+    const thaiResult = getPersonalizedCandidateScore(90, thai, profile)
+    const japaneseResult = getPersonalizedCandidateScore(90, japanese, profile)
+
+    assert.equal(profile.googleTypeScores.thai_restaurant, 15)
+    assert.equal(profile.googleTypeScores.restaurant, 15)
+    assert.ok(thaiResult.boost.bonus > japaneseResult.boost.bonus)
+    assert.ok(thaiResult.finalScore > japaneseResult.finalScore)
+    assert.ok(japaneseResult.boost.bonus > 0, 'restaurant retains a soft fallback')
+    assert.ok(!japaneseResult.boost.matchedSignals.includes('googleType:japanese_restaurant'))
+  }
+})
+
+test('generic-only Google types are neutral even in a legacy profile', () => {
+  const genericTypes = ['establishment', 'point_of_interest', 'food', 'store']
+  const profile = googleOnlyHistory(Array.from({ length: 15 }, () => genericTypes))
+  const legacyProfile = {
+    ...profile,
+    googleTypeScores: Object.fromEntries(genericTypes.map((type) => [type, 999])),
+  }
+  const candidate = googleOnlyCandidate(genericTypes)
+  const originalTypes = [...candidate.types]
+
+  assert.deepEqual(profile.googleTypeScores, {})
+  for (const currentProfile of [profile, legacyProfile]) {
+    const result = getPersonalizedCandidateScore(90, candidate, currentProfile)
+    assert.equal(result.boost.bonus, 0)
+    assert.deepEqual(result.boost.matchedSignals, [])
+    assert.equal(result.finalScore, 90)
+  }
+  assert.deepEqual(candidate.types, originalTypes)
+})
+
+test('restaurant-only history preserves coarse soft influence for both coarse and fine candidates', () => {
+  const profile = googleOnlyHistory(Array.from({ length: 15 }, () => ['restaurant']))
+  const coarse = getPersonalizationCandidateBoost(googleOnlyCandidate(['restaurant']), profile)
+  const fine = getPersonalizationCandidateBoost(
+    googleOnlyCandidate(['japanese_restaurant', 'restaurant']), profile,
+  )
+
+  assert.equal(coarse.bonus, 1.07)
+  assert.equal(fine.bonus, coarse.bonus)
+})
+
+test('fine plus coarse matches and an additional weaker fine match never dilute the signal', () => {
+  for (const restaurantScore of [1, 100]) {
+    const profile = {
+      ...googleOnlyHistory(Array.from({ length: 15 }, () => ['thai_restaurant', 'restaurant'])),
+      googleTypeScores: { thai_restaurant: 15, restaurant: restaurantScore, seafood_restaurant: 1 },
+    }
+    const fine = getPersonalizationCandidateBoost(googleOnlyCandidate(['thai_restaurant']), profile)
+    const fineCoarse = getPersonalizationCandidateBoost(
+      googleOnlyCandidate(['thai_restaurant', 'restaurant']), profile,
+    )
+    const additionalFine = getPersonalizationCandidateBoost(
+      googleOnlyCandidate(['thai_restaurant', 'restaurant', 'seafood_restaurant']), profile,
+    )
+    const coarse = getPersonalizationCandidateBoost(googleOnlyCandidate(['restaurant']), profile)
+
+    assert.ok(fineCoarse.bonus >= fine.bonus)
+    assert.ok(additionalFine.bonus >= fineCoarse.bonus)
+    assert.ok(fineCoarse.bonus >= coarse.bonus)
+  }
+})
+
+test('an unseen subtype alone has zero bonus and leaves the base score intact', () => {
+  const profile = googleOnlyHistory(Array.from({ length: 15 }, () => ['thai_restaurant', 'restaurant']))
+  const result = getPersonalizedCandidateScore(90, googleOnlyCandidate(['japanese_restaurant']), profile)
+
+  assert.equal(result.boost.bonus, 0)
+  assert.equal(result.finalScore, 90)
+  assert.deepEqual(result.boost.matchedSignals, [])
+})
+
+test('missing and empty candidate metadata safely yield a neutral Google signal', () => {
+  const profile = googleOnlyHistory(Array.from({ length: 15 }, () => ['thai_restaurant', 'restaurant']))
+  for (const types of [undefined, null, [], ['', '  ']]) {
+    const result = getPersonalizedCandidateScore(90, googleOnlyCandidate(types), profile)
+    assert.equal(result.boost.bonus, 0)
+    assert.equal(result.finalScore, 90)
+  }
+})
+
+test('mixed Thai and art museum history gives both interests a bounded soft bonus', () => {
+  const profile = googleOnlyHistory([
+    ...Array.from({ length: 8 }, () => ['thai_restaurant', 'restaurant']),
+    ...Array.from({ length: 7 }, () => ['art_museum', 'museum']),
+  ])
+  const thai = getPersonalizationCandidateBoost(
+    googleOnlyCandidate(['thai_restaurant', 'restaurant']), profile,
+  )
+  const art = getPersonalizationCandidateBoost(googleOnlyCandidate(['art_museum', 'museum']), profile)
+  const museum = getPersonalizationCandidateBoost(googleOnlyCandidate(['museum']), profile)
+
+  for (const boost of [thai, art]) {
+    assert.ok(boost.bonus > 0)
+    assert.ok(boost.bonus <= getPersonalizationBoostCap())
+  }
+  assert.ok(art.bonus > museum.bonus)
+  assert.ok(thai.matchedSignals.includes('googleType:thai_restaurant'))
+  assert.ok(art.matchedSignals.includes('googleType:art_museum'))
+})
+
+test('Top-2 exact matching stays monotone, bounded, and ignores extra weaker or unseen types', () => {
+  const scoreValues = [0, 0.01, 0.1, 1, 8, 15, 30, 60, 999]
+  for (const firstScore of scoreValues) {
+    for (const secondScore of scoreValues) {
+      const profile = {
+        ...googleOnlyHistory(Array.from({ length: 15 }, () => ['cafe'])),
+        googleTypeScores: {
+          cafe: firstScore,
+          bakery: secondScore,
+          dessert_shop: Math.min(firstScore, secondScore),
+        },
+      }
+      const boost = (types) => getPersonalizationCandidateBoost(googleOnlyCandidate(types), profile)
+      const single = boost(['cafe'])
+      const pair = boost(['cafe', 'bakery'])
+      const triple = boost(['cafe', 'bakery', 'dessert_shop'])
+      const noisyMetadata = boost([
+        ' cafe ', 'bakery', 'cafe', 'dessert_shop', 'unseen_type',
+        'establishment', 'point_of_interest', 'food', 'store',
+      ])
+
+      assert.ok(pair.bonus >= single.bonus)
+      assert.ok(pair.bonus >= 0 && pair.bonus <= 1.35)
+      assert.ok(pair.rawSignal >= 0 && pair.rawSignal <= 0.45)
+      assert.equal(triple.bonus, pair.bonus)
+      assert.equal(triple.rawSignal, pair.rawSignal)
+      assert.deepEqual(noisyMetadata, triple)
+      assert.ok(pair.matchedSignals.length <= 2)
+    }
+  }
+})
+
+function googleOnlyCandidate(types) {
+  return makeCandidate({ types, role: undefined, foodSubtype: undefined })
+}
+
+function googleOnlyHistory(typeLists) {
+  return buildPreferenceProfile(typeLists.map((googleTypes, index) => ({
+    eventType: 'start_navigation',
+    placeId: `place-${index}`,
+    googleTypes,
+    createdAt: '2026-09-18T12:00:00.000Z',
+  })), { referenceTime: '2026-09-18T12:00:00.000Z' })
+}
 
 function makeCandidate(overrides = {}) {
   return {
