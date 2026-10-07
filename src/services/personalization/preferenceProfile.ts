@@ -6,6 +6,7 @@ import type {
   TripCategory,
   TripTag,
 } from '../../types/trip'
+import { normalizePersonalizationGoogleTypes } from './googleTypeNormalization.js'
 
 export type PreferenceProfileEventType = 'open_maps' | 'start_navigation' | 'favorite_plan'
 
@@ -167,7 +168,7 @@ function addStopSignals(
     addScore(profile.foodSubtypeScores, stop.foodSubtype, weight)
   }
 
-  const googleTypes = uniqueStrings(stop.googleTypes).slice(0, MAX_GOOGLE_TYPES_PER_EVENT)
+  const googleTypes = normalizePersonalizationGoogleTypes(stop.googleTypes).slice(0, MAX_GOOGLE_TYPES_PER_EVENT)
   for (const googleType of googleTypes) {
     addScore(profile.googleTypeScores, googleType, weight / googleTypes.length)
   }

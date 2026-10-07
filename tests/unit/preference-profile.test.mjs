@@ -135,6 +135,47 @@ test('same events produce the same profile', () => {
   )
 })
 
+test('generic Google types are removed before deduplication, the type cap, and weight splitting', () => {
+  const event = stopEvent('start_navigation', 'thai', 'Thai Restaurant', [
+    'establishment', 'point_of_interest', 'food', 'store',
+    ' thai_restaurant ', 'thai_restaurant', 'restaurant',
+  ], NOW)
+  const original = structuredClone(event)
+  const profile = buildPreferenceProfile([event], { referenceTime: NOW })
+
+  assert.deepEqual(profile.googleTypeScores, { thai_restaurant: 1, restaurant: 1 })
+  assert.equal(profile.candidateRoleScores.food, 2)
+  assert.equal(profile.foodSubtypeScores.cafe, 2)
+  assert.equal(profile.stopTypeScores.food, 2)
+  assert.deepEqual(event, original, 'event storage metadata is not normalized in place')
+})
+
+test('generic-only stop and favorite metadata stay neutral only for Google type scores', () => {
+  const genericTypes = ['establishment', 'point_of_interest', 'food', 'store']
+  const events = [
+    stopEvent('open_maps', 'generic', 'Generic Stop', genericTypes, NOW),
+    {
+      eventType: 'favorite_plan',
+      inputCategory: 'food',
+      inputTags: ['food'],
+      createdAt: NOW,
+      eventSnapshot: {
+        stops: [{ ...favoriteStop('favorite', 'Favorite'), googleTypes: genericTypes }],
+      },
+    },
+  ]
+  const original = structuredClone(events)
+  const profile = buildPreferenceProfile(events, { referenceTime: NOW })
+
+  assert.deepEqual(profile.googleTypeScores, {})
+  assert.equal(profile.sampleCount, 2)
+  assert.equal(profile.candidateRoleScores.food, 4)
+  assert.equal(profile.foodSubtypeScores.cafe, 4)
+  assert.equal(profile.stopTypeScores.food, 4)
+  assert.equal(profile.tagScores.food, 3, 'generic filtering must not affect non-Google signals')
+  assert.deepEqual(events, original)
+})
+
 function stopEvent(eventType, placeId, placeName, googleTypes, createdAt) {
   return {
     eventType,
