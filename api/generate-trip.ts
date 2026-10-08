@@ -57,10 +57,8 @@ import {
   estimateTransportTotal,
   getDefaultStopDuration,
   getMaximumStopDuration,
-  getMinimumStopCountForLongTrip,
   getMinimumStopDuration,
   getPlanActualDuration,
-  getReasonablePlanDuration,
   getStopStretchWeight,
 } from './_lib/trip-plan-metrics.js'
 import {
@@ -1301,7 +1299,7 @@ async function validateStopsWithPlanningTimeline(
   }
 }
 
-async function repairPlanForDelivery(
+export async function repairPlanForDelivery(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
@@ -1331,21 +1329,44 @@ async function repairPlanForDelivery(
         plan.transportSegments,
       )
     : repairedStops
+  // Candidate replacement invalidates the old route. Resolve it before judging coverage.
+  const initialRouteRepair = await repairTransportSegments(
+    plan.transportSegments, scheduleAlignedStops, plan.transportMode,
+  )
+  const routedPlan = normalizePlanTotalTime({
+    ...plan, stops: scheduleAlignedStops, transportSegments: initialRouteRepair.segments,
+  })
+  const capacity = getScheduleCapacityMinutes(input)
+  const startedWithOverflow = Boolean(capacity && getPlanActualDuration(routedPlan) > capacity)
+  const initialCapacityRepair = allowCoverageRepair
+    ? await trimPlanToTimeWindow(shrinkPlanDurationToScheduleCapacity(routedPlan, input), input)
+    : { plan: routedPlan, routesFailed: false }
+  const canAddStops = allowCoverageRepair && !startedWithOverflow && !initialRouteRepair.routesFailed &&
+    initialCapacityRepair.plan.stops.length === scheduleAlignedStops.length
   usedPlaceIds.clear()
-  scheduleAlignedStops.forEach((stop) => {
+  initialCapacityRepair.plan.stops.forEach((stop) => {
     if (stop.placeId) usedPlaceIds.add(stop.placeId)
   })
-  const expandedStops = allowCoverageRepair
-    ? expandStopsForLongTrip(
-        scheduleAlignedStops,
+  const expansionResult = canAddStops
+    ? await expandStopsForLongTrip(
+        initialCapacityRepair.plan.stops,
         input,
         candidates,
         usedPlaceIds,
         plan.id,
         crossPlanUsedPlaceIds,
+        initialCapacityRepair.plan.transportSegments,
+        plan.transportMode,
       )
-    : scheduleAlignedStops
-  const deliveryStops = allowCoverageRepair
+    : {
+        stops: initialCapacityRepair.plan.stops,
+        segments: initialCapacityRepair.plan.transportSegments,
+        routesFailed: false,
+      }
+  const expandedStops = expansionResult.stops
+  const expandedMinutes = stopsDuration(expandedStops) +
+    expansionResult.segments.reduce((total, segment) => total + segment.duration, 0)
+  const deliveryStops = canAddStops && !expansionResult.routesFailed && (!capacity || expandedMinutes < capacity)
     ? ensureMealStopForTrip(
         expandedStops,
         input,
@@ -1353,16 +1374,22 @@ async function repairPlanForDelivery(
         usedPlaceIds,
         plan.id,
         crossPlanUsedPlaceIds,
+        expansionResult.segments,
       )
     : expandedStops
   const temporallyAlignedStops = allowCoverageRepair
-    ? realignFoodStopsForMealWindows(deliveryStops, input)
+    ? realignFoodStopsForMealWindows(
+        deliveryStops, input,
+        haveStopOrderChanged(expandedStops, deliveryStops) ? undefined : expansionResult.segments,
+      )
     : deliveryStops
-  const { segments: repairedSegments, routesFailed } = await repairTransportSegments(
-    plan.transportSegments,
-    temporallyAlignedStops,
-    plan.transportMode,
+  const { segments: repairedSegments, routesFailed } = haveStopRouteEndpointsChanged(
+    expandedStops, temporallyAlignedStops,
   )
+    ? await repairTransportSegments(
+        expansionResult.segments, temporallyAlignedStops, plan.transportMode,
+      )
+    : expansionResult
   const repairedRainBackup = (plan.rainBackup ?? []).map((stop, index) =>
     ensureStopHasVerifiedPlace(stop, index, candidates, usedPlaceIds),
   )
@@ -1384,9 +1411,10 @@ async function repairPlanForDelivery(
   const capacityRepairedPlan = allowCoverageRepair
     ? shrinkPlanDurationToScheduleCapacity(coverageRepairedPlan, input)
     : coverageRepairedPlan
-  const trimmedPlan = allowCoverageRepair
+  const trimResult = allowCoverageRepair
     ? await trimPlanToTimeWindow(capacityRepairedPlan, input)
-    : coverageRepairedPlan
+    : { plan: coverageRepairedPlan, routesFailed: false }
+  const trimmedPlan = trimResult.plan
   const postCoverageMealAlignment = allowCoverageRepair
     ? await realignPlanMealsAfterTiming(trimmedPlan, input)
     : { plan: trimmedPlan, routesFailed: false }
@@ -1411,7 +1439,13 @@ async function repairPlanForDelivery(
         crossPlanUsedPlaceIds,
       )
     : { plan: finalMealAlignment.plan, routesFailed: false }
-  const finalPlan = normalizePlanTotalTime(finalTimingAlignment.plan)
+  // No additions or reordering may run after this capacity pass.
+  const finalCapacityRepair = allowCoverageRepair
+    ? await trimPlanToTimeWindow(
+        shrinkPlanDurationToScheduleCapacity(finalTimingAlignment.plan, input), input,
+      )
+    : { plan: finalTimingAlignment.plan, routesFailed: false }
+  const finalPlan = normalizePlanTotalTime(finalCapacityRepair.plan)
 
   if (allowCoverageRepair) {
     const coveragePayload = {
@@ -1436,6 +1470,11 @@ async function repairPlanForDelivery(
     },
     routesFailed:
       routesFailed ||
+      initialRouteRepair.routesFailed ||
+      expansionResult.routesFailed ||
+      initialCapacityRepair.routesFailed ||
+      trimResult.routesFailed ||
+      finalCapacityRepair.routesFailed ||
       postCoverageMealAlignment.routesFailed ||
       postTimingAlignment.routesFailed ||
       finalMealAlignment.routesFailed ||
@@ -1443,11 +1482,11 @@ async function repairPlanForDelivery(
   }
 }
 
-async function realignPlanMealsAfterTiming(
+export async function realignPlanMealsAfterTiming(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
-  const alignedStops = realignFoodStopsForMealWindows(plan.stops, input)
+  const alignedStops = realignFoodStopsForMealWindows(plan.stops, input, plan.transportSegments)
   if (!haveStopOrderChanged(plan.stops, alignedStops)) {
     return { plan, routesFailed: false }
   }
@@ -1457,11 +1496,9 @@ async function realignPlanMealsAfterTiming(
     alignedStops,
     plan.transportMode,
   )
-  const alignedPlan = normalizePlanTotalTime({
-    ...plan,
-    stops: alignedStops,
-    transportSegments: segments,
-  })
+  const alignedPlan = shrinkPlanDurationToScheduleCapacity(
+    normalizePlanTotalTime({ ...plan, stops: alignedStops, transportSegments: segments }), input,
+  )
 
   writeGenerateDebugLog('post-timing-meal-realignment', {
     planId: plan.id,
@@ -1604,7 +1641,7 @@ async function repairAndValidatePlanForDelivery(
     }
   }
 
-  const coverageAttempt = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
+  const coverageAttempt = await repairPlanForDelivery(firstAttempt.plan, input, candidates, avoidedPlaceIds, {
     allowCoverageRepair: true,
     crossPlanUsedPlaceIds,
   })
@@ -2466,19 +2503,22 @@ function getCandidatePoolByStopType(stop: Stop, candidates: NearbyPlaceCandidate
   return typedPool.length > 0 ? typedPool : basePool
 }
 
-function ensureMealStopForTrip(
+export function ensureMealStopForTrip(
   stops: Stop[],
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
   planId?: string,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
+  transportSegments?: TripPlan['transportSegments'],
 ) {
-  const nextStops = [...stops]
+  const alignedStops = realignFoodStopsForMealWindows(stops, input, transportSegments)
+  const nextStops = [...alignedStops]
+  const alignedSegments = haveStopOrderChanged(stops, alignedStops) ? undefined : transportSegments
   const mealWindows = getRequiredMealWindows(input)
   if (mealWindows.length === 0) return nextStops
 
-  const missingMealWindows = getMissingMealWindows(nextStops, input, mealWindows)
+  const missingMealWindows = getMissingMealWindows(nextStops, input, mealWindows, alignedSegments)
   if (missingMealWindows.length === 0) return nextStops
 
   for (const mealWindow of missingMealWindows) {
@@ -2530,6 +2570,7 @@ function getMissingMealWindows(
   stops: Stop[],
   input: GenerateTripPlansRequest['input'],
   mealWindows: RequiredMealWindow[],
+  transportSegments?: TripPlan['transportSegments'],
 ) {
   return mealWindows.filter(
     (mealWindow) =>
@@ -2537,7 +2578,7 @@ function getMissingMealWindows(
         if (stop.type !== 'food') return false
 
         return isStopAlignedWithMealWindow(
-          getEstimatedArrivalMinutesForStop(stops, index, input),
+          getEstimatedArrivalMinutesForStop(stops, index, input, transportSegments),
           Number(stop.duration) || getDefaultStopDuration('food'),
           mealWindow,
         )
@@ -2650,14 +2691,17 @@ function isCandidateOpenDuringMealWindow(
   return false
 }
 
-function realignFoodStopsForMealWindows(
+export function realignFoodStopsForMealWindows(
   stops: Stop[],
   input: GenerateTripPlansRequest['input'],
+  transportSegments?: TripPlan['transportSegments'],
 ) {
   if (stops.length < 3 || input.tags.includes('no_full_meals')) return stops
   if (!shouldMoveFoodStopsTowardMealWindow(input)) return stops
   const mealWindows = getRequiredMealWindows(input)
   if (mealWindows.length === 0) return stops
+  // Preserve an already useful order, using actual route timings when available.
+  if (getMissingMealWindows(stops, input, mealWindows, transportSegments).length === 0) return stops
 
   const foodStops = stops.filter((stop) => stop.type === 'food')
   if (foodStops.length === 0) return stops
@@ -2666,6 +2710,7 @@ function realignFoodStopsForMealWindows(
   if (nonFoodStops.length < 2) return stops
 
   const nextStops = [...nonFoodStops]
+  let previousFoodIndex = -1
 
   foodStops.forEach((foodStop, index) => {
     const mealWindow = mealWindows[Math.min(index, mealWindows.length - 1)]
@@ -2674,7 +2719,13 @@ function realignFoodStopsForMealWindows(
       input,
       getMealInsertionTargetMinutes(mealWindow),
     )
-    nextStops.splice(Math.min(targetIndex, nextStops.length), 0, foodStop)
+    // Later foods must never be inserted ahead of earlier foods in the same window.
+    const insertionIndex = Math.min(
+      Math.max(targetIndex, previousFoodIndex + 1, stops[0].type === 'food' ? 0 : 1),
+      nextStops.length,
+    )
+    nextStops.splice(insertionIndex, 0, foodStop)
+    previousFoodIndex = insertionIndex
   })
 
   const originalOrder = stops.map((stop) => stop.id).join('|')
@@ -2701,33 +2752,60 @@ function isShortVisitCandidate(candidate: VerifiedPlaceCandidate) {
   return /(局|署|所|處|公所|辦公|服務中心|銀行|郵局|醫院|診所|公司|分局)/.test(text)
 }
 
-async function trimPlanToTimeWindow(
+export async function trimPlanToTimeWindow(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
-): Promise<TripPlan> {
+): Promise<{ plan: TripPlan; routesFailed: boolean }> {
   const allowedMinutes = getAllowedTripMinutes(input)
-  if (!allowedMinutes || plan.stops.length <= 2) return normalizePlanTotalTime(plan)
-
-  let nextPlan = normalizePlanTotalTime(plan)
-
-  while (nextPlan.stops.length > 2 && shouldTrimTailStop(nextPlan, input)) {
-    const stops = nextPlan.stops.slice(0, -1)
-    const { segments } = await repairTransportSegments(
-      nextPlan.transportSegments ?? [],
-      stops,
-      nextPlan.transportMode,
-    )
-    const candidatePlan = normalizePlanTotalTime({
-      ...nextPlan,
-      stops,
-      transportSegments: segments,
-    })
-
-    if (!isAboveMinimumCoverage(candidatePlan, input)) break
-    nextPlan = candidatePlan
+  if (!allowedMinutes || plan.stops.length <= 2) {
+    return { plan: normalizePlanTotalTime(plan), routesFailed: false }
   }
 
-  return nextPlan
+  let nextPlan = normalizePlanTotalTime(plan)
+  let routesFailed = false
+
+  while (nextPlan.stops.length > 2 && shouldTrimTailStop(nextPlan, input)) {
+    let acceptedPlan: TripPlan | null = null
+    const beforeMinutes = getPlanActualDuration(nextPlan)
+    // Keep the first stop; try non-food stops from the tail before redundant food.
+    const removalIndexes = nextPlan.stops.map((_stop, index) => index).slice(1).reverse()
+      .sort((left, right) => Number(nextPlan.stops[left].type === 'food') -
+        Number(nextPlan.stops[right].type === 'food'))
+    for (const removalIndex of removalIndexes) {
+      const stops = nextPlan.stops.filter((_stop, index) => index !== removalIndex)
+      const mealWindows = getRequiredMealWindows(input)
+      // Preserve even single-window meals (the final hard meal gate targets multi-meal trips).
+      if (stops.filter((stop) => stop.type === 'food').length < mealWindows.length) continue
+      const routeRepair = await repairTransportSegments(
+        nextPlan.transportSegments ?? [], stops, nextPlan.transportMode,
+      )
+      routesFailed = routesFailed || routeRepair.routesFailed
+      if (routeRepair.routesFailed) continue
+      let candidatePlan = normalizePlanTotalTime({
+        ...nextPlan, stops, transportSegments: routeRepair.segments,
+      })
+      if (getPlanActualDuration(candidatePlan) >= beforeMinutes) continue
+      const mealAlignment = await realignPlanMealsAfterTiming(candidatePlan, input)
+      routesFailed = routesFailed || mealAlignment.routesFailed
+      if (mealAlignment.routesFailed) continue
+      candidatePlan = mealAlignment.plan
+      // Recover coverage through existing stays, never by adding back a deleted stop.
+      candidatePlan = shrinkPlanDurationToScheduleCapacity(
+        isAboveMinimumCoverage(candidatePlan, input)
+          ? candidatePlan : stretchPlanDurationToCoverage(candidatePlan, input), input,
+      )
+      if (!isAboveMinimumCoverage(candidatePlan, input)) continue
+      if (getMissingMealWindows(candidatePlan.stops, input, mealWindows, candidatePlan.transportSegments).length > 0) continue
+      if (getFirstStopDistanceIssue(candidatePlan, input)) continue
+      if ((await getDeliveryPlanIssues(candidatePlan, input, 'capacity-trim')).length > 0) continue
+      acceptedPlan = candidatePlan
+      break
+    }
+    if (!acceptedPlan) break
+    nextPlan = acceptedPlan
+  }
+
+  return { plan: nextPlan, routesFailed }
 }
 
 function shouldTrimTailStop(plan: TripPlan, input: GenerateTripPlansRequest['input']) {
@@ -2838,19 +2916,29 @@ function getStopTypeForCandidate(stop: Stop, candidate: VerifiedPlaceCandidate):
   return stop.type
 }
 
-function expandStopsForLongTrip(
+export async function expandStopsForLongTrip(
   stops: Stop[],
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
   planId?: string,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
+  transportSegments?: TripPlan['transportSegments'],
+  transportMode: TripPlan['transportMode'] = input.transportMode ?? 'scooter',
 ) {
   const minimumMinutes = getMinimumRequiredActualMinutes(input)
-  if (!minimumMinutes) return stops
+  const unchanged = { stops, segments: transportSegments ?? [], routesFailed: false }
+  if (!minimumMinutes) return unchanged
   const expansionTargetMinutes = getCoverageRepairTargetMinutes(input)
-
+  // A missing, estimated, or stale route cannot establish spare capacity.
+  if (!transportSegments || !hasCurrentRouteTimings(stops, transportSegments)) return unchanged
+  const capacity = getScheduleCapacityMinutes(input) ?? 0
   const expandedStops = [...stops]
+  let currentSegments = transportSegments
+  let routesFailed = false
+  const actualMinutes = () => stopsDuration(expandedStops) +
+    currentSegments.reduce((total, segment) => total + segment.duration, 0)
+
   const allCandidatePool = mergeCandidatePools(
     candidates.otherCandidates,
     candidates.firstStopCandidates,
@@ -2864,8 +2952,8 @@ function expandStopsForLongTrip(
   let supplementalSelectionIndex = 0
 
   while (
-    expandedStops.length < getMinimumStopCountForLongTrip(input) ||
-    getReasonablePlanDuration(expandedStops) + estimateTransportTotal(expandedStops) < expansionTargetMinutes
+    supplementalSelectionIndex < allCandidatePool.length &&
+    actualMinutes() < capacity && actualMinutes() < expansionTargetMinutes
   ) {
     const insertionIndex = Math.min(
       Math.max(expandedStops.length - 1, 1),
@@ -2875,6 +2963,7 @@ function expandStopsForLongTrip(
       expandedStops,
       insertionIndex,
       input,
+      currentSegments,
     )
     const rotationOffset = getPlanDiversityOffset(planId, supplementalSelectionIndex)
     const nextCandidate =
@@ -2911,6 +3000,14 @@ function expandStopsForLongTrip(
         nextCandidate,
       ),
     )
+    const routeRepair = await repairTransportSegments(currentSegments, expandedStops, transportMode)
+    if (routeRepair.routesFailed || !hasCurrentRouteTimings(expandedStops, routeRepair.segments)) {
+      routesFailed = true
+      expandedStops.splice(insertionIndex, 1)
+      usedPlaceIds.delete(nextCandidate.placeId)
+      break
+    }
+    currentSegments = routeRepair.segments
   }
 
   if (expandedStops.length !== stops.length) {
@@ -2918,12 +3015,23 @@ function expandStopsForLongTrip(
       originalStopCount: stops.length,
       expandedStopCount: expandedStops.length,
       targetMinutes: expansionTargetMinutes,
-      estimatedMinutes: getReasonablePlanDuration(expandedStops) + estimateTransportTotal(expandedStops),
+      actualMinutes: actualMinutes(),
       candidateCount: allCandidatePool.length,
     })
   }
 
-  return expandedStops
+  return { stops: expandedStops, segments: currentSegments, routesFailed }
+}
+
+function stopsDuration(stops: Stop[]) {
+  return stops.reduce((total, stop) => total + stop.duration, 0)
+}
+
+function hasCurrentRouteTimings(stops: Stop[], segments?: TripPlan['transportSegments']) {
+  return Boolean(segments && segments.length === Math.max(0, stops.length - 1) &&
+    segments.every((segment, index) => segment.fromStopId === stops[index].id &&
+      segment.toStopId === stops[index + 1].id && Number.isFinite(segment.duration) &&
+      segment.duration > 0 && !segment.label?.includes('(估算)')))
 }
 
 function mergeCandidatePools(...pools: VerifiedPlaceCandidate[][]) {
