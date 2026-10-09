@@ -59,7 +59,7 @@ test('雙餐期行程需要午餐與晚餐各至少一個對齊餐飲停留', ()
     stops: [
       stop('展覽館', 'main_activity', 75),
       stop('午餐餐廳', 'food', 60),
-      stop('美術館', 'main_activity', 180),
+      stop('美術館', 'main_activity', 210),
       stop('晚餐餐廳', 'food', 60),
     ],
     transportSegments: [{ duration: 15 }, { duration: 15 }, { duration: 15 }],

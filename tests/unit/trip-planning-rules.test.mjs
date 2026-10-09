@@ -70,7 +70,7 @@ test('覆蓋率門檻與補長目標維持現行策略', () => {
   assert.equal(getTargetCoverageRatio(21 * 60), 0.8)
 })
 
-test('餐期需求只要與使用者時間窗有重疊就啟用', () => {
+test('餐期需求需要能容納 45 分鐘且開始於餐窗內', () => {
   assert.deepEqual(
     getRequiredMealWindows(input('12:45', '14:45')).map((meal) => meal.id),
     ['lunch'],
@@ -93,17 +93,18 @@ test('餐期需求只要與使用者時間窗有重疊就啟用', () => {
   )
 })
 
-test('餐飲只要與餐期有重疊即對齊', () => {
+test('餐飲開始在餐窗內且至少停留 45 分鐘才對齊', () => {
   const dinner = getRequiredMealWindows(input('12:00', '22:45')).find(
     (meal) => meal.id === 'dinner',
   )
   assert.ok(dinner)
   assert.equal(getMealInsertionTargetMinutes(dinner), 18 * 60)
   assert.equal(getVisitMealWindowOverlapMinutes(16 * 60 + 46, 60, dinner), 46)
-  assert.equal(isStopAlignedWithMealWindow(16 * 60 + 46, 60, dinner), true)
+  assert.equal(isStopAlignedWithMealWindow(16 * 60 + 46, 60, dinner), false)
   assert.equal(isStopAlignedWithMealWindow(15 * 60, 60, dinner), false)
   assert.equal(isStopAlignedWithMealWindow(16 * 60 + 59, 1, dinner), false)
-  assert.equal(isStopAlignedWithMealWindow(18 * 60 + 59, 1, dinner), true)
+  assert.equal(isStopAlignedWithMealWindow(18 * 60 + 59, 1, dinner), false)
+  assert.equal(isStopAlignedWithMealWindow(18 * 60 + 59, 45, dinner), true)
 })
 
 test('跨日餐期重疊以最大重疊量判斷', () => {
@@ -112,7 +113,7 @@ test('跨日餐期重疊以最大重疊量判斷', () => {
 })
 
 test('cross-day required meal windows keep their real timeline occurrence', () => {
-  const meals = getRequiredMealWindows(input('14:30', '11:30'))
+  const meals = getRequiredMealWindows(input('14:30', '11:45'))
 
   assert.deepEqual(
     meals.map((meal) => meal.id),
@@ -125,7 +126,8 @@ test('cross-day required meal windows keep their real timeline occurrence', () =
     getVisitMealWindowOverlapMinutes(24 * 60 + 10 * 60 + 45, 45, meals[1]),
     30,
   )
-  assert.equal(isStopAlignedWithMealWindow(24 * 60 + 10 * 60 + 45, 45, meals[1]), true)
+  assert.equal(isStopAlignedWithMealWindow(24 * 60 + 10 * 60 + 45, 45, meals[1]), false)
+  assert.equal(isStopAlignedWithMealWindow(24 * 60 + 11 * 60, 45, meals[1]), true)
 })
 
 function input(startTime, endTime, tags = []) {

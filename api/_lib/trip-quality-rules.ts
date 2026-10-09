@@ -19,8 +19,9 @@ export function getMinimumMeaningfulStopDuration(stop: Stop) {
 }
 
 export function getRequiredMealCoverageIssues(plan: TripPlan, input: TripWindowInput) {
-  const mealWindows = getRequiredMealWindows(input)
-  if (mealWindows.length < 2) return []
+  const timelineInput = { ...input, scheduleStartTime: plan.scheduleStartTime ?? input.scheduleStartTime }
+  const mealWindows = getRequiredMealWindows(timelineInput)
+  if (mealWindows.length === 0) return []
 
   const foodStops = plan.stops.filter((stop) => stop.type === 'food')
   if (foodStops.length < mealWindows.length) {
@@ -29,7 +30,7 @@ export function getRequiredMealCoverageIssues(plan: TripPlan, input: TripWindowI
     ]
   }
 
-  const arrivals = getEstimatedPlanArrivalMinutes(plan, input)
+  const arrivals = getEstimatedPlanArrivalMinutes(plan, timelineInput)
   const uncoveredMealWindows = mealWindows.filter((mealWindow) =>
     !plan.stops.some((stop, index) => {
       if (stop.type !== 'food') return false

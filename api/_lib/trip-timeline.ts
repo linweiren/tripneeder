@@ -3,6 +3,7 @@ import {
   clamp,
   getAllowedTripMinutes,
   getOpeningHoursSearchStartMinutes,
+  getMealTimelineStartMinutes,
   getScheduleCapacityMinutes,
   parseTimeToMinutes,
   type TripWindowInput,
@@ -28,7 +29,7 @@ export function getEstimatedArrivalMinutesForStop(
   }
   if (endMinutes < startMinutes) endMinutes += 24 * 60
 
-  return getOpeningHoursSearchStartMinutes(startMinutes, endMinutes) + offsetMinutes
+  return (getMealTimelineStartMinutes(input) ?? startMinutes) + offsetMinutes
 }
 
 export function getRequiredAvailabilitySlotForStop(
@@ -117,7 +118,9 @@ export function getEstimatedPlanArrivalMinutes(
   if (startMinutes === null || endMinutes === null) return []
   if (endMinutes < startMinutes) endMinutes += 24 * 60
 
-  const timelineStartMinutes = getOpeningHoursSearchStartMinutes(startMinutes, endMinutes)
+  const timelineStartMinutes = getMealTimelineStartMinutes({
+    ...input, scheduleStartTime: plan.scheduleStartTime ?? input.scheduleStartTime,
+  }) ?? getOpeningHoursSearchStartMinutes(startMinutes, endMinutes)
 
   return plan.stops.map(
     (_stop, index) =>

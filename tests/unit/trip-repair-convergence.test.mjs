@@ -105,15 +105,19 @@ test('reaching coverage overrides the former minimum stop-count expansion', asyn
   assert.deepEqual(await expand(p, input(), pool(p.stops, [candidate(stop('main_activity', 75))])), p.stops)
 })
 
-test('supplemental expansion stops immediately when its actual reroute overflows', async (t) => {
+test('supplemental expansion fits the newcomer without overflowing or shortening originals', async (t) => {
   const calls = mockGoogle(t, 100)
   const p = plan([stop('main_activity', 80), stop('food', 45)], [20])
   const extras = [candidate(stop('main_activity', 75)), candidate(stop('main_activity', 75))]
   const result = await expandStopsForLongTrip(p.stops, input(), pool(p.stops, extras),
     new Set(p.stops.map((s) => s.placeId)), p.id, new Set(), p.transportSegments, p.transportMode)
   assert.equal(result.stops.length, 3)
-  assert.equal(calls(), 2)
-  assert.ok(getPlanActualDuration({ ...p, stops: result.stops, transportSegments: result.segments }) > 300)
+  assert.ok(calls() <= 8)
+  assert.ok(getPlanActualDuration({ ...p, stops: result.stops, transportSegments: result.segments }) <= 300)
+  for (const original of p.stops) {
+    assert.equal(result.stops.find(s => s.id === original.id)?.duration, original.duration)
+  }
+  assert.ok(result.stops.every(s => s.duration >= getMinimumStopDuration(s)))
 })
 
 test('a plan that starts overflowing repairs capacity without adding activity or food stops', async (t) => {

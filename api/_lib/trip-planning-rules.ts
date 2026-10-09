@@ -5,13 +5,15 @@ export const EARLY_MORNING_ACTIVE_START_MINUTES = 6 * 60
 export const MIN_EARLY_MORNING_ACTIVE_WINDOW_MINUTES = 40 * 2 + 18
 export const TIMELINE_START_GRANULARITY_MINUTES = 10
 export const POST_TIMING_ALIGNMENT_MAX_PASSES = 3
-export const MEAL_ALIGNMENT_MIN_OVERLAP_MINUTES = 1
+// The existing minimum food stay, also used to determine whether a meal can fit.
+export const MINIMUM_MEAL_DURATION_MINUTES = 45
 export const PLAN_DIVERSITY_ROTATION_STEP = 3
 
 export type TripWindowInput = {
   startTime?: string
   endTime?: string
   tags: string[]
+  scheduleStartTime?: string
 }
 
 export type RequiredMealWindow = {
@@ -175,7 +177,8 @@ export function getRequiredMealWindows(input: TripWindowInput): RequiredMealWind
         }))
         .filter(
           (window) =>
-            Math.min(tripWindow.end, window.end) - Math.max(tripWindow.start, window.start) > 0,
+            Math.max(tripWindow.start, window.start) < window.end &&
+            Math.max(tripWindow.start, window.start) + MINIMUM_MEAL_DURATION_MINUTES <= tripWindow.end,
         ),
     )
     .sort((left, right) => left.start - right.start)
@@ -188,8 +191,17 @@ function getNormalizedTripWindow(input: TripWindowInput) {
   if (start === null || end === null) return null
   if (end === start) return null
   if (end < start) end += 24 * 60
+  return { start: getMealTimelineStartMinutes(input) ?? start, end }
+}
 
-  return { start, end }
+export function getMealTimelineStartMinutes(input: TripWindowInput) {
+  const originalStart = parseTimeToMinutes(input.startTime)
+  let end = parseTimeToMinutes(input.endTime)
+  if (originalStart === null || end === null) return null
+  if (end < originalStart) end += 24 * 60
+  const scheduledStart = parseTimeToMinutes(input.scheduleStartTime)
+  if (scheduledStart === null) return getOpeningHoursSearchStartMinutes(originalStart, end)
+  return scheduledStart < originalStart ? scheduledStart + 24 * 60 : scheduledStart
 }
 
 export function getMealInsertionTargetMinutes(mealWindow: RequiredMealWindow) {
@@ -203,10 +215,8 @@ export function isStopAlignedWithMealWindow(
 ) {
   if (typeof arrivalMinutes !== 'number') return false
 
-  return (
-    getVisitMealWindowOverlapMinutes(arrivalMinutes, durationMinutes, mealWindow) >=
-    MEAL_ALIGNMENT_MIN_OVERLAP_MINUTES
-  )
+  return durationMinutes >= MINIMUM_MEAL_DURATION_MINUTES &&
+    arrivalMinutes >= mealWindow.start && arrivalMinutes < mealWindow.end
 }
 
 export function getVisitMealWindowOverlapMinutes(
