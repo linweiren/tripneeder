@@ -4,6 +4,7 @@ import https from 'node:https'
 import type { TripPlan, Stop, TripInput } from '../../src/types/trip.js'
 import type { GenerateTripPlansRequest, Persona } from '../../src/services/ai/types.js'
 import type { PreferenceProfile } from '../../src/services/personalization/preferenceProfile.js'
+import { getMealSuitability } from '../../src/services/ai/mealSuitability.js'
 import {
   getPersonalizedCandidateScore,
   type PersonalizationCandidateBoost,
@@ -1389,6 +1390,8 @@ function formatCandidateForPrompt(
   const ratingText = candidate.rating ? `, rating=${candidate.rating}` : ''
   const roleText = candidate.role ? `, role=${candidate.role}` : ''
   const foodSubtypeText = candidate.foodSubtype ? `, foodSubtype=${candidate.foodSubtype}` : ''
+  const mealSuitabilityText = candidate.role === 'food' || candidate.foodSubtype
+    ? `, mealSuitability=${getMealSuitability(candidate)}` : ''
   const scoreText = typeof candidate.score === 'number' ? `, score=${candidate.score.toFixed(1)}` : ''
   const hoursText = candidate.openingHoursSummary ? `, hours="${candidate.openingHoursSummary}"` : ''
   const slotsText = candidate.availabilitySlots?.length
@@ -1400,7 +1403,7 @@ function formatCandidateForPrompt(
       : ''
   const rainyText = options.rainBackup ? ', indoor=true, rainySuitable=true' : ''
 
-  return `- name="${candidate.name}", address="${candidate.address}", placeId="${candidate.placeId}"${distanceText}${ratingText}${roleText}${foodSubtypeText}${scoreText}${hoursText}${slotsText}${typesText}${rainyText}`
+  return `- name="${candidate.name}", address="${candidate.address}", placeId="${candidate.placeId}"${distanceText}${ratingText}${roleText}${foodSubtypeText}${mealSuitabilityText}${scoreText}${hoursText}${slotsText}${typesText}${rainyText}`
 }
 
 function buildTripWindow(input: TripInput) {

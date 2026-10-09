@@ -2,6 +2,7 @@ import type {
   GenerateTripPlansResponse,
   Persona,
 } from './types.js'
+import { MEAL_SUITABILITY_PROMPT_RULE } from './mealSuitability.js'
 import type {
   BudgetLevel,
   PlanType,
@@ -152,7 +153,7 @@ ${nearbyPlacesContext}
 10. 午餐開始時間窗為 11:00-13:00（不含 13:00），晚餐為 17:00-19:00（不含 19:00）。只有在實際開始至指定結束之間，能容納至少 45 分鐘且開始落在餐窗內的用餐，才需要該餐；不能僅因一分鐘重疊就要求用餐。
     - 未勾選「不吃正餐」時，每個必要餐期需有 food stop，開始時間落在該餐窗內且停留至少 45 分鐘；不可僅靠停留跨入餐窗算完成用餐。只需要一餐就只排一餐；候選須符合完整停留的營業時間及 closing buffer。輕食/咖啡也須符合相同時間規則，不要硬塞未開門餐廳。
     - 勾選「不吃正餐」時不排正餐，可改咖啡、甜點、點心或輕食。
-    - 未明確選擇「美食優先」時，food stop 優先選可坐下休息的 cafe / dessert / restaurant，不要讓整個方案的餐飲都變成傳統小吃、夜市或市場攤位。
+    - 正餐與休息用途分開考量；午晚餐優先使用正餐能力較可信且路線合理的候選，咖啡、甜點與小吃仍可保留作休息或特色體驗。${MEAL_SUITABILITY_PROMPT_RULE}
 11. 時間覆蓋率：實際總分鐘數（所有 stop.duration + 所有交通段 duration）必須 >= 上方「最低實際行程長度」；totalTime 也必須等於這個實際總分鐘數。
     - 實際總分鐘數不得超過上方「可安排真實 stop 時長上限」。
     - 可用時間 > 6h 時實際結束不得明顯早於指定結束：8-12h 最多提早 90 分、12-24h 最多提早 180 分；若有「凌晨時段規劃」提示，這條只套用在 06:00 後的有效活動時段，不要求用景點填滿凌晨緩衝。
