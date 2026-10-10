@@ -3,6 +3,7 @@
 import https from 'node:https'
 import { appendFileSync } from 'node:fs'
 import { buildTripPrompt, buildRetryTripSkeletonPrompt, parseTripPlanSkeletonResponse } from '../src/services/ai/tripPlanPrompt.js'
+import { getTripPlanStyleLabel, normalizeTripPlanIdentity, normalizeTripPlanIdentities } from '../src/services/ai/tripPlanIdentity.js'
 import { getMealSuitabilityRank, MEAL_SUITABILITY_PROMPT_RULE } from '../src/services/ai/mealSuitability.js'
 import { compareOriginalActivities, getActivityPurpose } from './_lib/trip-activity-purpose.js'
 import { tripPlanSkeletonResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
@@ -375,6 +376,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const extractor = new PlanExtractor()
+    const streamedPlanTypes = new Set<string>()
     let fullText = ''
     let pointsConsumed = false
     const validatedPlans: TripPlan[] = []
@@ -405,7 +407,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         fullText += delta
         const plans = extractor.push(delta)
 
-        for (const plan of plans) {
+        for (const rawPlan of plans) {
+          const plan = normalizeTripPlanIdentity(rawPlan)
+          if (!plan || streamedPlanTypes.has(plan.type)) continue
+          streamedPlanTypes.add(plan.type)
           const bias = request.input.location.lat && request.input.location.lng
             ? { lat: request.input.location.lat, lng: request.input.location.lng }
             : undefined
@@ -448,7 +453,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         fullText += delta
         const plans = extractor.push(delta)
 
-        for (const plan of plans) {
+        for (const rawPlan of plans) {
+          const plan = normalizeTripPlanIdentity(rawPlan)
+          if (!plan || streamedPlanTypes.has(plan.type)) continue
+          streamedPlanTypes.add(plan.type)
           const bias = request.input.location.lat && request.input.location.lng
             ? { lat: request.input.location.lat, lng: request.input.location.lng }
             : undefined
@@ -574,7 +582,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               json_schema: {
                   name: 'trip_plan_skeleton_response',
                   strict: true,
-                  schema: tripPlanSkeletonResponseSchema,
+                  schema: buildTripPlanRefillResponseSchema(invalidPlanIds.length),
                 },
               },
             }),
@@ -654,7 +662,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           finalResponse.plans.push(validatedPlan)
         }
       }
-      finalResponse.plans = finalResponse.plans.sort(comparePlansByDisplayPriority)
+      finalResponse.plans = normalizeTripPlanIdentities(finalResponse.plans)
 
       const finalRepairResults: Array<{
         sourcePlan: TripPlan
@@ -701,7 +709,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       finalResponse.plans = openingHoursSafePlans
 
-      if (finalResponse.plans.length < PLAN_IDS.length) {
+      if (PLAN_IDS.some(planId => !finalResponse.plans.some(plan => plan.id === planId && plan.type === planId))) {
         const existingPlanIds = new Set(finalResponse.plans.map((plan) => plan.id))
         const missingPlanIds = PLAN_IDS.filter((planId) => !existingPlanIds.has(planId))
 
@@ -879,7 +887,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         writeGenerateDebugLog('local-refill-disabled', localRefillPayload)
       }
 
-      finalResponse.plans = finalResponse.plans.sort(comparePlansByDisplayPriority)
+      finalResponse.plans = normalizeTripPlanIdentities(finalResponse.plans)
 
       const finalPlanIds = new Set(finalResponse.plans.map((plan) => plan.id))
       const unresolvedPlanIds = PLAN_IDS.filter((planId) => !finalPlanIds.has(planId))
@@ -912,7 +920,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       if (finalResponse.plans.length < PLAN_IDS.length) {
         finalResponse.warnings.push(
-          `目前附近營業中的景點較少，僅 ${finalResponse.plans.length} 個可用方案。`,
+          `目前僅 ${finalResponse.plans.length} 個風格方案通過驗收；未能提供的風格：${unresolvedPlanIds.map(getTripPlanStyleLabel).join('、')}。`,
         )
       }
 
@@ -1047,33 +1055,14 @@ function getRetryPlansForMissingId(
   retryPlans: TripPlan[],
   missingPlanId: PlanId,
 ) {
-  const targetPlans = retryPlans.filter((plan) => plan.id === missingPlanId)
-  if (targetPlans.length > 0) {
-    return targetPlans
-  }
-
-  const usablePlans = retryPlans.filter((plan) => Array.isArray(plan.stops) && plan.stops.length > 0)
-  if (usablePlans.length === 0) return []
-
-  console.info('[plan-refill-id-normalized]', {
-    targetPlanId: missingPlanId,
-    returnedPlanIds: retryPlans.map((plan) => plan.id),
-  })
-  writeGenerateDebugLog('plan-refill-id-normalized', {
-    targetPlanId: missingPlanId,
-    returnedPlanIds: retryPlans.map((plan) => plan.id),
-  })
-
-  return [usablePlans[0]]
+  return retryPlans.filter(plan => plan.id === missingPlanId && plan.type === missingPlanId)
 }
 
 function normalizeRefillPlanForMissingId(plan: TripPlan, missingPlanId: PlanId): TripPlan {
-  const shouldReplaceTitle = plan.id !== missingPlanId || hasPlanNumberTitle(plan.title)
+  const shouldReplaceTitle = hasPlanNumberTitle(plan.title)
 
   return {
     ...plan,
-    id: missingPlanId,
-    type: missingPlanId,
     title: shouldReplaceTitle ? getRefillPlanFallbackTitle(missingPlanId) : plan.title,
   }
 }
@@ -1206,6 +1195,7 @@ async function fetchRetrySkeletonPlans(
     choices: Array<{ message: { content: string } }>
   }
   return parseTripPlanSkeletonResponse(retryData.choices[0].message.content).plans
+    .filter(plan => planIds.includes(plan.type))
 }
 
 function buildTripPlanRefillResponseSchema(planCount: number) {

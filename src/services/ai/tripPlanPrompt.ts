@@ -3,9 +3,9 @@ import type {
   Persona,
 } from './types.js'
 import { MEAL_SUITABILITY_PROMPT_RULE } from './mealSuitability.js'
+import { normalizeTripPlanIdentities } from './tripPlanIdentity.js'
 import type {
   BudgetLevel,
-  PlanType,
   Stop,
   TransportSegment,
   TransportMode,
@@ -13,7 +13,6 @@ import type {
   TripInput,
   TripPlan,
 } from '../../types/trip.js'
-const PLAN_ORDER: PlanType[] = ['safe', 'balanced', 'explore']
 const EARLY_MORNING_ACTIVE_START_MINUTES = 6 * 60
 const MIN_EARLY_MORNING_ACTIVE_WINDOW_MINUTES = 40 * 2 + 18
 const TRIP_RESPONSE_ERROR =
@@ -141,7 +140,8 @@ ${personaContext}
 ${nearbyPlacesContext}
 
 硬性規則：
-1. 三方案風格：safe 保守、balanced 平衡、explore 探索；主題相同但風格不同。
+1. 三方案風格：safe 保守、balanced 平衡、explore 探索；主題相同但風格不同。必須各產生一案，plan.id 與 plan.type 必須同時逐字為 safe、balanced、explore 其中之一，三種風格不可重複或缺少。
+   - 使用者的「行程類型」是共同主題，不是 plan.type；即使行程類型為探索或美食，仍須產生 safe、balanced、explore 各一案。不可用 explore-1/2/3 或陣列位置代替三種風格，也不可只改標籤而未依指定風格規劃。
 2. transportMode：若使用者有指定交通工具偏好，三方案必須使用該 transportMode；若未指定，先決定一種最適合本次行程的 transportMode，三方案必須統一。
 3. 每 plan 的 transportSegments 長度 = stops.length - 1；fromStopId / toStopId 必須對應相鄰 stop 的 id。
 4. stop.id 僅允許英文、數字、底線、連字號；同一 plan 內不可重複。
@@ -300,6 +300,7 @@ export function buildRetryTripSkeletonPrompt(
 ${originalPrompt}
 
 重要：你之前產生的以下方案 ID 未通過 server 端品質檢查，請重新規劃這幾個方案。只回傳列出的方案 ID，不要回傳其餘已通過方案。
+本次補案覆蓋上方初始「產生三案」的數量要求，只產生列出的風格各一案；須按指定風格重新規劃，不得拿另一種風格的行程改名交付。
 請務必修正所有列出的問題：地點必須來自候選清單、能通過 Google Places 驗證、第一站 ≤ 2 km、安排時間需符合候選 hours / leaveBy，且實際總分鐘數必須達到指定時間範圍的覆蓋率。
 補案的 plan.id 與 type 必須逐字等於「需重產的方案 ID」；title 不可寫「方案一 / 方案二 / 方案三」，避免和前端排序混淆。
 
@@ -341,8 +342,7 @@ export function parseTripPlanResponse(text: string): GenerateTripPlansResponse {
     throw new Error(TRIP_RESPONSE_ERROR)
   }
 
-  // 排序計畫
-  response.plans.sort((a, b) => PLAN_ORDER.indexOf(a.type) - PLAN_ORDER.indexOf(b.type))
+  response.plans = normalizeTripPlanIdentities(response.plans)
 
   return response
 }
@@ -355,7 +355,7 @@ export function parseTripPlanSkeletonResponse(text: string): GenerateTripPlansRe
     throw new Error(TRIP_RESPONSE_ERROR)
   }
 
-  return parsed as GenerateTripPlansResponse
+  return { ...parsed, plans: normalizeTripPlanIdentities(parsed.plans) } as GenerateTripPlansResponse
 }
 
 type TripPlanDetailsPatch = {

@@ -4,6 +4,7 @@ import { useAnalysisSession } from '../contexts/analysisSession'
 import type { TransportMode, TripPlan } from '../types/trip'
 import { loadGeneratedPlans } from '../utils/tripPlanStorage'
 import { getPlanActualDuration } from '../utils/tripTiming'
+import { compareTripPlanStyles, getTripPlanStyleLabel } from '../services/ai/tripPlanIdentity'
 import mascotComplete from '../assets/mascot/mascot-complete.webp'
 import mascotError from '../assets/mascot/mascot-error.webp'
 
@@ -17,7 +18,7 @@ export function ResultsPage() {
   const navigate = useNavigate()
   const { session, resetAnalysisFlow, setFlowRoute, requestPlanDetails } =
     useAnalysisSession()
-  const plans = loadGeneratedPlans()
+  const plans = loadGeneratedPlans().sort(compareTripPlanStyles)
   const warnings = session?.status === 'success' ? (session.warnings ?? []) : []
 
   if (plans.length === 0) {
@@ -65,7 +66,7 @@ export function ResultsPage() {
           <RotateCcw aria-hidden="true" />
           重新選擇偏好
         </button>
-        <h1 className="results-title">3 種專屬方案已為你準備好</h1>
+        <h1 className="results-title">{plans.length} 個專屬方案已為你準備好</h1>
       </div>
       {warnings.length > 0 ? (
         <div className="plan-warning-panel" role="status">
@@ -79,7 +80,7 @@ export function ResultsPage() {
           <PlanCard
             key={plan.id}
             plan={plan}
-            label={`方案${toChineseNumber(index + 1)}`}
+            label={getTripPlanStyleLabel(plan.type) ?? `方案${toChineseNumber(index + 1)}`}
             onSelect={(route) => {
               setFlowRoute(route)
               requestPlanDetails(plan.id, { source: 'generated' })
