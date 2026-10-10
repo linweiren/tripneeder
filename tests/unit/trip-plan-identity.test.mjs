@@ -75,12 +75,12 @@ test('explore-1/2/3 with explore types preserve only Explore rather than fabrica
   assert.equal(result[0].title, 'source-0')
 })
 
-test('missing, null, unknown types and conflicting canonical/legacy IDs cannot be inferred or relabelled', () => {
+test('missing, null, unknown types and conflicting reserved IDs cannot be inferred or relabelled', () => {
   const f = identityFixture()
   for (const value of [undefined, null, '', 'custom', 'SAFE']) {
     assert.equal(normalizeTripPlanIdentity({ ...f.plans[0], type: value }), null)
   }
-  for (const id of ['safe', 'safe-1', 'safe_2']) {
+  for (const id of ['safe', 'balanced']) {
     assert.equal(normalizeTripPlanIdentity({ ...f.plans[2], id }), null)
   }
   assert.equal(normalizeTripPlanIdentity({ ...f.plans[0], id: '' }), null)

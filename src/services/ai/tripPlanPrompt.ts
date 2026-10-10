@@ -3,9 +3,10 @@ import type {
   Persona,
 } from './types.js'
 import { MEAL_SUITABILITY_PROMPT_RULE } from './mealSuitability.js'
-import { normalizeTripPlanIdentities } from './tripPlanIdentity.js'
+import { isTripPlanType, normalizeTripPlanIdentities, TRIP_PLAN_TYPES } from './tripPlanIdentity.js'
 import type {
   BudgetLevel,
+  PlanType,
   Stop,
   TransportSegment,
   TransportMode,
@@ -17,6 +18,24 @@ const EARLY_MORNING_ACTIVE_START_MINUTES = 6 * 60
 const MIN_EARLY_MORNING_ACTIVE_WINDOW_MINUTES = 40 * 2 + 18
 const TRIP_RESPONSE_ERROR =
   '這次 AI 產生的行程資料不夠完整，請重新分析一次。'
+
+const STYLE_GUIDANCE: Record<PlanType, { label: string; instruction: string; summary: string }> = {
+  safe: {
+    label: 'Safe／保守',
+    instruction: '行程集中、交通負擔低；偏向深入值得停留的主要活動，不追求大量景點，適合輕鬆穩定執行。',
+    summary: '集中路線，深入主要活動',
+  },
+  balanced: {
+    label: 'Balanced／平衡',
+    instruction: '活動類型與停留節奏均衡；合理組合主要景點、休息與必要餐飲，兼顧豐富度及交通效率。',
+    summary: '主要活動與休息節奏均衡',
+  },
+  explore: {
+    label: 'Explore／探索',
+    instruction: '優先尋找符合使用者興趣、具有不同體驗價值的活動；允許較豐富的探索，但不代表必須更遠、更多站或更趕，不為與其他方案不同而犧牲地點品質。',
+    summary: '依興趣安排有價值的不同體驗',
+  },
+}
 
 const categoryLabels: Record<TripCategory, string> = {
   date: '約會',
@@ -52,7 +71,13 @@ const transportModeLabels: Record<TransportMode, string> = {
   public_transit: '大眾運輸',
 }
 
-export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlaces?: string, locationWarning?: string) {
+export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlaces?: string, locationWarning?: string,
+  options: { planTypes?: readonly PlanType[] } = {}) {
+  const planTypes = options.planTypes ?? TRIP_PLAN_TYPES
+  const styleTasks = planTypes.map(type => `- ${type}（${STYLE_GUIDANCE[type].label}）：${STYLE_GUIDANCE[type].instruction}`).join('\n')
+  const identityExample = JSON.stringify({ plans: planTypes.map(type => ({
+    id: type, type, title: '體驗短標題', summary: STYLE_GUIDANCE[type].summary,
+  })) }, null, 2)
   const tags = input.tags.map((tag) => tagLabels[tag]).join('、') || '無'
   const wantsNoFullMeals = input.tags.includes('no_full_meals')
   const allowedMinutes = getAllowedTripMinutes(input)
@@ -108,7 +133,7 @@ export function buildTripPrompt(input: TripInput, persona?: Persona, nearbyPlace
 ${nearbyPlaces}
 
 重要指示：
-1. 所有 stops（包含 safe、balanced、explore 三方案）只能從上方 Google Maps 候選清單挑選，不可自創、改寫 or 使用清單外地點。
+1. 本次所有方案的 stops 只能從上方 Google Maps 候選清單挑選，不可自創、改寫 or 使用清單外地點。
 2. stop.name 必須逐字複製候選清單的 name；stop.address 必須逐字複製同一筆候選的 address；若候選資料含 placeId，請原樣填入 stop.placeId。
 3. 第一站（即每個 plan 的 stops[0]）必須從 FIRST_STOP_CANDIDATES_WITHIN_2KM 區塊挑選；若該區塊存在，禁止使用其他區塊作為第一站。
 4. 不可使用「特色小吃」「親民餐廳」「附近餐廳」「咖啡廳」「景點」這類空泛名稱。
@@ -119,7 +144,14 @@ ${nearbyPlaces}
 - 指示：不要使用「附近餐廳」「湖畔咖啡館」「在地小吃店」這類泛稱或不確定存在的地點；若缺少即時候選，仍只能使用能明確指出真實名稱與地址、且你能確定營業時段適合的地點。
 `.trim()
 
-  return `你是台灣在地行程規劃 AI。請依使用者輸入產生 3 個單日行程「骨架」方案，並回傳符合 schema 的 JSON。此階段只產生可比較的核心路線，不要產生景點 description、雨天備案或交通 label。
+  return `你是台灣在地行程規劃 AI。請依使用者輸入產生 ${planTypes.length} 個單日行程「骨架」方案，並回傳符合 schema 的 JSON。此階段只產生可比較的核心路線，不要產生景點 description、雨天備案或交通 label。
+
+本次指定風格任務（體驗偏好，不是新的評分或安全門檻）：
+${styleTasks}
+- 各風格都以使用者的主題、興趣、體力與偏好為優先，遵守相同的合法性、餐期、營業時間、合理停留與時間容量規則。
+- 候選 score 已含現有個人化結果，作為共同品質依據；不要因風格或個人化重複加分。
+- 從活動用途、停留深度、交通負擔與休息節奏提供實際不同的選擇，不是只換 title、summary 或 type。同地點但不同合理停留深度也可以有體驗價值。
+- 候選受限時允許相似及重用高品質地點；不要為差異硬加站、刻意繞路、壓縮有價值的原活動或任意拉長停留。
 
 使用者輸入：
 - 行程類型：${displayCategory}
@@ -140,9 +172,9 @@ ${personaContext}
 ${nearbyPlacesContext}
 
 硬性規則：
-1. 三方案風格：safe 保守、balanced 平衡、explore 探索；主題相同但風格不同。必須各產生一案，plan.id 與 plan.type 必須同時逐字為 safe、balanced、explore 其中之一，三種風格不可重複或缺少。
-   - 使用者的「行程類型」是共同主題，不是 plan.type；即使行程類型為探索或美食，仍須產生 safe、balanced、explore 各一案。不可用 explore-1/2/3 或陣列位置代替三種風格，也不可只改標籤而未依指定風格規劃。
-2. transportMode：若使用者有指定交通工具偏好，三方案必須使用該 transportMode；若未指定，先決定一種最適合本次行程的 transportMode，三方案必須統一。
+1. 只產生本次指定的風格：${planTypes.join(', ')}，各一案。plan.id 與 plan.type 必須同時逐字等於該案指定風格，不可重複、缺少或回傳未請求的風格。
+   - 使用者的「行程類型」是共同主題，不是 plan.type；即使行程類型為探索或美食，仍須依本次指定風格任務產生各一案。不要使用 explore-1/2/3 等別名，不可由陣列位置猜測風格，也不可只改標籤而未依指定風格規劃。
+2. transportMode：若使用者有指定交通工具偏好，各方案必須使用該 transportMode；若未指定，先決定一種最適合本次行程的 transportMode，各方案必須統一。
 3. 每 plan 的 transportSegments 長度 = stops.length - 1；fromStopId / toStopId 必須對應相鄰 stop 的 id。
 4. stop.id 僅允許英文、數字、底線、連字號；同一 plan 內不可重複。
 5. 文字長度：title 4-8 字、subtitle 8-18 字、summary 30 字內；皆繁體中文；title 不可塞入多個地名。
@@ -163,30 +195,11 @@ ${nearbyPlacesContext}
 14. 交通效率建議 (軟性規則)：相鄰站點間交通時間建議 ≤ 30 分鐘；整日累積交通時間建議 ≤ 總行程時長的 25%。
 15. 規劃核心：必須以使用者提供的「起點」為地理中心點往外擴張，優先選擇附近的景點，避免跨區過遠。
 16. 禁止重複：在同一個方案（plan）中，禁止重複安排同一個地點。每個 stop 的名稱與地址必須是唯一的，不可讓使用者在不同時間點回到同一個地方。
-17. 跨方案多樣性：三個方案應盡量提供不同選擇；若候選池有可行替代，避免在不同方案重複使用同一個 placeId，但候選不足時允許重複以保留可用方案。
+17. 跨方案多樣性：不同方案應盡量提供不同選擇；若候選池有可行替代，避免在不同方案重複使用同一個 placeId，但候選不足時允許重複以保留可用方案。
 18. 節奏品質：避免連續安排 3 個公園/戶外開放空間；非餐飲景點停留通常需至少 40 分鐘，餐飲至少 45 分鐘，不要用 20 分鐘短站湊數；交通時間不應佔總行程過高。
 
-JSON 範例（其餘欄位請依 schema）：
-{
-  "plans": [
-    {
-      "id": "safe",
-      "type": "safe",
-      "title": "短標題",
-      "subtitle": "主要地點或亮點副標題",
-      "summary": "一句 30 字以內的繁體中文摘要",
-      "totalTime": 300,
-      "budget": 1200,
-      "transportMode": "scooter",
-      "stops": [
-        { "id": "safe-main-1", "name": "地點名稱", "type": "main_activity", "address": "完整地址", "duration": 90 }
-      ],
-      "transportSegments": [
-        { "fromStopId": "safe-main-1", "toStopId": "safe-main-2", "mode": "scooter", "duration": 18 }
-      ]
-    }
-  ]
-}
+JSON 身分範例（只示意本次風格與體驗定位，不是完整回應；所有其餘 required 欄位、stops、transportSegments 等仍須依 schema 與實際候選完整產生，不要照抄範例文字或用固定時長套入行程）：
+${identityExample}
 `.trim()
 }
 
@@ -291,7 +304,10 @@ export function buildRetryTripSkeletonPrompt(
   nearbyPlaces?: string,
   validationSummaries: string[] = [],
 ) {
-  const originalPrompt = buildTripPrompt(input, persona, nearbyPlaces)
+  if (!invalidPlanIds.length || invalidPlanIds.some(id => !isTripPlanType(id)) ||
+    new Set(invalidPlanIds).size !== invalidPlanIds.length) throw new Error(TRIP_RESPONSE_ERROR)
+  const planTypes = TRIP_PLAN_TYPES.filter(type => invalidPlanIds.includes(type))
+  const originalPrompt = buildTripPrompt(input, persona, nearbyPlaces, undefined, { planTypes })
   const validationContext = validationSummaries.length > 0
     ? `\n未通過原因：\n${validationSummaries.map((summary) => `- ${summary}`).join('\n')}`
     : ''
@@ -299,8 +315,8 @@ export function buildRetryTripSkeletonPrompt(
   return `
 ${originalPrompt}
 
-重要：你之前產生的以下方案 ID 未通過 server 端品質檢查，請重新規劃這幾個方案。只回傳列出的方案 ID，不要回傳其餘已通過方案。
-本次補案覆蓋上方初始「產生三案」的數量要求，只產生列出的風格各一案；須按指定風格重新規劃，不得拿另一種風格的行程改名交付。
+重要：以下指定風格仍需取得可驗收方案，請重新規劃。只回傳列出的方案 ID，不要回傳其餘已通過方案。
+只產生列出的風格各一案；須按上方同一份指定風格指示重新規劃，不得拿另一種風格的行程改名交付。
 請務必修正所有列出的問題：地點必須來自候選清單、能通過 Google Places 驗證、第一站 ≤ 2 km、安排時間需符合候選 hours / leaveBy，且實際總分鐘數必須達到指定時間範圍的覆蓋率。
 補案的 plan.id 與 type 必須逐字等於「需重產的方案 ID」；title 不可寫「方案一 / 方案二 / 方案三」，避免和前端排序混淆。
 

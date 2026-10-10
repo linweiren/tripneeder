@@ -56,8 +56,8 @@ export function mockGeneration(t, f, initial, refill = (ids) => f.plans.filter(p
         if (target.pathname.endsWith('/get_my_points_balance')) payload = 100
         else if (target.pathname.endsWith('/consume_points_for_analysis')) { calls.points++; payload = null }
         else if (target.pathname.includes('/rpc/')) payload = null
-        else if (target.pathname.endsWith('/profiles')) payload = {}
-        else if (target.pathname.endsWith('/personalization_events')) payload = []
+        else if (target.pathname.endsWith('/profiles')) payload = options.persona ?? {}
+        else if (target.pathname.endsWith('/personalization_events')) payload = options.preferenceEvents ?? []
         else throw new Error(`Unexpected mock Supabase URL: ${target}`)
       } else if (target.hostname === 'places.googleapis.com') {
         if (target.pathname.endsWith(':searchText')) payload = { places }

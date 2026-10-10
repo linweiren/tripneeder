@@ -1133,7 +1133,7 @@ Hard constraints for real places:
 - Copy "name", "address", and "placeId" exactly from one injected candidate. Do not paraphrase or invent venue names.
 - Prefer higher score candidates. Use FOOD_CANDIDATES for food stops and MAIN_ACTIVITY_CANDIDATES for main activity stops.
 - Do not force every plan to include a food stop. Include food only when the trip overlaps lunch/dinner and a FOOD_CANDIDATE can be scheduled inside its opening window for at least 45 minutes.
-- Keep the three plans meaningfully different. Avoid reusing the same placeId across different plans when there are viable alternatives, but reuse is allowed if the candidate pool is too constrained.
+- Follow only the style tasks requested in this prompt; do not produce extra styles. Keep different plans meaningfully different. Avoid reusing the same placeId across different plans when there are viable alternatives, but reuse is allowed if the candidate pool is too constrained.
 - ${MEAL_SUITABILITY_PROMPT_RULE}
 - Every selected candidate must have known Google opening hours. Schedule it only inside that available window, make sure the visit ends no later than leaveBy, and do not select a candidate whose opening window cannot support at least 40 minutes of visit time in the user's trip window (45 minutes for food).
 - Treat bestSlots as the allowed position hint: early belongs in the first third, middle in the middle third, late in the final third. Do not place a candidate with only late availability in the first half of the route.

@@ -12,8 +12,9 @@ export function normalizeTripPlanIdentity(value: unknown): TripPlan | null {
   if (!value || typeof value !== 'object') return null
   const plan = value as Record<string, unknown>
   if (!isTripPlanType(plan.type) || typeof plan.id !== 'string' || !plan.id.trim()) return null
-  const namedStyle = /^(safe|balanced|explore)(?:[-_]\d+)?$/.exec(plan.id)?.[1]
-  if (namedStyle && namedStyle !== plan.type) return null
+  // Only exact reserved IDs declare a style. Model/legacy aliases such as
+  // explore-1 are names, not evidence that an explicitly safe type is wrong.
+  if (isTripPlanType(plan.id) && plan.id !== plan.type) return null
   // Keep canonical objects intact, including the repair's WeakMap provenance.
   return plan.id === plan.type ? value as TripPlan : { ...plan, id: plan.type } as TripPlan
 }
