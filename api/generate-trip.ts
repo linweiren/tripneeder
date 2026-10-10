@@ -6,6 +6,8 @@ import { buildTripPrompt, buildRetryTripSkeletonPrompt, parseTripPlanSkeletonRes
 import { getTripPlanStyleLabel, normalizeTripPlanIdentity, normalizeTripPlanIdentities } from '../src/services/ai/tripPlanIdentity.js'
 import { getMealSuitabilityRank, MEAL_SUITABILITY_PROMPT_RULE } from '../src/services/ai/mealSuitability.js'
 import { compareOriginalActivities, getActivityPurpose } from './_lib/trip-activity-purpose.js'
+import { compareFoodPurposes, getFoodPurposeHint, hasFoodPurposeConflict, recordFoodReplacement,
+  type FoodPurposeProvenance } from './_lib/trip-food-purpose.js'
 import { tripPlanSkeletonResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
 import type {
   GenerateTripPlansRequest,
@@ -992,9 +994,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 // Keep the AI skeleton outside response/schema fields and scoped to plan object lifetime.
 const originalActivitySkeletons = new WeakMap<TripPlan, Stop[]>()
+const foodPurposeProvenance = new WeakMap<TripPlan, FoodPurposeProvenance>()
 function carryOriginalActivities(source: TripPlan, target: TripPlan) {
   const originals = originalActivitySkeletons.get(source)
   if (originals) originalActivitySkeletons.set(target, originals)
+  const foodTrace = foodPurposeProvenance.get(source)
+  if (foodTrace) foodPurposeProvenance.set(target, foodTrace)
   return target
 }
 
@@ -1002,10 +1007,27 @@ export function getOriginalActivityImpact(source: TripPlan, finalStops: Stop[]) 
   return compareOriginalActivities(originalActivitySkeletons.get(source) ?? source.stops, finalStops)
 }
 
+export function getFoodPurposeImpact(source: TripPlan, finalStops: Stop[]) {
+  const trace = foodPurposeProvenance.get(source)
+  const baseline = trace?.baseline ?? source.stops
+  const impact = compareFoodPurposes(baseline, finalStops)
+  const changes = impact.changes.map(change => ({ ...change,
+    reason: trace?.replacements.findLast(event => event.stopId === change.stopId &&
+      event.toPlaceId === change.toPlaceId)?.reason ?? 'unknown' }))
+  const raw = originalActivitySkeletons.get(source) ?? source.stops
+  return { ...impact, changes, groundingCorrections: baseline.filter(stop => stop.type === 'food' &&
+    raw.some(original => original.id === stop.id && original.placeId !== stop.placeId)).length,
+    necessarySafetyReplacements: changes.filter(change => change.reason === 'safety').length,
+    optionalFoodReplacements: changes.filter(change => change.reason === 'optional_diversity').length }
+}
+
 function logOriginalActivityImpact(source: TripPlan, final: TripPlan, phase: string) {
   const payload = { planId: source.id, phase, ...getOriginalActivityImpact(source, final.stops) }
   console.info('[original-activity-impact]', payload)
   writeGenerateDebugLog('original-activity-impact', payload)
+  const foodPayload = { planId: source.id, phase, ...getFoodPurposeImpact(source, final.stops) }
+  console.info('[food-purpose-impact]', foodPayload)
+  writeGenerateDebugLog('food-purpose-impact', foodPayload)
   carryOriginalActivities(source, final)
 }
 
@@ -1283,6 +1305,9 @@ export function applyCandidateGroundingToPlan(
   }
   originalActivitySkeletons.set(grounded, originalActivitySkeletons.get(plan) ??
     plan.stops.map(stop => ({ ...stop, googleTypes: stop.googleTypes?.slice() })))
+  foodPurposeProvenance.set(grounded, foodPurposeProvenance.get(plan) ?? {
+    baseline: grounded.stops.map(stop => ({ ...stop, googleTypes: stop.googleTypes?.slice() })), replacements: [],
+  })
   return grounded
 }
 
@@ -1328,18 +1353,35 @@ export async function repairPlanForDelivery(
   const crossPlanUsedPlaceIds = options.crossPlanUsedPlaceIds ?? new Set<string>()
   const routeContext = options.routeContext ?? createSupplementRouteContext()
   const resolveRoutes = createRepairRouteResolver(routeContext)
+  // Capture verified place evidence before optional replacements, independently of the raw AI IDs.
+  let foodTrace = foodPurposeProvenance.get(plan)
+  if (!foodTrace) {
+    foodTrace = { baseline: plan.stops.map((stop, index) => {
+      const grounded = groundStopWithCandidate(stop, index, candidates)
+      return { ...grounded, googleTypes: grounded.googleTypes?.slice() }
+    }),
+      replacements: [] }
+    foodPurposeProvenance.set(plan, foodTrace)
+  }
   const usedPlaceIds = new Set<string>()
-  const repairedStops = plan.stops.map((stop, index) =>
-    ensureStopHasVerifiedPlace(
+  const foodTimelineInput = { ...input, scheduleStartTime: plan.scheduleStartTime }
+  const requiredFoodMeals = getRequiredMealWindows(foodTimelineInput)
+  const repairedStops = plan.stops.map((stop, index) => {
+    const arrival = getEstimatedArrivalMinutesForStop(plan.stops, index,
+      stop.type === 'food' ? foodTimelineInput : input, plan.transportSegments)
+    return ensureStopHasVerifiedPlace(
       stop,
       index,
       candidates,
       usedPlaceIds,
       avoidedPlaceIds,
       crossPlanUsedPlaceIds,
-      getEstimatedArrivalMinutesForStop(plan.stops, index, input, plan.transportSegments),
-    ),
-  )
+      arrival,
+      foodTrace,
+      stop.type === 'food' && requiredFoodMeals.some(window =>
+        isStopAlignedWithMealWindow(arrival, stop.duration, window)),
+    )
+  })
   const scheduleAlignedStops = allowCoverageRepair
     ? alignStopsWithCandidateAvailability(
         repairedStops,
@@ -1348,6 +1390,7 @@ export async function repairPlanForDelivery(
         avoidedPlaceIds,
         crossPlanUsedPlaceIds,
         plan.transportSegments,
+        foodTrace,
       )
     : repairedStops
   // Candidate replacement invalidates the old route. Resolve it before judging coverage.
@@ -1455,6 +1498,7 @@ export async function repairPlanForDelivery(
         avoidedPlaceIds,
         crossPlanUsedPlaceIds,
         resolveRoutes,
+        foodTrace,
       )
     : { plan: postCoverageMealAlignment.plan, routesFailed: false }
   const finalMealAlignment = allowCoverageRepair
@@ -1468,6 +1512,7 @@ export async function repairPlanForDelivery(
         avoidedPlaceIds,
         crossPlanUsedPlaceIds,
         resolveRoutes,
+        foodTrace,
       )
     : { plan: finalMealAlignment.plan, routesFailed: false }
   // No additions or reordering may run after this capacity pass.
@@ -1524,10 +1569,10 @@ export async function repairPlanForDelivery(
   }
 
   return {
-    plan: {
+    plan: carryOriginalActivities(plan, {
       ...finalPlan,
       totalTime: getPlanActualDuration(finalPlan),
-    },
+    }),
     routesFailed:
       routesFailed ||
       initialRouteRepair.routesFailed ||
@@ -1591,6 +1636,7 @@ async function realignPlanCandidatesAfterTiming(
   avoidedPlaceIds: Set<string>,
   crossPlanUsedPlaceIds: Set<string>,
   resolveRoutes: typeof repairTransportSegments = repairTransportSegments,
+  foodTrace?: FoodPurposeProvenance,
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
   let nextPlan = normalizePlanTotalTime(plan)
   let routesFailed = false
@@ -1604,6 +1650,7 @@ async function realignPlanCandidatesAfterTiming(
       avoidedPlaceIds,
       crossPlanUsedPlaceIds,
       nextPlan.transportSegments,
+      foodTrace,
     )
 
     if (!haveStopsChangedForTimingAlignment(nextPlan.stops, alignedStops)) break
@@ -1701,8 +1748,17 @@ export async function repairAndValidatePlanForDelivery(
   const restoreOptionalLoss = async (current: typeof firstAttempt, issues: string[]) => {
     if (diversityFallbackTried || crossPlanUsedPlaceIds.size === 0) return null
     const impact = compareOriginalActivities(plan.stops, current.plan.stops)
+    const foodImpact = getFoodPurposeImpact(plan, current.plan.stops)
+    // Only comparable optional food changes need a trusted route comparison. A clearly
+    // better final candidate score can still justify extra travel; never re-add its boost.
+    const comparableFoodChange = foodImpact.changes.some(change => {
+      if (change.reason !== 'optional_diversity') return false
+      const from = candidates.allCandidates.find(candidate => candidate.placeId === change.fromPlaceId)
+      const to = candidates.allCandidates.find(candidate => candidate.placeId === change.toPlaceId)
+      return from && to && Math.abs((from.score ?? 0) - (to.score ?? 0)) <= SOFT_DIVERSITY_SCORE_TOLERANCE
+    })
     if (issues.length === 0 && impact.retainedStayLoss === 0 && impact.removedStops === 0 &&
-      impact.purposeChanges === 0) return null
+      impact.purposeChanges === 0 && foodImpact.foodPurposeChanges === 0 && !comparableFoodChange) return null
     const optionalChange = plan.stops.some((stop, index) => {
       const replacement = current.plan.stops.find(final => final.id === stop.id)
       const candidate = findMatchingCandidateForStop(stop, index, candidates)
@@ -1721,12 +1777,16 @@ export async function repairAndValidatePlanForDelivery(
     if (fallback.routesFailed || (await getDeliveryPlanIssues(fallback.plan, input,
       `${phase}-activity-diversity-fallback`, { candidates })).length > 0) return null
     const alternative = compareOriginalActivities(plan.stops, fallback.plan.stops)
+    const alternativeFood = getFoodPurposeImpact(plan, fallback.plan.stops)
     const travel = (value: TripPlan) => value.transportSegments.reduce((sum, leg) => sum + leg.duration, 0)
     if (issues.length === 0 && !(alternative.retainedStayLoss <= impact.retainedStayLoss &&
       alternative.removedStops <= impact.removedStops && alternative.purposeLostMinutes <= impact.purposeLostMinutes &&
+      alternativeFood.foodPurposeChanges <= foodImpact.foodPurposeChanges &&
       travel(fallback.plan) <= travel(current.plan) &&
       (alternative.retainedStayLoss < impact.retainedStayLoss || alternative.removedStops < impact.removedStops ||
-        alternative.purposeLostMinutes < impact.purposeLostMinutes))) return null
+        alternative.purposeLostMinutes < impact.purposeLostMinutes ||
+        alternativeFood.foodPurposeChanges < foodImpact.foodPurposeChanges ||
+        (comparableFoodChange && travel(fallback.plan) < travel(current.plan))))) return null
     console.info('[activity-diversity-fallback]', { planId: plan.id, before: impact, after: alternative,
       routeCalls: routeContext.totalCalls, cacheHits: routeContext.cacheHits })
     return fallback
@@ -2319,8 +2379,11 @@ function ensureStopHasVerifiedPlace(
   avoidedPlaceIds: Set<string> = new Set(),
   crossPlanUsedPlaceIds: Set<string> = new Set(),
   arrivalMinutes?: number,
+  foodTrace?: FoodPurposeProvenance,
+  servesRequiredMeal = false,
 ) {
   const existingCandidate = findMatchingCandidateForStop(stop, index, candidates)
+  const originalWasUsed = Boolean(stop.placeId && usedPlaceIds.has(stop.placeId))
   if (
     stop.placeId &&
     stop.address &&
@@ -2342,11 +2405,19 @@ function ensureStopHasVerifiedPlace(
     crossPlanUsedPlaceIds,
     existingCandidate,
     arrivalMinutes,
+    servesRequiredMeal,
   )
   if (!candidate) return stop
 
   usedPlaceIds.add(candidate.placeId)
-  return applyCandidateToStop(stop, candidate)
+  const nextStop = applyCandidateToStop(stop, candidate)
+  const reason = existingCandidate && existingCandidate.placeId !== stop.placeId ? 'grounding'
+    : existingCandidate && isCandidateAllowedForStopIndex(existingCandidate, index) &&
+      !originalWasUsed && !avoidedPlaceIds.has(stop.placeId ?? '') &&
+      (arrivalMinutes === undefined || isCandidateOpenForVisit(existingCandidate, arrivalMinutes, stop.duration))
+      ? 'optional_diversity' : 'safety'
+  recordFoodReplacement(foodTrace, stop, nextStop, reason)
+  return nextStop
 }
 
 export function pickCandidateForStop(
@@ -2358,6 +2429,7 @@ export function pickCandidateForStop(
   crossPlanUsedPlaceIds: Set<string> = new Set(),
   knownExistingCandidate?: VerifiedPlaceCandidate | null,
   arrivalMinutes?: number,
+  servesRequiredMeal = false,
 ) {
   const existingCandidate = knownExistingCandidate ?? findMatchingCandidateForStop(stop, index, candidates)
 
@@ -2376,6 +2448,22 @@ export function pickCandidateForStop(
       !avoidedPlaceIds.has(candidate.placeId) && candidateActivityPurpose(candidate) === purpose &&
       (arrivalMinutes === undefined || isCandidateOpenForVisit(candidate, arrivalMinutes,
         applyCandidateToStop(stop, candidate).duration)))
+    // Local optional preference only. Safety replacement below keeps its full fallback pool.
+    if (stop.type === 'food' && (arrivalMinutes === undefined ||
+      isCandidateOpenForVisit(existingCandidate, arrivalMinutes, stop.duration))) {
+      const original = applyCandidateToStop(stop, existingCandidate)
+      const originalHint = getFoodPurposeHint(original)
+      const asFood = (candidate: VerifiedPlaceCandidate) => applyCandidateToStop({ ...stop, description: '' }, candidate)
+      const closest = alternatives.filter(candidate => originalHint !== 'uncertain' &&
+        getFoodPurposeHint(asFood(candidate)) === originalHint)
+      const closeChoice = pickSoftDiverseCandidate([existingCandidate, ...closest], crossPlanUsedPlaceIds)
+      if (closeChoice && closeChoice.placeId !== existingCandidate.placeId) return closeChoice
+      // Unknown/mixed evidence remains available, rather than becoming a hard food category.
+      const remaining = servesRequiredMeal && originalHint === 'uncertain'
+        ? [...alternatives].sort((a, b) => getMealSuitabilityRank(b) - getMealSuitabilityRank(a)) : alternatives
+      const choice = pickSoftDiverseCandidate([existingCandidate, ...remaining], crossPlanUsedPlaceIds)
+      return choice && hasFoodPurposeConflict(original, asFood(choice)) ? existingCandidate : choice
+    }
     return pickSoftDiverseCandidate([existingCandidate, ...alternatives], crossPlanUsedPlaceIds)
   }
 
@@ -2433,6 +2521,7 @@ function alignStopsWithCandidateAvailability(
   avoidedPlaceIds: Set<string>,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
   transportSegments?: TripPlan['transportSegments'],
+  foodTrace?: FoodPurposeProvenance,
 ) {
   const usedPlaceIds = new Set<string>()
 
@@ -2481,6 +2570,7 @@ function alignStopsWithCandidateAvailability(
 
     usedPlaceIds.add(replacementCandidate.placeId)
     const replacementStop = applyCandidateToStop(stop, replacementCandidate)
+    recordFoodReplacement(foodTrace, stop, replacementStop, 'safety')
 
     if (existingCandidate?.placeId !== replacementCandidate.placeId) {
       console.info('[schedule-candidate-replaced]', {
@@ -3200,12 +3290,18 @@ function applyCandidateToStop(stop: Stop, candidate: VerifiedPlaceCandidate): St
   }
   const changedIdentity = Boolean(stop.placeId && stop.placeId !== candidate.placeId)
   const changedPurpose = stop.type !== nextType || (changedIdentity &&
-    getActivityPurpose(stop) !== getActivityPurpose(nextStop))
+    (getActivityPurpose(stop) !== getActivityPurpose(nextStop) || hasFoodPurposeConflict(stop, nextStop)))
   // A different purpose starts with the existing reasonable/default duration. Later
   // coverage/capacity repair remains free to stretch/shrink it within existing rules.
-  if (changedPurpose) nextStop.duration = getReasonableStopDuration(nextStop)
+  if (changedPurpose) {
+    const reasonable = getReasonableStopDuration(nextStop)
+    nextStop.duration = stop.type === 'food' && nextType === 'food'
+      ? Math.min(reasonable, nextStop.duration) : reasonable
+  }
   else if (changedIdentity) nextStop.duration = clamp(nextStop.duration,
     getMinimumStopDuration(nextStop), getMaximumStopDuration(nextStop))
+  // A food description belongs to its place; details can describe the final identity.
+  if ((changedIdentity || changedPurpose) && (stop.type === 'food' || nextType === 'food')) nextStop.description = ''
   return nextStop
 }
 
