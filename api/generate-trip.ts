@@ -17,6 +17,7 @@ import type {
 import { createClient } from '@supabase/supabase-js'
 import {
   FIRST_STOP_MAX_DISTANCE_KM,
+  hasConfirmedCulturalPrimaryPurpose,
   calculateDistance,
   validateStopsWithPlaces,
   validatePlanOpeningHours,
@@ -3458,6 +3459,10 @@ function inferStopTypeFromCandidate(candidate: VerifiedPlaceCandidate): Stop['ty
 }
 
 function isFoodCandidate(candidate: VerifiedPlaceCandidate) {
+  // Use the same verified venue evidence as Candidate classification. Ancillary
+  // dining metadata remains available, but does not turn a cultural visit into
+  // food or make it a required-meal candidate. Ambiguous/default roles fall through.
+  if (hasConfirmedCulturalPrimaryPurpose(candidate)) return false
   const types = candidate.types ?? []
   const text = `${candidate.name} ${candidate.address}`.toLocaleLowerCase('zh-TW')
 

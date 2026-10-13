@@ -1676,13 +1676,36 @@ function inferFoodSubtype(
   return undefined
 }
 
+// Shared by candidate classification and delivery consumers. A default activity
+// role or ancillary dining types alone cannot establish the venue's purpose.
+export function hasConfirmedCulturalPrimaryPurpose(
+  candidate: Pick<VerifiedPlaceCandidate, 'types' | 'name'>,
+) {
+  const types = candidate.types ?? []
+  const nameText = candidate.name.toLocaleLowerCase('zh-TW')
+  return (
+    types.some((type) => ['museum', 'art_gallery'].includes(type)) &&
+    !types.some((type) => ['park', 'natural_feature'].includes(type)) &&
+    !/(公園|步道|\bpark\b|\btrail\b)/i.test(nameText) &&
+    /(博物館|美術館|文物館|藝術館|展覽館|展示館|故事館|\bmuseum\b|\bart (?:centre|center|gallery)\b)/i.test(nameText) &&
+    !/(咖啡|珈琲|餐廳|食堂|料理|早午餐|甜點|蛋糕|烘焙|麵包|小吃|caf[eé]|coffee|restaurant|bistro|bakery|dessert|brunch|\bbar\b)/i.test(nameText)
+  )
+}
+
 function inferCandidateRole(
   types: string[],
   name: string,
   address: string,
 ): VerifiedPlaceCandidate['role'] {
   const text = `${name} ${address}`.toLocaleLowerCase('zh-TW')
-  if (types.some((type) => ['restaurant', 'cafe', 'bakery', 'meal_takeaway', 'food'].includes(type))) {
+  const nameText = name.toLocaleLowerCase('zh-TW')
+  const hasCultureType = types.some((type) => ['museum', 'art_gallery'].includes(type))
+  const hasExplicitOutdoorType = types.some((type) => ['park', 'natural_feature'].includes(type))
+  const hasOutdoorVenueName = /(公園|步道|\bpark\b|\btrail\b)/i.test(nameText)
+  if (hasConfirmedCulturalPrimaryPurpose({ types, name })) {
+    return 'main_activity'
+  }
+  if (types.some((type) => ['restaurant', 'cafe', 'bakery', 'meal_takeaway', 'food', 'bar'].includes(type))) {
     return 'food'
   }
   if (/(局|署|所|處|公所|辦公|服務中心|銀行|郵局|醫院|診所|公司|分局)/.test(text)) {
@@ -1691,8 +1714,11 @@ function inferCandidateRole(
   if (types.some((type) => ['shopping_mall', 'department_store', 'market'].includes(type))) {
     return 'shopping'
   }
+  if (hasExplicitOutdoorType) return 'open_space'
+  if (hasCultureType && !hasOutdoorVenueName) return 'main_activity'
   if (types.some((type) => ['park', 'tourist_attraction', 'natural_feature'].includes(type))) {
-    return /(公園|步道|海邊|湖|山|森林|河濱|草地|park)/i.test(text)
+    // Administrative districts and street names are not evidence of an outdoor visit.
+    return /(公園|步道|海邊|湖|山|森林|河濱|草地|park)/i.test(nameText)
       ? 'open_space'
       : 'main_activity'
   }
