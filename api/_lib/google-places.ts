@@ -947,6 +947,9 @@ function getRemainingBucketMinimum(
 }
 
 function isCafeDessertCandidate(candidate: VerifiedPlaceCandidate) {
+  // Quotas describe the primary experience, not a cultural venue's ancillary
+  // dining metadata. Keep uncertain/default roles on the existing fallback.
+  if (hasConfirmedCulturalPrimaryPurpose(candidate)) return false
   const types = candidate.types ?? []
   const text = `${candidate.name} ${candidate.address}`
   return (
