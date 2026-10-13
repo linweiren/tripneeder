@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react'
 type LocalApiRequest = {
   method?: string
   body?: unknown
+  query?: { location?: string }
   headers?: { authorization?: string }
   signal?: AbortSignal
 }
@@ -42,6 +43,10 @@ export default defineConfig(({ mode }) => {
     process.env.SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY
   }
 
+  if (env.CWA_API_KEY) {
+  process.env.CWA_API_KEY = env.CWA_API_KEY
+}
+
   return {
     plugins: [react(), localApiPlugin()],
   }
@@ -73,6 +78,11 @@ function localApiPlugin(): Plugin {
 
       server.middlewares.use('/api/recompute-routes', async (req, res) => {
         const { default: handler } = await import('./api/recompute-routes')
+        await handleLocalApiRequest(req, res, handler)
+      })
+
+      server.middlewares.use('/api/weather', async (req, res) => {
+        const { default: handler } = await import('./api/weather')
         await handleLocalApiRequest(req, res, handler)
       })
     },
@@ -116,10 +126,15 @@ async function handleLocalApiRequest(
     abortController.abort()
   })
 
+  const requestUrl = new URL(req.url ?? '/', 'http://localhost')
+
   await handler(
     {
       method: req.method,
       body,
+      query: {
+        location: requestUrl.searchParams.get('location') ?? undefined,
+      },
       headers: {
         authorization: req.headers.authorization,
       },
