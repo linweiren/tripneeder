@@ -5,6 +5,7 @@ import type { TripPlan, Stop, TripInput } from '../../src/types/trip.js'
 import type { GenerateTripPlansRequest, Persona } from '../../src/services/ai/types.js'
 import type { PreferenceProfile } from '../../src/services/personalization/preferenceProfile.js'
 import { getMealSuitability } from '../../src/services/ai/mealSuitability.js'
+import { resolveCandidateRankingContext, type CandidateRankingContext } from './candidate-ranking-context.js'
 import {
   getPersonalizedCandidateScore,
   type PersonalizationCandidateBoost,
@@ -471,6 +472,7 @@ function prepareCandidates(
   debugSink?: CandidateSearchDebugSink,
   options: CandidatePersonalizationOptions = {},
 ) {
+  const rankingContext = resolveCandidateRankingContext(input)
   const debugCandidates: CandidateDebugPlace[] = []
   const candidates = places.flatMap((place) => {
     const candidate = toVerifiedPlaceCandidate(place, lat, lng)
@@ -489,6 +491,7 @@ function prepareCandidates(
       addAvailabilitySlots(candidate, tripWindow),
       input,
       options.preferenceProfile,
+      rankingContext,
     )
     debugCandidates.push(
       toCandidateDebugPlace(
@@ -1543,9 +1546,10 @@ export function isCandidateOpenForVisit(
 function scoreCandidate(
   candidate: VerifiedPlaceCandidate,
   input: TripInput,
-  preferenceProfile?: PreferenceProfile | null,
+  preferenceProfile: PreferenceProfile | null | undefined,
+  rankingContext: CandidateRankingContext,
 ): { candidate: VerifiedPlaceCandidate; personalization: CandidatePersonalizationDebug | null } {
-  const baseScore = calculateBaseCandidateScore(candidate, input)
+  const baseScore = calculateBaseCandidateScore(candidate, input, rankingContext)
   const personalized = getPersonalizedCandidateScore(baseScore, candidate, preferenceProfile)
   const personalization = preferenceProfile?.sampleCount
     ? buildCandidatePersonalizationDebug(baseScore, personalized.boost, personalized.finalScore)
@@ -1563,13 +1567,22 @@ function scoreCandidate(
 function calculateBaseCandidateScore(
   candidate: VerifiedPlaceCandidate,
   input: TripInput,
+  rankingContext: CandidateRankingContext,
 ) {
   const distanceKm = candidate.distanceKm ?? MAIN_CANDIDATE_MAX_DISTANCE_KM
   const rating = candidate.rating ?? 4
   const role = candidate.role ?? 'main_activity'
-  const wantsFoodFirst = input.tags.includes('food_first')
-  const wantsIndoor = input.tags.includes('indoor_first')
+  const wantsFoodFirst = input.category === 'food' || input.tags.includes('food_first')
+  const wantsIndoor = input.category === 'indoor' || input.tags.includes('indoor_first')
   const wantsPhoto = input.tags.includes('photo_first')
+  const wantsCulture = rankingContext.themes.includes('culture')
+  const wantsOutdoor = rankingContext.themes.includes('outdoor')
+  const prefersThisType =
+    (!wantsCulture && !wantsOutdoor) ||
+    (wantsCulture && hasConfirmedCulturalPrimaryPurpose(candidate)) ||
+    (wantsOutdoor && isOutdoorPromptCandidate(candidate)) ||
+    (rankingContext.themes.includes('coffee') && role === 'food' && candidate.foodSubtype === 'cafe') ||
+    (wantsFoodFirst && role === 'food')
 
   let score = 50
   score += Math.max(0, 25 - distanceKm * 4)
@@ -1579,13 +1592,17 @@ function calculateBaseCandidateScore(
 
   if (role === 'short_visit') score -= 35
   if (role === 'food') {
-    score += wantsFoodFirst ? 18 : 4
-    score += getFoodSubtypeScore(candidate, wantsFoodFirst)
+    if (prefersThisType) score += wantsFoodFirst ? 18 : 4
+    const subtypeScore = getFoodSubtypeScore(candidate, wantsFoodFirst)
+    // Keep all candidates and existing penalties. A visit preference only
+    // conditions the existing positive type bonuses; it adds no new bonus.
+    score += prefersThisType && !(rankingContext.avoidCoffee && candidate.foodSubtype === 'cafe')
+      ? subtypeScore : Math.min(0, subtypeScore)
   }
-  if (role === 'open_space') score += wantsPhoto ? 8 : 2
-  if (role === 'shopping') score += wantsIndoor ? 4 : 3
-  if (role === 'main_activity') score += 10
-  if (wantsIndoor && isIndoorCandidate(candidate)) {
+  if (prefersThisType && role === 'open_space') score += wantsPhoto || wantsOutdoor ? 8 : 2
+  if (prefersThisType && role === 'shopping') score += wantsIndoor ? 4 : 3
+  if (prefersThisType && role === 'main_activity') score += 10
+  if (prefersThisType && wantsIndoor && isIndoorCandidate(candidate)) {
     score += getIndoorTypeScore(candidate.types ?? [])
   }
   if (isShortVisitCandidatePlace(candidate.name, candidate.address)) score -= 30
