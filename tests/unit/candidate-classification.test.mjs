@@ -108,12 +108,16 @@ test('sparse and late-night food/outdoor pools retain candidates, scores and pro
   mockClassificationSearch(t, places)
   for (const input of [classificationInput(), classificationInput({ startTime: '23:00', endTime: '01:00' })]) {
     const result = await compareClassificationSearch(before, after, places, input)
-    assert.deepEqual(result.after, result.before)
+    if (input.startTime !== '23:00') assert.deepEqual(result.after, result.before)
+    else {
+      const facts = summary => summary.candidates.map(({ eligible, sent, group, ...c }) => c)
+      assert.deepEqual(facts(result.after), facts(result.before))
+      assert.equal(result.before.prompt, 1)
+      assert.deepEqual(result.newPool.allCandidates.find(c => c.placeId === 'cafe').availabilitySlots, ['early', 'middle'])
+    }
     assert.equal(result.after.usable, 2)
     assert.equal(result.after.first, 2)
-    // The existing slot filter omits 45-minute food visits from a two-hour
-    // window's 40-minute thirds. Classification must not change that policy.
-    assert.equal(result.after.prompt, input.startTime === '23:00' ? 1 : 2)
+    assert.equal(result.after.prompt, 2, 'legal short-night food is no longer lost at slot boundaries')
   }
 })
 
@@ -188,7 +192,9 @@ test('saved Central Park usable-candidate replay measures role, score, rank and 
     for (const oldCandidate of result.oldPool.allCandidates.filter(c => c.role === 'food' && !c.name.startsWith('金馬'))) {
       const newCandidate = result.newPool.allCandidates.find(c => c.placeId === oldCandidate.placeId)
       assert.equal(newCandidate.role, oldCandidate.role)
-      assert.equal(newCandidate.score, oldCandidate.score)
+      const slotBonus = slots => slots.length ? slots.length * 2 : 4
+      assert.equal(newCandidate.score - oldCandidate.score,
+        slotBonus(newCandidate.availabilitySlots) - slotBonus(oldCandidate.availabilitySlots))
       assert.equal(newCandidate.foodSubtype, oldCandidate.foodSubtype)
     }
     const brief = summary => ({ ...summary, candidates: summary.candidates.filter(c =>

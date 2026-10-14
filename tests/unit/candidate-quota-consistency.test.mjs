@@ -14,15 +14,27 @@ const before = await loadQuotaBaseline()
 const delivery = await import('../../api/generate-trip.ts')
 const rows = []
 
-async function compare(t, f) {
+async function compare(t, f, { allowSlotCorrections = false } = {}) {
   const requests = mockQuotaSearch(t, f.places)
   const options = { preferenceProfile: f.preferenceProfile }
   const oldPool = await before.getNearbyPlaceCandidates({ input: structuredClone(f.input) }, undefined, options)
   const oldRequests = requests.splice(0)
   const newPool = await after.getNearbyPlaceCandidates({ input: structuredClone(f.input) }, undefined, options)
-  assert.deepEqual(newPool, oldPool, 'quota correction must not change candidate facts, roles, scores, ordering or pools')
+  if (allowSlotCorrections) {
+    const facts = pool => Object.fromEntries(Object.entries(pool).map(([key, list]) => [key,
+      list.map(({ availabilitySlots, score, ...c }) => c).sort((a, b) => a.placeId.localeCompare(b.placeId))]))
+    assert.deepEqual(facts(newPool), facts(oldPool), 'only availability and its existing score bonus may change')
+    const slotBonus = slots => slots.length ? slots.length * 2 : 4
+    for (const c of newPool.allCandidates) {
+      const old = oldPool.allCandidates.find(p => p.placeId === c.placeId)
+      assert.ok(Math.abs(c.score - old.score - slotBonus(c.availabilitySlots) + slotBonus(old.availabilitySlots)) < 1e-6)
+    }
+  } else assert.deepEqual(newPool, oldPool, 'quota correction must not change candidate facts, roles, scores, ordering or pools')
   assert.deepEqual(requests, oldRequests, 'no extra query, changed search body, field mask or paid request')
-  const oldSummary = quotaSummary(before, oldPool, f.input), newSummary = quotaSummary(after, newPool, f.input)
+  // Compare quota selectors on identical facts when the later availability fix
+  // intentionally changes slots. Its pipeline effects have separate regressions.
+  const oldSummary = quotaSummary(before, allowSlotCorrections ? newPool : oldPool, f.input)
+  const newSummary = quotaSummary(after, newPool, f.input)
   assert.equal(newSummary.aiPromptCharacters - oldSummary.aiPromptCharacters,
     newSummary.promptCharacters - oldSummary.promptCharacters, 'only candidate content changes the actual Prompt size')
   const row = { kind: f.kind, tags: f.input.tags, input: f.input, before: oldSummary, after: newSummary,
@@ -134,16 +146,17 @@ test('default main_activity with uncertain evidence keeps the existing cafe fall
 
 for (const kind of ['suburb', 'night', 'night-short']) {
   test(`${kind}: retain distance, opening and slot semantics while fixing culture quota`, async t => {
-    const r = await compare(t, quotaFixture(kind))
+    const r = await compare(t, quotaFixture(kind), { allowSlotCorrections: kind === 'night-short' })
     assert.equal(r.row.targetBefore, 2)
     assert.equal(r.row.targetAfter, 5)
     assert.ok(!r.selection.nearStops.some(c => c.placeId.startsWith('mixed-culture-')))
     if (kind === 'suburb') assert.ok(r.selection.mainStops.every(c => c.distanceKm > 5 && c.distanceKm <= 10))
     if (kind === 'night-short') {
       assert.equal(r.selection.foodStops.length, 0)
-      assert.equal(r.selection.nearStops.length, 0)
-      assert.ok(r.newPool.allCandidates.filter(c => c.role === 'food').every(c => c.availabilitySlots.length === 0))
-      assert.equal(r.newSummary.uses.food, 0, 'known short-night slot issue stays a separate task')
+      assert.equal(r.selection.nearStops.length, 3)
+      assert.ok(r.newPool.allCandidates.filter(c => c.role === 'food').every(c =>
+        JSON.stringify(c.availabilitySlots) === JSON.stringify(['early', 'middle'])))
+      assert.equal(r.newSummary.uses.food, 3, 'legal short-night food now arrives through the near pool')
     }
   })
 }
@@ -191,11 +204,12 @@ test('newly visible culture keeps its purpose through actual Prompt formatter an
   assert.deepEqual(getRequiredMealCoverageIssues({ ...cultureOnly, stops: withMeal }, r.f.input), [])
 })
 
-test('saved Central Park shortlist remains stable after the quota exception', {
+test('saved Central Park quota selectors stay stable on identical current candidate facts', {
   skip: !snapshotAvailable() && 'Optional preserved investigation snapshot unavailable',
 }, async t => {
   const snapshot = savedClassificationPipelines().find(p => p.city === '高雄')
-  const r = await compare(t, { kind: 'saved-central-park', input: snapshot.input, places: placesFromSavedCandidates(snapshot.candidates) })
+  const r = await compare(t, { kind: 'saved-central-park', input: snapshot.input, places: placesFromSavedCandidates(snapshot.candidates) },
+    { allowSlotCorrections: true })
   assert.equal(r.newSummary.promptCount, 42)
   assert.deepEqual(r.newSummary, r.oldSummary)
 })

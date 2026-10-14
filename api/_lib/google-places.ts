@@ -1516,11 +1516,12 @@ function getCandidateAvailabilitySlots(
   return slotStarts
     .map((startMinutes, index) => ({
       slot: slotNames[index],
-      usable: isOpeningHoursUsableWithinRange(
+      usable: isOpeningHoursUsableForArrivalRange(
         openingHours,
         startMinutes,
         slotEnds[index],
         getMinimumCandidateVisitMinutes(candidate),
+        tripWindow.endMinutes,
       ),
     }))
     .filter((item) => item.usable)
@@ -2193,24 +2194,28 @@ function isOpeningHoursUsableForVisit(
   })
 }
 
-function isOpeningHoursUsableWithinRange(
+function isOpeningHoursUsableForArrivalRange(
   openingHours: OpeningHoursMetadata,
   rangeStartMinutes: number,
   rangeEndMinutes: number,
   durationMinutes: number,
+  tripEndMinutes: number,
 ) {
   const rangeStartAt = buildTripDateAtMinutes(rangeStartMinutes, openingHours.utcOffsetMinutes)
   const rangeEndAt = buildTripDateAtMinutes(rangeEndMinutes, openingHours.utcOffsetMinutes)
+  const tripEndAt = buildTripDateAtMinutes(tripEndMinutes, openingHours.utcOffsetMinutes)
   const durationMs = Math.max(0, durationMinutes) * 60 * 1000
 
+  // Slots constrain arrival, not the full visit. Complete the visit within one
+  // opening window, its closing buffer and the trip end, even across slot edges.
   return openingHours.windows.some((window) => {
     const comfortableLeaveAt = new Date(window.closeAt.getTime() - CLOSING_BUFFER_MINUTES * 60 * 1000)
     const earliestArrivalAt = new Date(Math.max(window.openAt.getTime(), rangeStartAt.getTime()))
     const latestArrivalAt = new Date(
-      Math.min(comfortableLeaveAt.getTime() - durationMs, rangeEndAt.getTime() - durationMs),
+      Math.min(comfortableLeaveAt.getTime(), tripEndAt.getTime()) - durationMs,
     )
 
-    return latestArrivalAt >= earliestArrivalAt
+    return earliestArrivalAt < rangeEndAt && latestArrivalAt >= earliestArrivalAt
   })
 }
 
