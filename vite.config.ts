@@ -44,8 +44,8 @@ export default defineConfig(({ mode }) => {
   }
 
   if (env.CWA_API_KEY) {
-  process.env.CWA_API_KEY = env.CWA_API_KEY
-}
+    process.env.CWA_API_KEY = env.CWA_API_KEY
+  }
 
   return {
     plugins: [react(), localApiPlugin()],

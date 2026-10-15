@@ -76,6 +76,7 @@ import type { PlanDetailSource } from '../contexts/analysisSession'
 import { useAuth } from '../contexts/auth'
 import { useDialog, type DialogContextValue } from '../contexts/dialog'
 import * as pointsService from '../services/points/pointsService'
+import WeatherCard from '../components/WeatherCard'
 
 type OrderMode = 'main' | 'rain'
 type SegmentModeOverrides = Partial<Record<OrderMode, Record<string, TransportMode>>>
@@ -174,6 +175,10 @@ export function DetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailRecordId, isStoredSource, planId])
   const [selectedPlan, setSelectedPlan] = useState(initialSelectedPlan)
+  const weatherLocation = getWeatherCity(
+    lastInput?.location.name,
+    selectedPlan?.stops.map((stop) => stop.address),
+  )
   const [isRainMode, setIsRainMode] = useState(false)
   const [stopOrders, setStopOrders] = useState<Partial<Record<OrderMode, string[]>>>(
     {},
@@ -914,6 +919,8 @@ export function DetailPage() {
         <h1 className="page-title">{selectedPlan.title}</h1>
         <p className="page-copy">{selectedPlan.summary}</p>
       </div>
+
+      <WeatherCard location={weatherLocation} />
 
       <dl className="detail-metrics">
         <div className="detail-metric-card">
@@ -2112,6 +2119,45 @@ function getDetailRecordId(value: unknown, search = ''): string | null {
   }
 
   return new URLSearchParams(search).get('recordId')
+}
+
+function getWeatherCity(locationName?: string, addresses: Array<string | undefined> = []) {
+  const supportedCities = [
+    ['臺北市', '台北市'],
+    ['新北市'],
+    ['桃園市'],
+    ['臺中市', '台中市'],
+    ['臺南市', '台南市'],
+    ['高雄市'],
+    ['基隆市'],
+    ['新竹市'],
+    ['嘉義市'],
+    ['新竹縣'],
+    ['苗栗縣'],
+    ['彰化縣'],
+    ['南投縣'],
+    ['雲林縣'],
+    ['嘉義縣'],
+    ['屏東縣'],
+    ['宜蘭縣'],
+    ['花蓮縣'],
+    ['臺東縣', '台東縣'],
+    ['澎湖縣'],
+    ['金門縣'],
+    ['連江縣'],
+  ]
+  const candidates = [...addresses, locationName]
+
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    for (const [canonical, ...aliases] of supportedCities) {
+      if ([canonical, ...aliases].some((name) => candidate.includes(name))) {
+        return canonical
+      }
+    }
+  }
+
+  return locationName?.trim() ?? ''
 }
 
 function getPlanDetailStateKey(
