@@ -6,6 +6,7 @@ import type { GenerateTripPlansRequest, Persona } from '../../src/services/ai/ty
 import type { PreferenceProfile } from '../../src/services/personalization/preferenceProfile.js'
 import { getMealSuitability } from '../../src/services/ai/mealSuitability.js'
 import { resolveCandidateRankingContext, type CandidateRankingContext } from './candidate-ranking-context.js'
+import { getRequiredMealWindows } from './trip-planning-rules.js'
 import {
   getPersonalizedCandidateScore,
   type PersonalizationCandidateBoost,
@@ -335,16 +336,26 @@ export async function getNearbyPlaceCandidates(
   const lng = input.location.lng
   const queryPlan = buildCandidateSearchQueryPlan(input, request.persona)
   const queries = queryPlan.queries
+  const calls = { initial: 0, gap: 0, firstStop: 0, supplement: 0 }
+  const executedQueries = new Set<string>()
+  let supplementDecision = 'not_considered'
+  const queryKey = (query: string, radius: number) => JSON.stringify([query, lat, lng, radius])
+  const searchCandidates = (query: string, radius: number, stage: keyof typeof calls) => {
+    calls[stage]++
+    executedQueries.add(queryKey(query, radius))
+    return searchPlaces(query, {
+      bias: lat && lng ? { lat, lng } : undefined,
+      maxResultCount: 20,
+      radiusMeters: radius,
+      cacheResults: stage !== 'supplement',
+    })
+  }
   debugSink?.recordQueryPlan({ phase: 'initial', ...queryPlan })
 
   try {
     const results = await Promise.all(
       queries.map(async (textQuery) => {
-        const queryPlaces = await searchPlaces(textQuery, {
-          bias: lat && lng ? { lat, lng } : undefined,
-          maxResultCount: 20,
-          radiusMeters: MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000,
-        })
+        const queryPlaces = await searchCandidates(textQuery, MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000, 'initial')
         debugSink?.recordQueryResult({
           phase: 'initial',
           query: textQuery,
@@ -356,6 +367,7 @@ export async function getNearbyPlaceCandidates(
     let places = dedupePlaces(results.flat())
 
     if (places.length === 0) {
+      supplementDecision = 'empty_baseline'
       return { firstStopCandidates: [], otherCandidates: [], allCandidates: [] }
     }
 
@@ -375,11 +387,7 @@ export async function getNearbyPlaceCandidates(
       const knownPlaceIds = new Set(places.map((place) => place.id).filter(Boolean))
       const gapResults = await Promise.all(
         gapQueries.map(async (textQuery) => {
-          const queryPlaces = await searchPlaces(textQuery, {
-            bias: lat && lng ? { lat, lng } : undefined,
-            maxResultCount: 20,
-            radiusMeters: BACKUP_CANDIDATE_MAX_DISTANCE_KM * 1000,
-          })
+          const queryPlaces = await searchCandidates(textQuery, BACKUP_CANDIDATE_MAX_DISTANCE_KM * 1000, 'gap')
           debugSink?.recordQueryResult({
             phase: 'gap',
             query: textQuery,
@@ -412,11 +420,7 @@ export async function getNearbyPlaceCandidates(
         const knownPlaceIds = new Set(places.map((place) => place.id).filter(Boolean))
         const firstStopGapResults = await Promise.all(
           firstStopGapQueries.map(async (textQuery) => {
-            const queryPlaces = await searchPlaces(textQuery, {
-              bias: lat && lng ? { lat, lng } : undefined,
-              maxResultCount: 20,
-              radiusMeters: FIRST_STOP_MAX_DISTANCE_KM * 1000,
-            })
+            const queryPlaces = await searchCandidates(textQuery, FIRST_STOP_MAX_DISTANCE_KM * 1000, 'firstStop')
             debugSink?.recordQueryResult({
               phase: 'gap',
               query: textQuery,
@@ -438,29 +442,159 @@ export async function getNearbyPlaceCandidates(
 
     logCandidatePoolSummary(input, candidates, candidateGaps, gapQueries.length)
 
-    const firstStopCandidates = getFirstStopCandidates(candidates, input)
-    const mainCandidates = candidates.filter(
-      (candidate) =>
-        typeof candidate.distanceKm !== 'number' ||
-        candidate.distanceKm <= MAIN_CANDIDATE_MAX_DISTANCE_KM,
-    )
-    const backupCandidates = candidates.filter(
-      (candidate) =>
-        typeof candidate.distanceKm !== 'number' ||
-        candidate.distanceKm <= BACKUP_CANDIDATE_MAX_DISTANCE_KM,
-    )
-    const otherCandidates =
-      mainCandidates.length >= MIN_MAIN_CANDIDATES ? mainCandidates : backupCandidates
+    const baseline = buildNearbyCandidatePools(candidates, input)
+    const decision = getCandidateSupplementPlan(baseline, input)
+    supplementDecision = decision.reason
+    if (!decision.plan) return baseline
+    const plan = decision.plan
+    const query = plan.theme === 'culture'
+      ? buildSearchQuery(input, request.persona).replace(`${input.location.name} attractions`.trim(),
+        `${input.location.name} 博物館 美術館 museum art gallery`.trim())
+      : plan.theme === 'coffee' ? '咖啡廳 cafe' : '公園 步道 park trail'
+    const radius = MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000
+    if (executedQueries.has(queryKey(query, radius))) {
+      supplementDecision = 'query_already_executed'
+      return baseline
+    }
 
-    return {
-      firstStopCandidates,
-      otherCandidates,
-      allCandidates: candidates,
+    // The legacy initial/gap/first-stop flow is complete. Only this optional
+    // request may fail independently; it never starts another supplement/repair.
+    try {
+      debugSink?.recordQueryPlan({ phase: 'gap', queries: [query], requestedQueryCount: 1, queryLimit: 1, truncated: false })
+      const raw = await searchCandidates(query, radius, 'supplement')
+      debugSink?.recordQueryResult({ phase: 'gap', query, rawPlaceCount: raw.length })
+      const knownIds = new Set(places.map(place => place.id))
+      const added = dedupePlaces(raw).filter(place => !knownIds.has(place.id))
+      if (!added.length) {
+        supplementDecision = 'no_new_candidates'
+        return baseline
+      }
+      let snapshot: Parameters<CandidateSearchDebugSink['recordCandidatePool']>[0] | undefined
+      const proposed = prepareCandidates([...places, ...added], input, tripWindow, lat, lng, {
+        recordQueryPlan() {}, recordQueryResult() {}, recordCandidatePool(value) { snapshot = value },
+      }, options)
+      const supplemented = buildNearbyCandidatePools(proposed, input)
+      if (!isCandidateSupplementImprovement(baseline, supplemented, plan, input)) {
+        supplementDecision = 'shortlist_not_improved_or_protected_candidates_lost'
+        return baseline
+      }
+      const acceptedIds = new Set(supplemented.allCandidates.map(candidate => candidate.placeId))
+      added.forEach(place => { if (acceptedIds.has(place.id)) placeDetailsCache.set(place.id, place) })
+      if (snapshot) debugSink?.recordCandidatePool(snapshot)
+      supplementDecision = 'accepted'
+      return supplemented
+    } catch (error) {
+      supplementDecision = 'supplement_failed'
+      console.warn('Optional candidate supplement failed:', error)
+      return baseline
     }
   } catch (error) {
+    supplementDecision = 'legacy_search_failed'
     console.error('Failed to get nearby recommendations:', error)
     return { firstStopCandidates: [], otherCandidates: [], allCandidates: [] }
+  } finally {
+    console.info('[candidate-search-cost]', { ...calls,
+      legacyTotal: calls.initial + calls.gap + calls.firstStop,
+      total: calls.initial + calls.gap + calls.firstStop + calls.supplement, supplementDecision })
   }
+}
+
+function buildNearbyCandidatePools(candidates: VerifiedPlaceCandidate[], input: TripInput): NearbyPlaceCandidates {
+  const firstStopCandidates = getFirstStopCandidates(candidates, input)
+  const mainCandidates = candidates.filter(
+    (candidate) =>
+      typeof candidate.distanceKm !== 'number' ||
+      candidate.distanceKm <= MAIN_CANDIDATE_MAX_DISTANCE_KM,
+  )
+  const backupCandidates = candidates.filter(
+    (candidate) =>
+      typeof candidate.distanceKm !== 'number' ||
+      candidate.distanceKm <= BACKUP_CANDIDATE_MAX_DISTANCE_KM,
+  )
+  const otherCandidates =
+    mainCandidates.length >= MIN_MAIN_CANDIDATES ? mainCandidates : backupCandidates
+
+  return { firstStopCandidates, otherCandidates, allCandidates: candidates }
+}
+
+type SearchSupplementTheme = CandidateRankingContext['themes'][number]
+type CandidateSupplementPlan = { themes: SearchSupplementTheme[]; theme: SearchSupplementTheme; scoreFloor: number }
+
+function getCandidateSupplementThemes(input: TripInput): SearchSupplementTheme[] {
+  if (input.category !== 'other' || typeof input.location.lat !== 'number' || typeof input.location.lng !== 'number' ||
+    !buildTripWindow(input) || tripOverlapsClockWindow(input, 0, 6 * 60) || tripOverlapsClockWindow(input, 21 * 60, 24 * 60)) return []
+  const context = resolveCandidateRankingContext(input)
+  const text = (input.customCategory ?? '').normalize('NFKC').replace(/\s+/g, '')
+  if (context.customStatus !== 'recognized' || context.avoidCoffee || /不|別|避開|文化活動|戶外活動/.test(text)) return []
+  const mixed = context.themes.length === 2 && context.themes.includes('culture') && context.themes.includes('coffee')
+  if (context.themes.length > 1 && !mixed) return []
+  if (context.themes.includes('culture')) {
+    const pair = /^(?:文化\+(?:咖啡|咖啡廳|咖啡館|咖啡店)|(?:咖啡|咖啡廳|咖啡館|咖啡店)\+文化)$/.test(text)
+    return /(博物館|美術館|美術展覽)/.test(text) || mixed && (pair || /文化展覽/.test(text)) ? context.themes : []
+  }
+  if (context.themes.includes('coffee')) return /咖啡(?:廳|館|店)/.test(text) ? context.themes : []
+  return context.themes.includes('outdoor') && /(公園|步道)/.test(text) && !input.tags.includes('indoor_first') ? context.themes : []
+}
+
+function matchesSearchSupplementTheme(candidate: VerifiedPlaceCandidate, theme: SearchSupplementTheme) {
+  return theme === 'culture' ? hasConfirmedCulturalPrimaryPurpose(candidate)
+    : theme === 'coffee' ? candidate.role === 'food' && candidate.foodSubtype === 'cafe' : isOutdoorPromptCandidate(candidate)
+}
+
+function isSearchActivity(candidate: VerifiedPlaceCandidate) {
+  return ['main_activity', 'open_space', 'shopping'].includes(candidate.role ?? '')
+}
+
+function hasSupplementMealEvidence(candidates: VerifiedPlaceCandidate[], input: TripInput) {
+  const window = buildTripWindow(input)
+  if (!window) return false
+  return getRequiredMealWindows(input).every(meal => candidates.some(candidate => candidate.role === 'food' &&
+    getMealSuitability(candidate) === 'meal_likely' && candidate.openingHours &&
+    isOpeningHoursUsableForArrivalRange(candidate.openingHours, Math.max(window.startMinutes, meal.start),
+      Math.min(window.endMinutes, meal.end), MIN_FOOD_CANDIDATE_VISIT_MINUTES, Math.min(window.endMinutes, meal.end))))
+}
+
+function getCandidateSupplementPlan(pool: NearbyPlaceCandidates, input: TripInput): { reason: string; plan: CandidateSupplementPlan | null } {
+  const skip = (reason: string) => ({ reason, plan: null })
+  const themes = getCandidateSupplementThemes(input)
+  if (!themes.length) return skip('unsupported_intent_or_time')
+  const selection = getPromptCandidateSelection(pool)
+  const activities = selection.promptCandidates.filter(isSearchActivity)
+  const otherActivities = activities.filter(candidate => !themes.some(theme => matchesSearchSupplementTheme(candidate, theme)))
+  const reference = otherActivities.length ? otherActivities : activities
+  if (!reference.length) return skip('no_activity_quality_reference')
+  // The grammar identifies a visit, not a desired venue count. One visible
+  // option per theme, comparable to this shortlist's activities, is sufficient.
+  const scoreFloor = Math.min(...reference.map(candidate => candidate.score ?? -Infinity))
+  if (!Number.isFinite(scoreFloor)) return skip('no_activity_quality_reference')
+  const theme = themes.find(value => !selection.promptCandidates.some(candidate =>
+    matchesSearchSupplementTheme(candidate, value) && (candidate.score ?? -Infinity) >= scoreFloor))
+  if (!theme) return skip('already_covered')
+  if (Object.values(getCandidateGaps(pool.allCandidates, input)).some(Boolean) || !pool.firstStopCandidates.length ||
+    !hasSupplementMealEvidence(selection.promptCandidates, input)) return skip('legacy_safety_gaps_remain')
+  return { reason: 'needed', plan: { themes, theme, scoreFloor } }
+}
+
+function isCandidateSupplementImprovement(before: NearbyPlaceCandidates, after: NearbyPlaceCandidates,
+  plan: CandidateSupplementPlan, input: TripInput) {
+  const oldPrompt = getPromptCandidateSelection(before).promptCandidates
+  const nextPrompt = getPromptCandidateSelection(after).promptCandidates
+  const nextIds = new Set(nextPrompt.map(candidate => candidate.placeId))
+  const nextFirst = new Set(after.firstStopCandidates.map(candidate => candidate.placeId))
+  if (!before.firstStopCandidates.every(candidate => nextFirst.has(candidate.placeId))) return false
+  const matched = (candidates: VerifiedPlaceCandidate[], theme: SearchSupplementTheme) => candidates.filter(candidate =>
+    matchesSearchSupplementTheme(candidate, theme) && (candidate.score ?? -Infinity) >= plan.scoreFloor).length
+  if (matched(nextPrompt, plan.theme) <= matched(oldPrompt, plan.theme) ||
+    plan.themes.some(theme => matched(nextPrompt, theme) < matched(oldPrompt, theme))) return false
+  const mealsRequired = getRequiredMealWindows(input).length > 0
+  const protectedCandidates = oldPrompt.filter(candidate =>
+    isSearchActivity(candidate) && !matchesSearchSupplementTheme(candidate, plan.theme) ||
+    mealsRequired && candidate.role === 'food' && getMealSuitability(candidate) === 'meal_likely' ||
+    input.tags.includes('food_first') && candidate.role === 'food')
+  if (!protectedCandidates.every(candidate => nextIds.has(candidate.placeId))) return false
+  const buckets = [isLocalLifestylePromptCandidate, isOutdoorPromptCandidate, isShoppingPromptCandidate,
+    isIndoorCulturePromptCandidate, isNonCafeFoodCandidate, isCafeDessertCandidate]
+  return hasSupplementMealEvidence(nextPrompt, input) && buckets.every(matches => !oldPrompt.some(matches) || nextPrompt.some(matches))
 }
 
 function prepareCandidates(
@@ -2018,6 +2152,7 @@ async function searchPlaces(
     bias?: { lat: number; lng: number }
     maxResultCount?: number
     radiusMeters?: number
+    cacheResults?: boolean
   } = {},
 ): Promise<GooglePlace[]> {
   if (!GOOGLE_PLACES_API_KEY) return []
@@ -2049,7 +2184,7 @@ async function searchPlaces(
 
   const data = (await response.json()) as GooglePlacesResponse
   const places = data.places ?? []
-  places.forEach((place) => {
+  if (options.cacheResults !== false) places.forEach((place) => {
     if (place.id) placeDetailsCache.set(place.id, place)
   })
 
