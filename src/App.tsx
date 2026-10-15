@@ -1,0 +1,183 @@
+import { useEffect, useRef, useState } from 'react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import {
+  AnalysisSessionProvider,
+} from './contexts/AnalysisSessionContext'
+import { AuthProvider } from './contexts/AuthContext'
+import { DialogProvider } from './contexts/DialogContext'
+import { useAnalysisSession } from './contexts/analysisSession'
+import { useAuth } from './contexts/auth'
+import mascotMain from './assets/mascot/mascot-main.webp'
+import './App.css'
+
+const navItems = [
+  { to: '/persona', label: '個性化設定' },
+  { to: '/favorites', label: '收藏' },
+  { to: '/recent', label: '最近生成' },
+  { to: '/points', label: '點數管理' },
+]
+
+function App() {
+  const [isSplashVisible, setIsSplashVisible] = useState(true)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setIsSplashVisible(false)
+    }, 2000)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [])
+
+  if (isSplashVisible) {
+    return <SplashScreen />
+  }
+
+  return (
+    <AuthProvider>
+      <AnalysisSessionProvider>
+        <DialogProvider>
+          <AppLayout />
+        </DialogProvider>
+      </AnalysisSessionProvider>
+    </AuthProvider>
+  )
+}
+
+function SplashScreen() {
+  return (
+    <main className="splash-screen" aria-label="TripNeeder 開機畫面">
+      <div className="splash-stage">
+        <img
+          className="splash-mascot"
+          src={mascotMain}
+          alt="TripNeeder 奶油白旅行貓吉祥物"
+          width="640"
+          height="640"
+          decoding="async"
+          loading="eager"
+        />
+        <div className="splash-wordmark" aria-label="TripNeeder">
+          TripNeeder
+        </div>
+        <div className="splash-progress" aria-hidden="true">
+          <span />
+        </div>
+      </div>
+    </main>
+  )
+}
+
+function AppLayout() {
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const menuAreaRef = useRef<HTMLDivElement | null>(null)
+  const { plannerPath } = useAnalysisSession()
+  const { user, isAuthLoading, signOut } = useAuth()
+  const navigate = useNavigate()
+
+  async function handleSignOut() {
+    await signOut()
+    navigate('/')
+  }
+
+  useEffect(() => {
+    if (!isMenuOpen) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        menuAreaRef.current?.contains(event.target)
+      ) {
+        return
+      }
+
+      setIsMenuOpen(false)
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+    }
+  }, [isMenuOpen])
+
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="menu-area" ref={menuAreaRef}>
+          <button
+            className="menu-button"
+            type="button"
+            aria-label={isMenuOpen ? '關閉選單' : '開啟選單'}
+            aria-expanded={isMenuOpen}
+            aria-controls="main-menu"
+            onClick={() => setIsMenuOpen((current) => !current)}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+
+          {isMenuOpen ? (
+            <nav id="main-menu" className="app-nav" aria-label="主要導覽">
+              <NavLink
+                to={plannerPath}
+                className={({ isActive }) =>
+                  isActive ? 'nav-link nav-link-active' : 'nav-link'
+                }
+                onClick={() => setIsMenuOpen(false)}
+              >
+                行程規劃
+              </NavLink>
+              {navItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    isActive ? 'nav-link nav-link-active' : 'nav-link'
+                  }
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </nav>
+          ) : null}
+        </div>
+
+        <NavLink to={plannerPath} className="brand" aria-label="回到行程規劃">
+          TripNeeder
+        </NavLink>
+
+        <div className="auth-actions">
+          {user ? (
+            <button
+              className="auth-button"
+              type="button"
+              onClick={() => void handleSignOut()}
+            >
+              登出
+            </button>
+          ) : (
+            <NavLink
+              className="auth-button auth-link"
+              to="/login"
+              aria-disabled={isAuthLoading}
+            >
+              登入
+            </NavLink>
+          )}
+        </div>
+      </header>
+
+      <main className="app-main">
+        <Outlet />
+      </main>
+    </div>
+  )
+}
+
+export default App

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Tripneeder</title>
+  <desc id="desc">A muted route mark icon for Tripneeder.</desc>
+  <rect width="512" height="512" rx="96" fill="#f6f2ea"/>
+  <path d="M126 146c40-48 108-62 164-34 44 22 74 64 80 114 6 52-17 104-60 134l-54 38-54-38c-43-30-66-82-60-134 4-30 17-58 38-80z" fill="#5f6f51"/>
+  <circle cx="256" cy="234" r="54" fill="#fffaf2"/>
+  <circle cx="256" cy="234" r="24" fill="#b36b5d"/>
+  <path d="M118 386c42-28 82-34 120-18 36 15 70 14 102-4 22-12 40-29 54-48" fill="none" stroke="#2d2b26" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M124 400c39-21 75-25 108-11 42 18 82 16 120-4 19-10 36-22 51-38" fill="none" stroke="#8fa085" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

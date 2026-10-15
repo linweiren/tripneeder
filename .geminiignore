@@ -1,0 +1,18 @@
+# 讓 Agent 忽略這些檔案，節省 Token 並避免干擾
+
+# 使用者私人筆記與提示詞
+交接提示詞.txt
+
+# 測試與暫存
+tests/data/
+tests/output/
+*.log
+.*.log
+
+# 系統與環境
+.env
+.env.*
+node_modules/
+dist/
+.claude/
+.gemini/
