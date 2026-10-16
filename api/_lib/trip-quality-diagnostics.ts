@@ -1,0 +1,209 @@
+import type { TripInput, TripPlan } from '../../src/types/trip.js'
+import { getMealSuitability } from '../../src/services/ai/mealSuitability.js'
+import { resolveCandidateRankingContext } from './candidate-ranking-context.js'
+import { hasConfirmedCulturalPrimaryPurpose } from './google-places.js'
+import type { NearbyPlaceCandidates, PromptCandidateSelection, VerifiedPlaceCandidate } from './google-places.js'
+import { getDefaultStopDuration, getMaximumStopDuration, getMinimumStopDuration } from './trip-plan-metrics.js'
+import { getRequiredMealWindows, isStopAlignedWithMealWindow, parseTimeToMinutes } from './trip-planning-rules.js'
+import { getRequiredMealCoverageIssues } from './trip-quality-rules.js'
+import { getEstimatedPlanArrivalMinutes } from './trip-timeline.js'
+
+type Theme = ReturnType<typeof resolveCandidateRankingContext>['themes'][number]
+type EvidenceStatus = 'confirmed' | 'not_matched' | 'insufficient_evidence' | 'unknown'
+type Evidence = { status: EvidenceStatus; basis: string }
+type Venue = { name: string; types?: string[]; foodSubtype?: string; role?: string }
+export type DiagnosticStageContext = {
+  attemptId?: number
+  reason?: string
+  disposition?: 'provisional' | 'selected' | 'rejected'
+}
+
+// These are evidence labels, never new selection or validation rules. In particular,
+// absence of a museum label cannot disprove an outdoor art/cultural experience.
+function themeEvidence(theme: Theme, venue: Venue): Evidence {
+  const types = venue.types ?? []
+  if (theme === 'culture') {
+    if (hasConfirmedCulturalPrimaryPurpose(venue)) return { status: 'confirmed', basis: 'existing_cultural_primary_purpose_helper' }
+    if (!types.length) return { status: 'unknown', basis: 'no_place_type_evidence' }
+    return { status: 'insufficient_evidence', basis: 'taxonomy_does_not_establish_cultural_experience' }
+  }
+  const expected = theme === 'coffee' ? ['cafe', 'coffee_shop'] : ['park', 'natural_feature', 'hiking_area']
+  if (types.some(type => expected.includes(type))) return { status: 'confirmed', basis: 'place_types' }
+  if (!types.length) return { status: 'unknown', basis: 'no_place_type_evidence' }
+  // Only unambiguous, conflicting primary venue types support a negative label.
+  const conflicting = theme === 'coffee' ? ['museum', 'art_gallery', 'park', 'natural_feature'] : ['cafe', 'coffee_shop', 'museum']
+  if (types.some(type => conflicting.includes(type))) return { status: 'not_matched', basis: 'different_primary_venue_type' }
+  return { status: 'insufficient_evidence', basis: 'taxonomy_inconclusive' }
+}
+
+function coverage(evidence: Evidence[]): EvidenceStatus {
+  if (evidence.some(item => item.status === 'confirmed')) return 'confirmed'
+  if (!evidence.length || evidence.some(item => item.status === 'unknown')) return 'unknown'
+  if (evidence.some(item => item.status === 'insufficient_evidence')) return 'insufficient_evidence'
+  return 'not_matched'
+}
+
+/** Owned only by the existing opt-in, non-production debug session. No I/O or external calls. */
+export class TripQualityDiagnostics {
+  private readonly input: TripInput
+  private readonly intent
+  private candidates: VerifiedPlaceCandidate[] = []
+  private promptCandidates: VerifiedPlaceCandidate[] | null = null
+  private promptConfirmedEntries: Partial<Record<Theme, number>> = {}
+  private poolObserved = false
+  private nextAttempt = 0
+  private readonly stages: ReturnType<TripQualityDiagnostics['snapshot']>[] = []
+  private readonly transitions: Array<{
+    phase: string; planId: string; context: DiagnosticStageContext
+    beforeStage: number; afterStage: number
+    coverageAddedMinutes: number | null
+    changes: Array<{ stopId: string; kind: string; beforePlaceId: string | null; afterPlaceId: string | null
+      beforeDuration: number | null; afterDuration: number | null; durationDelta: number | null
+      beforeMealHint: string | null; afterMealHint: string | null }>
+  }> = []
+
+  constructor(input: TripInput) {
+    this.input = input
+    this.intent = resolveCandidateRankingContext(input)
+  }
+
+  recordCandidates(pool: NearbyPlaceCandidates) {
+    this.poolObserved = true
+    this.candidates = [...new Map([...pool.allCandidates, ...pool.firstStopCandidates, ...pool.otherCandidates]
+      .map(candidate => [candidate.placeId, candidate])).values()]
+  }
+
+  recordPrompt(selection: PromptCandidateSelection) {
+    this.promptCandidates = [...new Map(selection.promptCandidates.map(candidate => [candidate.placeId, candidate])).values()]
+    this.promptConfirmedEntries = Object.fromEntries(this.intent.themes.map(theme => [theme,
+      selection.promptCandidates.filter(candidate => themeEvidence(theme, candidate).status === 'confirmed').length]))
+  }
+
+  beginAttempt(plan: TripPlan, phase: string) {
+    const attemptId = ++this.nextAttempt
+    this.recordStage(plan, `${phase}:input`, { attemptId, disposition: 'provisional' })
+    return attemptId
+  }
+
+  recordStage(plan: TripPlan, phase: string, context: DiagnosticStageContext = {}) {
+    this.stages.push(this.snapshot(plan, phase, context))
+  }
+
+  recordTransition(before: TripPlan, after: TripPlan, phase: string, context: DiagnosticStageContext = {}) {
+    const from = this.snapshot(before, `${phase}:before`, context)
+    const to = this.snapshot(after, `${phase}:after`, context)
+    const ids = new Set([...from.stops, ...to.stops].map(stop => stop.id))
+    const changes = [...ids].flatMap(id => {
+      const a = from.stops.find(stop => stop.id === id)
+      const b = to.stops.find(stop => stop.id === id)
+      const kind = !a ? 'added' : !b ? 'removed' : a.placeId !== b.placeId || a.name !== b.name ? 'replaced'
+        : a.duration !== b.duration ? 'duration_changed' : a.type !== b.type ? 'purpose_changed' : null
+      return kind ? [{ stopId: id, kind, beforePlaceId: a?.placeId ?? null, afterPlaceId: b?.placeId ?? null,
+        beforeDuration: a?.duration ?? null, afterDuration: b?.duration ?? null,
+        durationDelta: a && b ? b.duration - a.duration : null,
+        beforeMealHint: a?.meal.classificationHint ?? null, afterMealHint: b?.meal.classificationHint ?? null }] : []
+    })
+    const beforeStage = this.stages.length
+    const isCoverageStep = ['repair:coverage-existing-activities', 'repair:coverage-target',
+      'repair:capacity-trim-coverage-trial'].includes(phase)
+    this.transitions.push({ phase, planId: before.id, context: { ...context }, beforeStage, afterStage: beforeStage + 1,
+      coverageAddedMinutes: isCoverageStep ? changes.reduce((sum, change) => sum + Math.max(0, change.durationDelta ?? 0), 0) : null,
+      changes })
+    this.stages.push(from, to)
+  }
+
+  private snapshot(plan: TripPlan, phase: string, context: DiagnosticStageContext) {
+    const timelineInput = { ...this.input, scheduleStartTime: plan.scheduleStartTime }
+    const arrivals = getEstimatedPlanArrivalMinutes(plan, timelineInput)
+    const mealWindows = getRequiredMealWindows(timelineInput)
+    const stops = plan.stops.map((stop, index) => {
+      const candidate = this.candidates.find(item => stop.placeId && item.placeId === stop.placeId)
+      // Never copy AI prose, arbitrary plan fields, prompts, tokens or historical events.
+      const types = candidate?.types ?? stop.googleTypes ?? []
+      const venue = { name: candidate?.name ?? stop.name, types, foodSubtype: candidate?.foodSubtype ?? stop.foodSubtype }
+      const themes = Object.fromEntries(this.intent.themes.map(theme => [theme, themeEvidence(theme, venue)])) as Record<Theme, Evidence>
+      if (stop.type === 'food' && themes.culture?.status === 'confirmed') {
+        themes.culture = { status: 'insufficient_evidence', basis: 'cultural_venue_but_food_activity_purpose' }
+      }
+      return {
+        id: stop.id, name: stop.name, placeId: stop.placeId ?? null, type: stop.type, duration: stop.duration,
+        arrivalMinutes: arrivals[index], departureMinutes: arrivals[index] + stop.duration,
+        evidenceSource: candidate ? 'candidate_place_id' : types.length ? 'stop_place_types' : 'unknown',
+        googleTypes: [...types], foodSubtype: venue.foodSubtype ?? null,
+        candidateRole: candidate?.role ?? stop.candidateRole ?? null,
+        themes,
+        durationReference: { minimum: getMinimumStopDuration(stop), default: getDefaultStopDuration(stop.type),
+          maximum: getMaximumStopDuration(stop), basis: 'existing_type_name_soft_reference', hardLimit: false },
+        exceedsReference: stop.duration > getMaximumStopDuration(stop),
+        activityEvidence: { status: 'unknown' as const, basis: 'no_verified_activity_program_or_duration_evidence' },
+        meal: {
+          classificationHint: getMealSuitability(venue),
+          // Even restaurant types are a relative hint, not verified full-meal service.
+          suitability: types.length || venue.foodSubtype ? 'uncertain' : 'unknown',
+          verificationBasis: 'no_verified_menu_or_meal_service_evidence',
+          satisfiesExistingMealWindows: mealWindows.filter(window => stop.type === 'food' &&
+            isStopAlignedWithMealWindow(arrivals[index], Number(stop.duration) || getDefaultStopDuration('food'), window))
+            .map(window => window.id),
+        },
+      }
+    })
+    const requestedStart = parseTimeToMinutes(this.input.startTime)
+    return {
+      phase, planId: plan.id, planType: plan.type, context: { ...context },
+      requestedStartTime: this.input.startTime, requestedEndTime: this.input.endTime,
+      scheduleStartTime: plan.scheduleStartTime ?? this.input.startTime,
+      startDelayMinutes: requestedStart === null ? null : (arrivals[0] ?? requestedStart) - requestedStart,
+      timelineBasis: 'existing_estimated_plan_arrivals',
+      transportMinutes: plan.transportSegments.reduce((sum, leg) => sum + leg.duration, 0),
+      stops,
+      themeCoverage: Object.fromEntries(this.intent.themes.map(theme => [theme, {
+        status: coverage(stops.map(stop => stop.themes[theme])),
+        confirmedStopIds: stops.filter(stop => stop.themes[theme].status === 'confirmed').map(stop => stop.id),
+        experienceDepth: 'unknown', // A venue category alone cannot prove a substantive experience.
+      }])),
+      meals: { requestedWindows: getRequiredMealWindows(this.input).map(window => window.id),
+        effectiveWindows: mealWindows.map(window => window.id),
+        existingRuleIssues: getRequiredMealCoverageIssues(plan, this.input),
+        formalMealServiceVerified: 'unknown', formalMealServiceRequirement: 'not_specified_by_existing_validation',
+        ruleBasis: 'food_stop_meal_timing_and_minimum_duration' },
+    }
+  }
+
+  buildReport(finalPlans: TripPlan[]) {
+    const final = finalPlans.map(plan => this.snapshot(plan, 'final-delivery', { disposition: 'selected' }))
+    return {
+      version: 1,
+      intent: { explicitPositiveThemes: this.intent.themes, parsingStatus: this.intent.customStatus,
+        source: 'existing_candidate_ranking_context', unrecognizedIntent: this.intent.customStatus === 'unknown' },
+      candidateThemes: this.intent.themes.map(theme => {
+        const pool = this.candidates.map(candidate => ({ placeId: candidate.placeId, name: candidate.name,
+          evidence: themeEvidence(theme, candidate), score: candidate.score ?? null,
+          poolOrder: this.candidates.indexOf(candidate) + 1,
+          openingHoursKnown: candidate.openingHours?.isKnown ?? false,
+          availabilitySlots: [...(candidate.availabilitySlots ?? [])],
+          promptExposed: this.promptCandidates === null ? null : this.promptCandidates.some(item => item.placeId === candidate.placeId) }))
+        return { theme, poolObserved: this.poolObserved, promptObserved: this.promptCandidates !== null,
+          eligiblePoolConfirmedCount: this.poolObserved ? pool.filter(item => item.evidence.status === 'confirmed').length : null,
+          eligiblePoolUncertainCount: this.poolObserved ? pool.filter(item => ['unknown', 'insufficient_evidence'].includes(item.evidence.status)).length : null,
+          eligiblePoolNotMatchedCount: this.poolObserved ? pool.filter(item => item.evidence.status === 'not_matched').length : null,
+          promptConfirmedCount: this.promptCandidates === null ? null : this.promptCandidates.filter(item => themeEvidence(theme, item).status === 'confirmed').length,
+          promptConfirmedEntryCount: this.promptCandidates === null ? null : this.promptConfirmedEntries[theme] ?? 0,
+          promptUncertainCount: this.promptCandidates === null ? null : this.promptCandidates.filter(item => ['unknown', 'insufficient_evidence'].includes(themeEvidence(theme, item).status)).length,
+          eligibilityBasis: 'existing_filtered_candidate_pool_not_full_itinerary_feasibility',
+          fullItineraryFeasibility: 'unknown', candidates: pool }
+      }),
+      stages: this.stages,
+      transitions: this.transitions,
+      earliestVisible: [...this.stages, ...final].flatMap((stage, stageIndex, all) => stage.stops
+        .filter(stop => !all.slice(0, stageIndex).some(earlier => earlier.planId === stage.planId &&
+          earlier.stops.some(item => item.id === stop.id && item.placeId === stop.placeId && item.name === stop.name)))
+        .map(stop => ({ planId: stage.planId, stopId: stop.id, placeId: stop.placeId, name: stop.name,
+          phase: stage.phase, duration: stop.duration, source: 'first_observed_snapshot_not_reconstructed_raw_json' }))),
+      final,
+      limitations: ['Venue evidence does not prove activity content, experience depth or a full meal menu.',
+        'Provisional repair attempts may be discarded; final-delivery is authoritative.',
+        'AI snapshots begin after the existing parser; omitted raw fields and unsaved JSON cannot be reconstructed.',
+        'Grouped meal/timing repair snapshots do not identify every internal speculative substep.'],
+    }
+  }
+}

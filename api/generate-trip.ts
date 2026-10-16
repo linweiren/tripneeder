@@ -35,8 +35,10 @@ import {
 import {
   createTripCandidateDebugSession,
   writeTripCandidateDebugReport,
+  type TripCandidateDebugSession,
 } from './_lib/trip-candidate-debug.js'
 import { loadServerPreferenceProfile } from './_lib/server-personalization-profile.js'
+import type { DiagnosticStageContext } from './_lib/trip-quality-diagnostics.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
 import { chooseSupplementalInsertion, createSupplementRouteContext, createRepairRouteResolver,
   resolveMealComparisonRoutes, SUPPLEMENT_SIMILAR_SCORE_TOLERANCE,
@@ -422,6 +424,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             plan as TripPlan,
             nearbyPlaceCandidates,
           )
+          candidateDebugSession?.recordPlanTransition(plan as TripPlan, groundedPlan, 'stream:grounding')
           const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
           candidateDebugSession?.recordValidation(groundedPlan, validation, 'stream')
           if (!validation.validationPerformed) {
@@ -468,6 +471,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             plan as TripPlan,
             nearbyPlaceCandidates,
           )
+          candidateDebugSession?.recordPlanTransition(plan as TripPlan, groundedPlan, 'stream-tail:grounding')
           const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
           candidateDebugSession?.recordValidation(groundedPlan, validation, 'stream-tail')
           if (!validation.validationPerformed) {
@@ -495,11 +499,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     let finalResponse: GenerateTripPlansResponse
+    let initialDiagnosticPhase = 'initial-ai-output'
     try {
       try {
         finalResponse = parseTripPlanSkeletonResponse(fullText)
       } catch {
         if (validatedPlans.length > 0) {
+          initialDiagnosticPhase = 'initial-stream-validation-fallback'
           finalResponse = {
             plans: validatedPlans,
             warnings: ['部分方案產生不完整，已為您呈現已完成的行程。']
@@ -515,13 +521,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             tripPrompt,
             'initial-json-repair',
           )
+          initialDiagnosticPhase = 'initial-json-repair-ai-output'
         }
       }
 
       if (!finalResponse || !Array.isArray(finalResponse.plans)) {
         finalResponse = { plans: validatedPlans || [], warnings: [] }
       }
-      candidateDebugSession?.recordAiOutput(finalResponse.plans, 'initial-ai-output')
+      candidateDebugSession?.recordAiOutput(finalResponse.plans, initialDiagnosticPhase)
 
       for (const plan of finalResponse.plans) {
         const bias = request.input.location.lat && request.input.location.lng
@@ -531,6 +538,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           plan as TripPlan,
           nearbyPlaceCandidates,
         )
+        candidateDebugSession?.recordPlanTransition(plan as TripPlan, groundedPlan, 'final-parse:grounding')
         const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
         candidateDebugSession?.recordValidation(groundedPlan, validation, 'final-parse')
         if (!validation.validationPerformed) {
@@ -608,6 +616,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   plan as TripPlan,
                   nearbyPlaceCandidates,
                 )
+                candidateDebugSession?.recordPlanTransition(plan as TripPlan, groundedPlan, 'retry:grounding')
                 const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
                 candidateDebugSession?.recordValidation(groundedPlan, validation, 'retry')
                 if (!validation.validationPerformed) {
@@ -683,6 +692,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           new Set(),
           'final-repair',
           crossPlanUsedPlaceIds,
+          candidateDebugSession ?? undefined,
         )
 
         finalRepairResults.push({
@@ -752,6 +762,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   normalizedRetryPlan,
                   nearbyPlaceCandidates,
                 )
+                candidateDebugSession?.recordPlanTransition(normalizedRetryPlan, groundedPlan, 'refill:grounding')
                 const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
                 candidateDebugSession?.recordValidation(groundedPlan, validation, 'refill')
                 if (!validation.validationPerformed) {
@@ -785,6 +796,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   new Set(),
                   'refill-final-repair',
                   new Set(finalResponse.plans.flatMap(getPlanPlaceIds)),
+                  candidateDebugSession ?? undefined,
                 )
                 candidateDebugSession?.recordRepair(
                   validatedPlan,
@@ -851,6 +863,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               new Set(),
               'local-refill-final-repair',
               new Set(finalResponse.plans.flatMap(getPlanPlaceIds)),
+              candidateDebugSession ?? undefined,
             )
             candidateDebugSession?.recordRepair(
               localPlan,
@@ -1348,8 +1361,12 @@ export async function repairPlanForDelivery(
   candidates: NearbyPlaceCandidates,
   avoidedPlaceIds: Set<string> = new Set(),
   options: { allowCoverageRepair?: boolean; crossPlanUsedPlaceIds?: Set<string>;
-    routeContext?: SupplementRouteContext; skipActivitySupplement?: boolean } = {},
+    routeContext?: SupplementRouteContext; skipActivitySupplement?: boolean;
+    debugSession?: TripCandidateDebugSession; debugPhase?: string } = {},
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
+  const debug = options.debugSession
+  const attemptId = debug?.beginRepairAttempt(plan, options.debugPhase ?? 'repair')
+  const diagnosticContext = debug ? { session: debug, stage: { attemptId } } : undefined
   const allowCoverageRepair = options.allowCoverageRepair ?? true
   const crossPlanUsedPlaceIds = options.crossPlanUsedPlaceIds ?? new Set<string>()
   const routeContext = options.routeContext ?? createSupplementRouteContext()
@@ -1401,10 +1418,11 @@ export async function repairPlanForDelivery(
   const routedPlan = normalizePlanTotalTime({
     ...plan, stops: scheduleAlignedStops, transportSegments: initialRouteRepair.segments,
   })
+  debug?.recordPlanTransition(plan, routedPlan, 'repair:verified-replacements-and-routes', { attemptId })
   const capacity = getScheduleCapacityMinutes(input)
   const startedWithOverflow = Boolean(capacity && getPlanActualDuration(routedPlan) > capacity)
   const initialCapacityRepair = allowCoverageRepair
-    ? await trimPlanToTimeWindow(shrinkPlanDurationToScheduleCapacity(routedPlan, input), input, resolveRoutes)
+    ? await trimPlanToTimeWindow(shrinkPlanDurationToScheduleCapacity(routedPlan, input), input, resolveRoutes, diagnosticContext)
     : { plan: routedPlan, routesFailed: false }
   const canAddStops = allowCoverageRepair && !startedWithOverflow && !initialRouteRepair.routesFailed &&
     initialCapacityRepair.plan.stops.length === scheduleAlignedStops.length
@@ -1424,11 +1442,16 @@ export async function repairPlanForDelivery(
   const mealCapacityRepair = allowCoverageRepair
     ? await trimPlanToTimeWindow(shrinkPlanDurationToScheduleCapacity(normalizePlanTotalTime({
         ...mealRepair.plan, stops: mealStops, transportSegments: mealRoutes.segments,
-      }), input), input, resolveRoutes)
+      }), input), input, resolveRoutes, diagnosticContext)
     : initialCapacityRepair
+  debug?.recordPlanTransition(routedPlan, mealCapacityRepair.plan, 'repair:capacity-and-required-meals', { attemptId,
+    reason: 'existing_capacity_meal_and_availability_repairs_substep_unknown' })
   const preExpansionPlan = canAddStops && !mealRoutes.routesFailed
     ? extendExistingActivitiesToMinimum(mealCapacityRepair.plan, input, candidates)
     : mealCapacityRepair.plan
+  debug?.recordPlanTransition(mealCapacityRepair.plan, preExpansionPlan, 'repair:coverage-existing-activities', {
+    attemptId, reason: 'minimum_required_actual_minutes',
+  })
   usedPlaceIds.clear()
   preExpansionPlan.stops.forEach(stop => { if (stop.placeId) usedPlaceIds.add(stop.placeId) })
   const expansionResult = canAddStops && !mealRoutes.routesFailed && !options.skipActivitySupplement
@@ -1481,11 +1504,15 @@ export async function repairPlanForDelivery(
   const coverageRepairedPlan = allowCoverageRepair && !isAboveMinimumCoverage(routeRepairedPlan, input)
     ? stretchPlanDurationToCoverage(routeRepairedPlan, input)
     : normalizePlanTotalTime(routeRepairedPlan)
+  debug?.recordPlanTransition(preExpansionPlan, routeRepairedPlan, 'repair:expansion-and-meal-alignment', { attemptId })
+  debug?.recordPlanTransition(routeRepairedPlan, coverageRepairedPlan, 'repair:coverage-target', {
+    attemptId, reason: 'coverage_repair_target_minutes',
+  })
   const capacityRepairedPlan = allowCoverageRepair
     ? shrinkPlanDurationToScheduleCapacity(coverageRepairedPlan, input)
     : coverageRepairedPlan
   const trimResult = allowCoverageRepair
-    ? await trimPlanToTimeWindow(capacityRepairedPlan, input, resolveRoutes)
+    ? await trimPlanToTimeWindow(capacityRepairedPlan, input, resolveRoutes, diagnosticContext)
     : { plan: coverageRepairedPlan, routesFailed: false }
   const trimmedPlan = trimResult.plan
   const postCoverageMealAlignment = allowCoverageRepair
@@ -1519,7 +1546,7 @@ export async function repairPlanForDelivery(
   // No additions or reordering may run after this capacity pass.
   const finalCapacityRepair = allowCoverageRepair
     ? await trimPlanToTimeWindow(
-        shrinkPlanDurationToScheduleCapacity(finalTimingAlignment.plan, input), input, resolveRoutes,
+        shrinkPlanDurationToScheduleCapacity(finalTimingAlignment.plan, input), input, resolveRoutes, diagnosticContext,
       )
     : { plan: finalTimingAlignment.plan, routesFailed: false }
   // Timing/capacity changes can invalidate a previously satisfied meal. Reorder only;
@@ -1529,6 +1556,7 @@ export async function repairPlanForDelivery(
         crossPlanUsedPlaceIds)
     : { plan: finalCapacityRepair.plan, routesFailed: false }
   const finalPlan = normalizePlanTotalTime(finalMealRepair.plan)
+  debug?.recordPlanTransition(coverageRepairedPlan, finalPlan, 'repair:final-capacity-meal-and-availability', { attemptId })
   const originalStayLoss = getOriginalStayLoss(initialCapacityRepair.plan.stops, finalPlan.stops)
   const addedActivities = expansionResult.stops.filter(stop =>
     !preExpansionPlan.stops.some(original => original.id === stop.id))
@@ -1545,6 +1573,8 @@ export async function repairPlanForDelivery(
       (await getDeliveryPlanIssues(alternative.plan, input, 'supplement-final-alternative', { candidates })).length === 0) {
       console.info('[supplement-final-alternative]', { planId: plan.id, originalStayLoss,
         alternativeLoss, routeCalls: routeContext.totalCalls, cacheHits: routeContext.cacheHits })
+      debug?.recordPlanTransition(finalPlan, alternative.plan, 'fallback:supplement-alternative-selected', { attemptId,
+        disposition: 'selected', reason: 'preserve_original_activity_stays' })
       return alternative
     }
   }
@@ -1735,12 +1765,14 @@ export async function repairAndValidatePlanForDelivery(
   avoidedPlaceIds: Set<string>,
   phase: string,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
+  debugSession?: TripCandidateDebugSession,
 ): Promise<{ plan: TripPlan | null; routesFailed: boolean; issues: string[] }> {
   const routeContext = createSupplementRouteContext()
   let firstAttempt = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
     allowCoverageRepair: false,
     crossPlanUsedPlaceIds,
     routeContext,
+    debugSession, debugPhase: `${phase}:first-attempt`,
   })
   let firstIssues = await getDeliveryPlanIssues(firstAttempt.plan, input, phase, { candidates })
   // One bounded comparison of whole repair results. Optional variety must not buy
@@ -1774,6 +1806,7 @@ export async function repairAndValidatePlanForDelivery(
     diversityFallbackTried = true
     const fallback = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
       allowCoverageRepair: true, routeContext, crossPlanUsedPlaceIds: new Set(),
+      debugSession, debugPhase: `${phase}:diversity-fallback-attempt`,
     })
     if (fallback.routesFailed || (await getDeliveryPlanIssues(fallback.plan, input,
       `${phase}-activity-diversity-fallback`, { candidates })).length > 0) return null
@@ -1790,6 +1823,9 @@ export async function repairAndValidatePlanForDelivery(
         (comparableFoodChange && travel(fallback.plan) < travel(current.plan))))) return null
     console.info('[activity-diversity-fallback]', { planId: plan.id, before: impact, after: alternative,
       routeCalls: routeContext.totalCalls, cacheHits: routeContext.cacheHits })
+    debugSession?.recordPlanTransition(current.plan, fallback.plan, 'fallback:activity-diversity-selected', {
+      disposition: 'selected', reason: 'existing_optional_diversity_comparison',
+    })
     return fallback
   }
   const preferredFirst = await restoreOptionalLoss(firstAttempt, firstIssues)
@@ -1812,6 +1848,7 @@ export async function repairAndValidatePlanForDelivery(
     allowCoverageRepair: true,
     crossPlanUsedPlaceIds,
     routeContext,
+    debugSession, debugPhase: `${phase}:coverage-attempt`,
   })
   let coverageIssues = await getDeliveryPlanIssues(
     coverageAttempt.plan,
@@ -1899,6 +1936,7 @@ export async function repairAndValidatePlanForDelivery(
   const fallbackAttempt = await repairPlanForDelivery(plan, input, candidates, new Set(), {
     allowCoverageRepair: false,
     crossPlanUsedPlaceIds,
+    debugSession, debugPhase: `${phase}:fallback-attempt`,
   })
   const fallbackIssues = await getDeliveryPlanIssues(fallbackAttempt.plan, input, `${phase}-fallback`, {
     candidates,
@@ -3138,6 +3176,7 @@ export async function trimPlanToTimeWindow(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
   resolveRoutes: typeof repairTransportSegments = repairTransportSegments,
+  diagnostics?: { session: TripCandidateDebugSession; stage: DiagnosticStageContext },
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
   const allowedMinutes = getAllowedTripMinutes(input)
   if (!allowedMinutes || plan.stops.length <= 2) {
@@ -3173,9 +3212,13 @@ export async function trimPlanToTimeWindow(
       if (mealAlignment.routesFailed) continue
       candidatePlan = mealAlignment.plan
       // Recover coverage through existing stays, never by adding back a deleted stop.
+      const coverageCandidate = isAboveMinimumCoverage(candidatePlan, input)
+        ? candidatePlan : stretchPlanDurationToCoverage(candidatePlan, input)
+      diagnostics?.session.recordPlanTransition(candidatePlan, coverageCandidate, 'repair:capacity-trim-coverage-trial', {
+        ...diagnostics.stage, disposition: 'provisional', reason: 'coverage_recovery_after_capacity_removal',
+      })
       candidatePlan = shrinkPlanDurationToScheduleCapacity(
-        isAboveMinimumCoverage(candidatePlan, input)
-          ? candidatePlan : stretchPlanDurationToCoverage(candidatePlan, input), input,
+        coverageCandidate, input,
       )
       if (!isAboveMinimumCoverage(candidatePlan, input)) continue
       if (getMissingMealWindows(candidatePlan.stops, input, mealWindows, candidatePlan.transportSegments).length > 0) continue

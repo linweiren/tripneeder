@@ -1,6 +1,8 @@
 /// <reference types="node" />
 
 import { appendFileSync } from 'node:fs'
+import { TripQualityDiagnostics } from './trip-quality-diagnostics.js'
+import type { DiagnosticStageContext } from './trip-quality-diagnostics.js'
 import type { Stop, TripInput, TripPlan } from '../../src/types/trip.js'
 import type {
   CandidateDebugPlace,
@@ -65,6 +67,7 @@ type DebugStop = {
 }
 
 export class TripCandidateDebugSession implements CandidateSearchDebugSink {
+  private readonly quality: TripQualityDiagnostics
   private readonly createdAt = new Date().toISOString()
   private readonly input: TripInput
   private readonly queryPlans: CandidateSearchQueryPlanDebug[] = []
@@ -86,6 +89,19 @@ export class TripCandidateDebugSession implements CandidateSearchDebugSink {
 
   constructor(input: TripInput) {
     this.input = input
+    this.quality = new TripQualityDiagnostics(input)
+  }
+
+  beginRepairAttempt(plan: TripPlan, phase: string) {
+    return this.quality.beginAttempt(plan, phase)
+  }
+
+  recordPlanStage(plan: TripPlan, phase: string, context?: DiagnosticStageContext) {
+    this.quality.recordStage(plan, phase, context)
+  }
+
+  recordPlanTransition(before: TripPlan, after: TripPlan, phase: string, context?: DiagnosticStageContext) {
+    this.quality.recordTransition(before, after, phase, context)
   }
 
   recordQueryPlan(plan: CandidateSearchQueryPlanDebug) {
@@ -112,6 +128,7 @@ export class TripCandidateDebugSession implements CandidateSearchDebugSink {
   }
 
   recordCandidateSets(candidates: NearbyPlaceCandidates) {
+    this.quality.recordCandidates(candidates)
     this.candidateSets = {
       firstStopCandidates: [...candidates.firstStopCandidates],
       otherCandidates: [...candidates.otherCandidates],
@@ -120,6 +137,7 @@ export class TripCandidateDebugSession implements CandidateSearchDebugSink {
   }
 
   recordAiInput(selection: PromptCandidateSelection) {
+    this.quality.recordPrompt(selection)
     this.aiInput = {
       nearStops: [...selection.nearStops],
       foodStops: [...selection.foodStops],
@@ -131,6 +149,7 @@ export class TripCandidateDebugSession implements CandidateSearchDebugSink {
 
   recordAiOutput(plans: TripPlan[], phase: string) {
     this.aiOutputs.push({ phase, plans: summarizePlans(plans) })
+    plans.forEach(plan => this.recordPlanStage(plan, phase))
   }
 
   recordValidation(
@@ -138,6 +157,7 @@ export class TripCandidateDebugSession implements CandidateSearchDebugSink {
     validation: PlacesValidationResult,
     phase: string,
   ) {
+    this.recordPlanTransition(plan, validation.validatedPlan, `${phase}:validation`, { disposition: 'provisional' })
     this.validations.push({
       phase,
       planId: plan.id,
@@ -157,6 +177,8 @@ export class TripCandidateDebugSession implements CandidateSearchDebugSink {
     issues: string[],
     phase: string,
   ) {
+    if (repairedPlan) this.recordPlanTransition(sourcePlan, repairedPlan, phase, { disposition: 'selected' })
+    else this.recordPlanStage(sourcePlan, `${phase}:rejected`, { disposition: 'rejected' })
     const afterStops = summarizeStops(repairedPlan?.stops ?? [])
     const afterKeys = new Set(afterStops.map(getDebugStopKey))
     const beforeStops = summarizeStops(sourcePlan.stops)
@@ -187,6 +209,7 @@ export class TripCandidateDebugSession implements CandidateSearchDebugSink {
       version: 1,
       createdAt: this.createdAt,
       outcome,
+      qualityDiagnostics: this.quality.buildReport(finalPlans),
       input: {
         location: { ...this.input.location },
         startTime: this.input.startTime,
