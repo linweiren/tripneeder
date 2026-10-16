@@ -1,10 +1,12 @@
 import type { TripInput, TripPlan } from '../../src/types/trip.js'
 import { getMealSuitability } from '../../src/services/ai/mealSuitability.js'
+import { getFoodPurposeHint } from './trip-food-purpose.js'
 import { resolveCandidateRankingContext } from './candidate-ranking-context.js'
-import { hasConfirmedCulturalPrimaryPurpose } from './google-places.js'
+import { hasConfirmedCulturalPrimaryPurpose, isCandidateOpenForVisit } from './google-places.js'
 import type { NearbyPlaceCandidates, PromptCandidateSelection, VerifiedPlaceCandidate } from './google-places.js'
 import { getDefaultStopDuration, getMaximumStopDuration, getMinimumStopDuration } from './trip-plan-metrics.js'
-import { getRequiredMealWindows, isStopAlignedWithMealWindow, parseTimeToMinutes } from './trip-planning-rules.js'
+import { getRequiredMealWindows, isStopAlignedWithMealWindow, parseTimeToMinutes,
+  MINIMUM_MEAL_DURATION_MINUTES, type RequiredMealWindow } from './trip-planning-rules.js'
 import { getRequiredMealCoverageIssues } from './trip-quality-rules.js'
 import { getEstimatedPlanArrivalMinutes } from './trip-timeline.js'
 
@@ -12,6 +14,75 @@ type Theme = ReturnType<typeof resolveCandidateRankingContext>['themes'][number]
 type EvidenceStatus = 'confirmed' | 'not_matched' | 'insufficient_evidence' | 'unknown'
 type Evidence = { status: EvidenceStatus; basis: string }
 type Venue = { name: string; types?: string[]; foodSubtype?: string; role?: string }
+type MealHint = ReturnType<typeof getMealSuitability>
+type MealDiagnosticStop = { id: string; placeId: string | null; name: string; type: string;
+  duration: number; arrivalMinutes: number; candidateRole: string | null; foodSubtype: string | null;
+  meal: { classificationHint: MealHint; foodPurposeHint: string } }
+type MealWindowDiagnostic = ReturnType<typeof describeMealWindows>[number]
+
+function mealEvidenceCategory(hints: MealHint[]) {
+  if (hints.includes('meal_likely')) return 'higher_meal_hint_unverified' as const
+  if (hints.length && hints.every(hint => hint === 'refreshment_likely')) return 'refreshment_hint_only' as const
+  return 'insufficient_evidence' as const
+}
+
+// No route resolution, speculative repair, or menu inference. Same-slot hours are
+// a partial check only, even when every counted visit passes the existing buffer.
+function describeMealWindows(windows: RequiredMealWindow[], stops: MealDiagnosticStop[],
+  candidates: VerifiedPlaceCandidate[], poolObserved: boolean) {
+  return windows.map(window => {
+    const countedStops = stops.filter(stop => stop.type === 'food' &&
+      isStopAlignedWithMealWindow(stop.arrivalMinutes, stop.duration, window)).map(stop => ({
+      stopId: stop.id, placeId: stop.placeId, name: stop.name, arrivalMinutes: stop.arrivalMinutes,
+      duration: stop.duration, candidateRole: stop.candidateRole, foodSubtype: stop.foodSubtype,
+      mealSuitability: stop.meal.classificationHint, foodPurposeHint: stop.meal.foodPurposeHint,
+      evidenceCategory: mealEvidenceCategory([stop.meal.classificationHint]), menuServiceEvidence: 'unknown',
+    }))
+    const evidenceCategory = mealEvidenceCategory(countedStops.map(stop => stop.mealSuitability))
+    const higherHintCandidates = evidenceCategory === 'higher_meal_hint_unverified' ? [] : candidates
+      .filter(candidate => !stops.some(stop => stop.placeId === candidate.placeId))
+      .map(candidate => ({ placeId: candidate.placeId, name: candidate.name, candidateRole: candidate.role ?? null,
+        foodSubtype: candidate.foodSubtype ?? null, mealSuitability: getMealSuitability(candidate),
+        googleTypes: [...(candidate.types ?? [])], score: candidate.score ?? null,
+        openingHoursKnown: candidate.openingHours?.isKnown ?? false, menuServiceEvidence: 'unknown',
+        sameSlotOpeningChecks: countedStops.map(stop => ({ replacesStopId: stop.stopId,
+          arrivalMinutes: stop.arrivalMinutes, duration: stop.duration,
+          status: !candidate.openingHours?.isKnown ? 'unknown'
+            : isCandidateOpenForVisit(candidate, stop.arrivalMinutes, stop.duration) ? 'fits' : 'does_not_fit' })),
+        fullReplacementFeasibility: 'unknown',
+        feasibilityBasis: 'no_replacement_routes_or_complete_timeline_comparison_observed',
+      }))
+    return { windowKey: `${window.id}:${window.start}`, id: window.id,
+      startMinutes: window.start, endMinutesExclusive: window.end,
+      requirementReason: 'existing_effective_window_can_fit_minimum_meal',
+      minimumDurationMinutes: MINIMUM_MEAL_DURATION_MINUTES,
+      numericalLegality: countedStops.length ? 'satisfied' as const : 'not_satisfied' as const,
+      numericalRuleBasis: 'food_start_in_window_and_minimum_duration_not_full_delivery_validation',
+      countedStops, evidenceCategory, menuServiceEvidence: 'unknown',
+      candidateComparison: { poolObserved, scope: 'unused_classified_food_with_meal_likely_hint',
+        higherHintCandidateCount: poolObserved ? higherHintCandidates.length : null,
+        sameSlotOpeningCompatibleCount: poolObserved && countedStops.length ? higherHintCandidates.filter(candidate =>
+          candidate.sameSlotOpeningChecks.some(check => check.status === 'fits')).length : null,
+        fullReplacementFeasibility: 'unknown', higherHintCandidates },
+    }
+  })
+}
+
+function compareMealWindows(before: MealWindowDiagnostic[], after: MealWindowDiagnostic[]) {
+  return [...new Set([...before, ...after].map(window => window.windowKey))].flatMap(key => {
+    const a = before.find(window => window.windowKey === key), b = after.find(window => window.windowKey === key)
+    if (JSON.stringify(a?.countedStops) === JSON.stringify(b?.countedStops) &&
+      a?.numericalLegality === b?.numericalLegality) return []
+    return [{ windowKey: key, beforeNumericalLegality: a?.numericalLegality ?? 'not_required',
+      afterNumericalLegality: b?.numericalLegality ?? 'not_required',
+      beforeEvidenceCategory: a?.evidenceCategory ?? 'unknown', afterEvidenceCategory: b?.evidenceCategory ?? 'unknown',
+      higherMealHintLost: a?.evidenceCategory === 'higher_meal_hint_unverified' &&
+        b !== undefined && b.evidenceCategory !== 'higher_meal_hint_unverified',
+      beforeCountedStops: (a?.countedStops ?? []).map(stop => ({ stopId: stop.stopId, placeId: stop.placeId })),
+      afterCountedStops: (b?.countedStops ?? []).map(stop => ({ stopId: stop.stopId, placeId: stop.placeId })),
+    }]
+  })
+}
 export type DiagnosticStageContext = {
   attemptId?: number
   reason?: string
@@ -48,6 +119,7 @@ export class TripQualityDiagnostics {
   private readonly input: TripInput
   private readonly intent
   private candidates: VerifiedPlaceCandidate[] = []
+  private mealCandidates: VerifiedPlaceCandidate[] = []
   private promptCandidates: VerifiedPlaceCandidate[] | null = null
   private promptConfirmedEntries: Partial<Record<Theme, number>> = {}
   private poolObserved = false
@@ -57,9 +129,11 @@ export class TripQualityDiagnostics {
     phase: string; planId: string; context: DiagnosticStageContext
     beforeStage: number; afterStage: number
     coverageAddedMinutes: number | null
+    mealWindows: ReturnType<typeof compareMealWindows>
     changes: Array<{ stopId: string; kind: string; beforePlaceId: string | null; afterPlaceId: string | null
       beforeDuration: number | null; afterDuration: number | null; durationDelta: number | null
-      beforeMealHint: string | null; afterMealHint: string | null }>
+      beforeMealHint: string | null; afterMealHint: string | null
+      beforeFoodPurpose: string | null; afterFoodPurpose: string | null; higherMealHintLost: boolean }>
   }> = []
 
   constructor(input: TripInput) {
@@ -71,6 +145,8 @@ export class TripQualityDiagnostics {
     this.poolObserved = true
     this.candidates = [...new Map([...pool.allCandidates, ...pool.firstStopCandidates, ...pool.otherCandidates]
       .map(candidate => [candidate.placeId, candidate])).values()]
+    this.mealCandidates = this.candidates.filter(candidate => candidate.role === 'food' &&
+      !hasConfirmedCulturalPrimaryPurpose(candidate) && getMealSuitability(candidate) === 'meal_likely')
   }
 
   recordPrompt(selection: PromptCandidateSelection) {
@@ -97,16 +173,22 @@ export class TripQualityDiagnostics {
       const a = from.stops.find(stop => stop.id === id)
       const b = to.stops.find(stop => stop.id === id)
       const kind = !a ? 'added' : !b ? 'removed' : a.placeId !== b.placeId || a.name !== b.name ? 'replaced'
-        : a.duration !== b.duration ? 'duration_changed' : a.type !== b.type ? 'purpose_changed' : null
+        : a.duration !== b.duration ? 'duration_changed' : a.type !== b.type ? 'purpose_changed'
+        : a.meal.classificationHint !== b.meal.classificationHint || a.meal.foodPurposeHint !== b.meal.foodPurposeHint
+          ? 'meal_evidence_changed' : null
       return kind ? [{ stopId: id, kind, beforePlaceId: a?.placeId ?? null, afterPlaceId: b?.placeId ?? null,
         beforeDuration: a?.duration ?? null, afterDuration: b?.duration ?? null,
         durationDelta: a && b ? b.duration - a.duration : null,
-        beforeMealHint: a?.meal.classificationHint ?? null, afterMealHint: b?.meal.classificationHint ?? null }] : []
+        beforeMealHint: a?.meal.classificationHint ?? null, afterMealHint: b?.meal.classificationHint ?? null,
+        beforeFoodPurpose: a?.meal.foodPurposeHint ?? null, afterFoodPurpose: b?.meal.foodPurposeHint ?? null,
+        higherMealHintLost: a?.type === 'food' && a.meal.classificationHint === 'meal_likely' &&
+          (!b || b.type !== 'food' || b.meal.classificationHint !== 'meal_likely') }] : []
     })
     const beforeStage = this.stages.length
     const isCoverageStep = ['repair:coverage-existing-activities', 'repair:coverage-target',
       'repair:capacity-trim-coverage-trial'].includes(phase)
     this.transitions.push({ phase, planId: before.id, context: { ...context }, beforeStage, afterStage: beforeStage + 1,
+      mealWindows: compareMealWindows(from.meals.windows, to.meals.windows),
       coverageAddedMinutes: isCoverageStep ? changes.reduce((sum, change) => sum + Math.max(0, change.durationDelta ?? 0), 0) : null,
       changes })
     this.stages.push(from, to)
@@ -138,6 +220,9 @@ export class TripQualityDiagnostics {
         activityEvidence: { status: 'unknown' as const, basis: 'no_verified_activity_program_or_duration_evidence' },
         meal: {
           classificationHint: getMealSuitability(venue),
+          // Use existing verified-place purpose hints without copying/generated prose.
+          foodPurposeHint: stop.type === 'food' ? getFoodPurposeHint({ ...stop, name: venue.name,
+            googleTypes: types, foodSubtype: venue.foodSubtype, description: '' }) : 'not_food',
           // Even restaurant types are a relative hint, not verified full-meal service.
           suitability: types.length || venue.foodSubtype ? 'uncertain' : 'unknown',
           verificationBasis: 'no_verified_menu_or_meal_service_evidence',
@@ -148,6 +233,9 @@ export class TripQualityDiagnostics {
       }
     })
     const requestedStart = parseTimeToMinutes(this.input.startTime)
+    const requestedEnd = parseTimeToMinutes(this.input.endTime)
+    const validTimeWindow = requestedStart !== null && requestedEnd !== null && requestedStart !== requestedEnd
+    const noFullMeals = this.input.tags.includes('no_full_meals')
     return {
       phase, planId: plan.id, planType: plan.type, context: { ...context },
       requestedStartTime: this.input.startTime, requestedEndTime: this.input.endTime,
@@ -163,6 +251,13 @@ export class TripQualityDiagnostics {
       }])),
       meals: { requestedWindows: getRequiredMealWindows(this.input).map(window => window.id),
         effectiveWindows: mealWindows.map(window => window.id),
+        requirement: { status: noFullMeals ? 'user_no_full_meals' : !validTimeWindow ? 'unknown'
+          : mealWindows.length ? 'required_windows' : 'no_required_window',
+          basis: noFullMeals ? 'explicit_no_full_meals_tag' : !validTimeWindow ? 'invalid_or_missing_time_window'
+            : mealWindows.length ? 'existing_effective_window_can_fit_minimum_meal' : 'no_feasible_required_window',
+          minimumDurationMinutes: MINIMUM_MEAL_DURATION_MINUTES,
+          explicitFormalMealIntent: 'unknown', customTextInterpretation: 'not_inferred' },
+        windows: describeMealWindows(mealWindows, stops, this.mealCandidates, this.poolObserved),
         existingRuleIssues: getRequiredMealCoverageIssues(plan, this.input),
         formalMealServiceVerified: 'unknown', formalMealServiceRequirement: 'not_specified_by_existing_validation',
         ruleBasis: 'food_stop_meal_timing_and_minimum_duration' },

@@ -98,3 +98,128 @@ internal meal-alignment substep. Provisional alternatives must be compared with
 
 No tokens, full prompts, complete history events, or generated activity descriptions
 are added to the quality diagnostics.
+
+## Meal Reliability v1 extension (2026-10-17)
+
+This extends the same opt-in `qualityDiagnostics` snapshots and transitions. Only
+the diagnostic module, regression fixtures/tests and this document change. Search,
+ranking, prompts, grounding/repair/fallback decisions, meal requirements, final
+validation, public responses and streaming events are unchanged. Production still
+cannot enable the session, even with `TRIP_CANDIDATE_DEBUG=true`.
+
+Previously, snapshots already contained per-stop meal hints, meal timing, requested
+and effective windows, plus `formalMealServiceVerified: unknown`. The new data
+connects those facts to each individual required meal occurrence and records hint
+loss through the existing stage hooks. No new observer, route resolver or log sink
+is introduced.
+
+### Added internal fields
+
+| Path | Meaning |
+| --- | --- |
+| `stops[].meal.foodPurposeHint` | Existing local food-purpose helper applied to venue evidence with generated descriptions excluded. This is still a hint. |
+| `meals.requirement` | Existing rule's requirement status/reason: explicit `no_full_meals`, a feasible effective meal window, no required window, or invalid/unknown time. Free-text formal-meal intent remains unknown and is not newly parsed. |
+| `meals.windows[]` | One row per effective required occurrence, with `windowKey` (`lunch:660`, next-day `lunch:2100`), start/end, 45-minute minimum, counted stops and evidence category. |
+| `windows[].numericalLegality` | Whether existing food/start-time/minimum-stay rules satisfy this meal window. It is **not** a full opening/route/coverage validation result. |
+| `windows[].countedStops[]` | IDs, name, arrival/duration, role, subtype, suitability and food-purpose hints for every stop counted by the existing meal rule. |
+| `windows[].evidenceCategory` | `higher_meal_hint_unverified`, `refreshment_hint_only`, or `insufficient_evidence`. Mixed uncertain/refreshment evidence stays insufficient; a higher meal hint does not verify a menu. |
+| `windows[].candidateComparison` | Observed pool scope, unused higher-hint candidates, same-slot opening checks and explicit unknown full replacement feasibility. |
+| `transitions[].changes[]` | Adds before/after food purpose and `higherMealHintLost`; same-identity hint updates can produce `meal_evidence_changed`. |
+| `transitions[].mealWindows[]` | Before/after counted identities, numerical status and evidence category, tied to existing phase, attempt and disposition. A discarded trial is not a final downgrade. |
+
+Example: a 60-minute cafe starting at 12:04 can have
+`numericalLegality: satisfied` and `evidenceCategory: refreshment_hint_only`
+simultaneously. This diagnoses the current behavior without rejecting or replacing
+the cafe. A restaurant-type stop can instead have
+`higher_meal_hint_unverified`; its `menuServiceEvidence` is still `unknown`.
+No new `verified` level is created.
+
+`user_no_full_meals` is distinct from `no_required_window`. The former is an
+explicit opt-out tag; the latter can simply mean that the trip has no feasible
+45-minute meal window. `food_first` and custom text do not redefine the existing
+requirement. Requested and effective windows remain separate, including delayed
+starts, midnight crossings and repeated meal IDs on different days.
+
+### Candidate evidence is not a safe replacement proposal
+
+The comparison lists **unused, already-classified food candidates with
+`meal_likely` evidence**, only when the counted meal does not already have that
+hint. It neither ranks them nor changes selection. Scores and type evidence are
+copied from the existing pool, without extra bonuses. Confirmed cultural venues
+are not repurposed as meal candidates just because they have dining metadata.
+
+For each counted meal slot, `sameSlotOpeningChecks` tests the candidate at that
+slot's actual arrival and duration using the existing opening-hours check, including
+its closing buffer. Results are `fits`, `does_not_fit`, or `unknown`. No minute-by-
+minute availability search is performed. A candidate that fails that slot might
+still fit another schedule; absence of a matching row is not proof that no better
+meal can exist. An unobserved pool has a null count, not zero.
+
+Even a `fits` result leaves `fullReplacementFeasibility: unknown`: these diagnostic
+hooks do not receive a complete trusted replacement-route comparison or revalidate
+the revised schedule, other meals, activity/coffee preservation and all safety
+conditions. The code makes **no** speculative repair or API call to obtain that
+proof. Candidate presence, types and hours cannot justify automatic replacement.
+
+`higherMealHintLost` means a relative meal hint was lost, not that the final venue
+cannot serve meals. Window-level loss is reported only if the window remains
+required; a window removed by a changed effective start is marked `not_required`
+instead. Existing stage indices and provisional/selected/rejected dispositions
+must be read together with `final`. Raw AI JSON that was not observed remains
+unavailable; grouped repair hooks still show net changes rather than every internal
+speculative step.
+
+When no food stop currently satisfies the window, there is no replacement slot to
+check; `sameSlotOpeningCompatibleCount` is null rather than an assertion that no
+candidate can open at a useful time.
+
+### Free regression and cost evidence
+
+The new fixture reuses tracked supplement, meal-suitability and food-purpose
+factories. It reads no local investigation files. Cafe/ThisBALL timings and types
+are controlled representations of observed scenarios, not real menus or recovered
+model output. Network boundaries are mocked and unexpected URLs are rejected.
+
+Direct replays cover cafe lunch, uncertain ThisBALL, Explore coffee lunch, an unused
+higher-hint restaurant, closed/unknown candidate hours, safety meal-to-cafe,
+optional meal-to-uncertain, preserved optional meal purpose, actual diversity
+fallback, uncertain-only food, no_full_meals, and independent cultural/coffee/meal
+activities. Additional tests cover lunch/dinner, cross-day occurrences, timing
+boundaries, same-identity evidence changes, provisional attempts, unknown input,
+detached snapshots and sensitive-data exclusions.
+
+Four complete handler fixtures compare diagnostics off/on and production with the
+flag forced on. Final responses, every streamed event, and all mock call counts
+are deeply equal, including HTTPS endpoint counts for Supabase, Places and Routes
+and fetch-based AI requests. Disabled and production modes produce zero snapshots/reports.
+
+| Fixed complete generation | AI | Places | Routes | Debug report bytes (one run) |
+| --- | ---: | ---: | ---: | ---: |
+| Cafe lunch | 1 | 12 | 6 | 380,361 |
+| Uncertain lunch | 1 | 10 | 9 | 444,101 |
+| Independent cultural/meal/coffee activities | 2 | 10 | 9 | 547,338 |
+| No full meals | 1 | 10 | 3 | 229,770 |
+
+These are mock calls, including the unchanged fixed-response retry path, not paid
+requests. Each case has one simulated points consumption and zero real cost.
+There are 75–90 snapshot invocations per case. Observed report-build times were
+about 1.5–3.8ms in one local run; generation overhead included test interception
+and serialization and is not a production benchmark.
+
+Additional work is confined to the debug-owned class: one existing-pool scan and
+bounded local per-window/stop/candidate checks at the already-existing snapshots.
+Lists are bounded by the existing candidate pool; records follow the existing
+snapshot lifecycle. Off/production create no session or new snapshots and perform
+none of the added candidate/hours analysis. The small module-import/optional-check
+cost and the existing development log retention behavior remain.
+
+The extension adds 23 regression tests. The full suite passes 1,275/1,275;
+`npm.cmd run build`, targeted lint and whitespace checks pass. `npm.cmd run test`
+still reports the missing `test` script; the suite runs with the existing
+`npm.cmd run test:unit`. No package-script change was made.
+
+Menus, service-specific hours, kitchen availability and full replacement
+feasibility remain unknown. Next-stage selection protection should only use
+existing trusted route comparisons and complete legality/purpose checks; it must
+preserve the original when proof is missing. This extension provides evidence for
+that work and does not implement it.
