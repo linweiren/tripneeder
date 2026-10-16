@@ -11,6 +11,8 @@ export const SUPPLEMENT_ROUTE_BUDGET = { perRound: 8, perPlan: 24, candidates: 3
 export const SUPPLEMENT_SIMILAR_SCORE_TOLERANCE = 6
 
 type Route = { duration: number; label: string; distanceMeters?: number }
+// Distinguish actual successful Routes responses from caller-seeded timing hints.
+const computedRoutes = new WeakSet<Route>()
 export type SupplementRouteContext = { calls: number; totalCalls: number; cacheHits: number;
   memo: Map<string, Promise<Route | null>> }
 export function createSupplementRouteContext(): SupplementRouteContext {
@@ -28,11 +30,33 @@ function resolveRoute(context: SupplementRouteContext, from: Stop, to: Stop,
     context.memo.set(key, getRouteInfo(from, to, mode).then(({ routeInfo, apiFailed }) => {
       const duration = routeInfo?.durationMinutes
       if (apiFailed || !Number.isFinite(duration) || duration! <= 0) return null
-      return { duration: duration!, distanceMeters: routeInfo?.distanceMeters,
+      const route = { duration: duration!, distanceMeters: routeInfo?.distanceMeters,
         label: buildTransportLabel(mode, undefined, routeInfo?.distanceMeters, false) }
+      computedRoutes.add(route)
+      return route
     }))
   } else context.cacheHits++
   return context.memo.get(key)!
+}
+
+export async function hasReusableStaticRouteTimings(context: SupplementRouteContext, plan: { stops: Stop[];
+  transportSegments: TransportSegment[] }) {
+  if (plan.transportSegments.length !== plan.stops.length - 1) return false
+  for (let i = 0; i < plan.transportSegments.length; i++) {
+    const segment = plan.transportSegments[i], from = plan.stops[i], to = plan.stops[i + 1]
+    // google-routes uses computeRoutes without departureTime/routingPreference.
+    // DRIVE/TWO_WHEELER default to TRAFFIC_UNAWARE (time-independent averages).
+    // TRANSIT is time-dependent and cannot be revalidated from this memo.
+    // https://developers.google.com/maps/documentation/routes/reference/rest/v2/RoutingPreference
+    if (!['car', 'scooter'].includes(segment.mode) || !hasCoordinates(from) || !hasCoordinates(to) ||
+      segment.fromStopId !== from.id || segment.toStopId !== to.id || !Number.isFinite(segment.duration) ||
+      segment.duration <= 0) return false
+    const pending = context.memo.get(routeKey(from, to, segment.mode))
+    if (!pending) return false // Never resolve/fetch a missing edge.
+    const route = await pending
+    if (!route || !computedRoutes.has(route) || route.duration !== segment.duration) return false
+  }
+  return true
 }
 
 export function createRepairRouteResolver(context: SupplementRouteContext) {

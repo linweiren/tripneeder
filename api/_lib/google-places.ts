@@ -2705,6 +2705,12 @@ export async function validateStopsWithPlaces(
   }
 }
 
+// Read-only evidence for local duration comparisons. Never fills the cache or fetches.
+export function getCachedOpeningHoursForDurationComparison(placeId: string) {
+  const place = placeDetailsCache.get(placeId)
+  return place ? buildOpeningHoursMetadata(place) : null
+}
+
 export async function validatePlanOpeningHours(
   plan: TripPlan,
   input: TripInput,

@@ -1,0 +1,243 @@
+{
+  "sourceHead": "9840b315",
+  "method": "Fixed mocked replays of the original handler. No live API calls.",
+  "integrity": "SHA256 of canonical sorted-key JSON for the entire result excluding stop.duration, and every Routes request body. Regular tests do not depend on Git history.",
+  "cases": {
+    "pressure": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 3,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "151c4b099fe834d42d3b1245734b78d287d8f299f23fe877bad7dd16916f43f6",
+      "routeRequestsSha256": "9e90b5299e05223e704f9086923537403dfa3015daf0cc634f2d0ece9172789e"
+    },
+    "early-close": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 3,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "23aaa7831e8804ff7f94ae03c09bbe0aa89233597f55107df949d9afe01b67ba",
+      "routeRequestsSha256": "9e90b5299e05223e704f9086923537403dfa3015daf0cc634f2d0ece9172789e"
+    },
+    "fallback": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 5,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "ae05af071adc3c53ca5a50f5ea5c6f4e62c4a86f0c5aa95911845858612d48ab",
+      "routeRequestsSha256": "8334e2f0cc20911a85ed68b9123998349002db5f981fe21b18d72d504718578d"
+    },
+    "fallback-early-close": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 5,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "0f1bfbb013ecab4b93f21fadf85d41ef2bab15184914c9c2ff8c2cf85f77d00d",
+      "routeRequestsSha256": "8334e2f0cc20911a85ed68b9123998349002db5f981fe21b18d72d504718578d"
+    },
+    "fallback-legal": {
+      "durations": [
+        90,
+        45,
+        90,
+        60
+      ],
+      "totalTime": 297,
+      "counts": {
+        "places": 4,
+        "routes": 3,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "fa8b59dfa2103e3ae4f862710b691d367ed48b3c9f68f4de65e86a01967efff9",
+      "routeRequestsSha256": "8479541e0af79e247fe2edeb37e5438123121408d2b70939f15437738d1de61b"
+    },
+    "two-stop": {
+      "durations": [
+        66,
+        150
+      ],
+      "totalTime": 225,
+      "counts": {
+        "places": 2,
+        "routes": 1,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "bd71c80bf0eca4de47a2a7fc5e8d0959806ce36fe58b2f45e471244197fb4455",
+      "routeRequestsSha256": "0e11f30fdc694792791750f9c2249c061c477a18563d555bb044b1d5bb4a4fbd"
+    },
+    "meal": {
+      "durations": [
+        55,
+        60,
+        70,
+        45
+      ],
+      "totalTime": 247,
+      "counts": {
+        "places": 4,
+        "routes": 7,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "0ae033f96f9e23a4fca221f42800a8df0141b5e3d061a22acc26a113322c3f32",
+      "routeRequestsSha256": "e8d0590e56506bae0a737f469e5acdb6b781ef2a193ecd10de716fd3c0a93f6a"
+    },
+    "slow": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 3,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "b4e49c79523257f4ef715c40e0687b174321bd6974a331f8a732356c2d9e7892",
+      "routeRequestsSha256": "9e90b5299e05223e704f9086923537403dfa3015daf0cc634f2d0ece9172789e"
+    },
+    "unknown-receivers": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 3,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "4063c4ff15891ec45c315d96201999390c6886beda6fb83dd6bcb7c66543f50d",
+      "routeRequestsSha256": "9e90b5299e05223e704f9086923537403dfa3015daf0cc634f2d0ece9172789e"
+    },
+    "ambiguous-donor": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 3,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "94ba55c5346d3d79bbaa48a4369378ee66360e7cac7fbbc81f306b624782f2b2",
+      "routeRequestsSha256": "9e90b5299e05223e704f9086923537403dfa3015daf0cc634f2d0ece9172789e"
+    },
+    "late-lunch": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 3,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "2027808cd1808a63a21fe3c0459f5e131c241577316919d02f13c51aa3afea44",
+      "routeRequestsSha256": "9e90b5299e05223e704f9086923537403dfa3015daf0cc634f2d0ece9172789e"
+    },
+    "transit": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 3,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "a3191a741d95a21d1bd03ba790e5667a74f098dfc14407dc30bf69d97dc6b872",
+      "routeRequestsSha256": "1c0cf63f5a8bbe8ff76e5d505783a3fa2a49dd26d0e9f2b18853d1231ef27a87"
+    },
+    "car": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 3,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "5f069bc8aef3c40fc334cd48e099271ebde187121b1bf278417a9953de4e25a8",
+      "routeRequestsSha256": "068d6799e04f33f3f2e8ce934a9eb47dfce3cf1ef4b648f973285a03c5e8a0fa"
+    },
+    "outdoor-request": {
+      "durations": [
+        75,
+        45,
+        123,
+        45
+      ],
+      "totalTime": 300,
+      "counts": {
+        "places": 4,
+        "routes": 3,
+        "ai": 0
+      },
+      "issues": [],
+      "nonDurationResultSha256": "b8999159480e7b73456e4734cdbcba54f999cb704b1912f40c550027621acb10",
+      "routeRequestsSha256": "9e90b5299e05223e704f9086923537403dfa3015daf0cc634f2d0ece9172789e"
+    }
+  }
+}

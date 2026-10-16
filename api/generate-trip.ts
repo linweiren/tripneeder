@@ -6,6 +6,8 @@ import { buildTripPrompt, buildRetryTripSkeletonPrompt, parseTripPlanSkeletonRes
 import { getTripPlanStyleLabel, normalizeTripPlanIdentity, normalizeTripPlanIdentities } from '../src/services/ai/tripPlanIdentity.js'
 import { getMealSuitabilityRank, MEAL_SUITABILITY_PROMPT_RULE } from '../src/services/ai/mealSuitability.js'
 import { compareOriginalActivities, getActivityPurpose } from './_lib/trip-activity-purpose.js'
+import { recordCapacityDurationLoss, proposeStopDurationRedistribution,
+  getDurationRedistributionIssues, type CapacityDurationLoss } from './_lib/trip-stop-duration-quality.js'
 import { compareFoodPurposes, getFoodPurposeHint, hasFoodPurposeConflict, recordFoodReplacement,
   type FoodPurposeProvenance } from './_lib/trip-food-purpose.js'
 import { tripPlanSkeletonResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
@@ -42,6 +44,7 @@ import type { DiagnosticStageContext } from './_lib/trip-quality-diagnostics.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
 import { chooseSupplementalInsertion, createSupplementRouteContext, createRepairRouteResolver,
   resolveMealComparisonRoutes, SUPPLEMENT_SIMILAR_SCORE_TOLERANCE,
+  hasReusableStaticRouteTimings,
   type SupplementRouteContext } from './_lib/trip-supplement-quality.js'
 import {
   PLAN_IDS,
@@ -1009,11 +1012,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 // Keep the AI skeleton outside response/schema fields and scoped to plan object lifetime.
 const originalActivitySkeletons = new WeakMap<TripPlan, Stop[]>()
 const foodPurposeProvenance = new WeakMap<TripPlan, FoodPurposeProvenance>()
+const durationRepairEvidence = new WeakMap<TripPlan, {
+  losses: Map<string, CapacityDurationLoss>; routeContext: SupplementRouteContext
+}>()
 function carryOriginalActivities(source: TripPlan, target: TripPlan) {
   const originals = originalActivitySkeletons.get(source)
   if (originals) originalActivitySkeletons.set(target, originals)
   const foodTrace = foodPurposeProvenance.get(source)
   if (foodTrace) foodPurposeProvenance.set(target, foodTrace)
+  const durationEvidence = durationRepairEvidence.get(source)
+  if (durationEvidence) durationRepairEvidence.set(target, durationEvidence)
   return target
 }
 
@@ -1370,6 +1378,12 @@ export async function repairPlanForDelivery(
   const allowCoverageRepair = options.allowCoverageRepair ?? true
   const crossPlanUsedPlaceIds = options.crossPlanUsedPlaceIds ?? new Set<string>()
   const routeContext = options.routeContext ?? createSupplementRouteContext()
+  const capacityLosses = new Map(durationRepairEvidence.get(plan)?.losses)
+  const shrinkToCapacity = (value: TripPlan) => {
+    const shrunk = shrinkPlanDurationToScheduleCapacity(value, input)
+    recordCapacityDurationLoss(value, shrunk, capacityLosses)
+    return shrunk
+  }
   const resolveRoutes = createRepairRouteResolver(routeContext)
   // Capture verified place evidence before optional replacements, independently of the raw AI IDs.
   let foodTrace = foodPurposeProvenance.get(plan)
@@ -1422,7 +1436,7 @@ export async function repairPlanForDelivery(
   const capacity = getScheduleCapacityMinutes(input)
   const startedWithOverflow = Boolean(capacity && getPlanActualDuration(routedPlan) > capacity)
   const initialCapacityRepair = allowCoverageRepair
-    ? await trimPlanToTimeWindow(shrinkPlanDurationToScheduleCapacity(routedPlan, input), input, resolveRoutes, diagnosticContext)
+    ? await trimPlanToTimeWindow(shrinkToCapacity(routedPlan), input, resolveRoutes, diagnosticContext)
     : { plan: routedPlan, routesFailed: false }
   const canAddStops = allowCoverageRepair && !startedWithOverflow && !initialRouteRepair.routesFailed &&
     initialCapacityRepair.plan.stops.length === scheduleAlignedStops.length
@@ -1440,9 +1454,9 @@ export async function repairPlanForDelivery(
   // Keep coverage/capacity based on the original request, but carry the resolved meal timeline.
   input = Object.assign({}, input, { scheduleStartTime: mealRepair.plan.scheduleStartTime })
   const mealCapacityRepair = allowCoverageRepair
-    ? await trimPlanToTimeWindow(shrinkPlanDurationToScheduleCapacity(normalizePlanTotalTime({
+    ? await trimPlanToTimeWindow(shrinkToCapacity(normalizePlanTotalTime({
         ...mealRepair.plan, stops: mealStops, transportSegments: mealRoutes.segments,
-      }), input), input, resolveRoutes, diagnosticContext)
+      })), input, resolveRoutes, diagnosticContext)
     : initialCapacityRepair
   debug?.recordPlanTransition(routedPlan, mealCapacityRepair.plan, 'repair:capacity-and-required-meals', { attemptId,
     reason: 'existing_capacity_meal_and_availability_repairs_substep_unknown' })
@@ -1509,7 +1523,7 @@ export async function repairPlanForDelivery(
     attemptId, reason: 'coverage_repair_target_minutes',
   })
   const capacityRepairedPlan = allowCoverageRepair
-    ? shrinkPlanDurationToScheduleCapacity(coverageRepairedPlan, input)
+    ? shrinkToCapacity(coverageRepairedPlan)
     : coverageRepairedPlan
   const trimResult = allowCoverageRepair
     ? await trimPlanToTimeWindow(capacityRepairedPlan, input, resolveRoutes, diagnosticContext)
@@ -1546,7 +1560,7 @@ export async function repairPlanForDelivery(
   // No additions or reordering may run after this capacity pass.
   const finalCapacityRepair = allowCoverageRepair
     ? await trimPlanToTimeWindow(
-        shrinkPlanDurationToScheduleCapacity(finalTimingAlignment.plan, input), input, resolveRoutes, diagnosticContext,
+        shrinkToCapacity(finalTimingAlignment.plan), input, resolveRoutes, diagnosticContext,
       )
     : { plan: finalTimingAlignment.plan, routesFailed: false }
   // Timing/capacity changes can invalidate a previously satisfied meal. Reorder only;
@@ -1599,11 +1613,12 @@ export async function repairPlanForDelivery(
     writeGenerateDebugLog('coverage-repair-result', coveragePayload)
   }
 
+  const deliveredPlan = carryOriginalActivities(plan, {
+    ...finalPlan, totalTime: getPlanActualDuration(finalPlan),
+  })
+  durationRepairEvidence.set(deliveredPlan, { losses: capacityLosses, routeContext })
   return {
-    plan: carryOriginalActivities(plan, {
-      ...finalPlan,
-      totalTime: getPlanActualDuration(finalPlan),
-    }),
+    plan: deliveredPlan,
     routesFailed:
       routesFailed ||
       initialRouteRepair.routesFailed ||
@@ -1759,6 +1774,40 @@ function haveStopRouteEndpointsChanged(before: Stop[], after: Stop[]) {
 }
 
 export async function repairAndValidatePlanForDelivery(
+  plan: TripPlan,
+  input: GenerateTripPlansRequest['input'],
+  candidates: NearbyPlaceCandidates,
+  avoidedPlaceIds: Set<string>,
+  phase: string,
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
+  debugSession?: TripCandidateDebugSession,
+): Promise<{ plan: TripPlan | null; routesFailed: boolean; issues: string[] }> {
+  // The existing safety/diversity pipeline chooses its result first. Nothing below
+  // re-enters repair or fallback, so there is at most one allocation comparison.
+  const result = await repairAndValidatePlanForDeliveryCore(plan, input, candidates, avoidedPlaceIds,
+    phase, crossPlanUsedPlaceIds, debugSession)
+  if (!result.plan || result.routesFailed) return result
+  const evidence = durationRepairEvidence.get(result.plan)
+  if (!evidence?.losses.size) return result
+  const comparison = proposeStopDurationRedistribution(result.plan, input, candidates, evidence.losses)
+  if (!comparison) return result
+  const issues = await hasReusableStaticRouteTimings(evidence.routeContext, result.plan)
+    ? getDurationRedistributionIssues(result.plan, comparison.plan, input, candidates)
+    : ['route_timing_not_reusable_without_new_queries']
+  if (getFirstStopDistanceIssue(comparison.plan, input, candidates)) issues.push('first_stop_distance')
+  if (issues.length) {
+    debugSession?.recordPlanTransition(result.plan, comparison.plan, 'duration-redistribution:rejected', {
+      disposition: 'rejected', reason: issues.join(','),
+    })
+    return result
+  }
+  debugSession?.recordPlanTransition(result.plan, comparison.plan, 'duration-redistribution:accepted', {
+    disposition: 'selected', reason: 'restore_capacity_compressed_explicit_theme_activity;excess_activity_support_unknown',
+  })
+  return { ...result, plan: carryOriginalActivities(result.plan, comparison.plan) }
+}
+
+async function repairAndValidatePlanForDeliveryCore(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
