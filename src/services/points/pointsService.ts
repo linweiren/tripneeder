@@ -27,7 +27,7 @@ export type PointTransaction = {
   created_at: string
 }
 
-export type PointTransactionType = 'initial' | 'consume' | 'admin_adjust' | 'refund'
+export type PointTransactionType = 'initial' | 'consume' | 'admin_adjust' | 'refund' | 'share_reward'
 
 export type PointsSnapshot = {
   profile: UserProfile
@@ -144,6 +144,7 @@ export function getTransactionTypeLabel(type: PointTransactionType) {
     consume: '分析扣點',
     admin_adjust: '管理調整',
     refund: '退回點數',
+    share_reward: '分享行程獎勵',
   }
   return labels[type]
 }

@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 type LocalApiRequest = {
   method?: string
   body?: unknown
-  query?: { location?: string }
+  query?: { location?: string; lat?: string; lng?: string }
   headers?: { authorization?: string }
   signal?: AbortSignal
 }
@@ -47,6 +47,10 @@ export default defineConfig(({ mode }) => {
     process.env.CWA_API_KEY = env.CWA_API_KEY
   }
 
+  if (env.MOENV_API_KEY) {
+    process.env.MOENV_API_KEY = env.MOENV_API_KEY
+  }
+
   return {
     plugins: [react(), localApiPlugin()],
   }
@@ -83,6 +87,11 @@ function localApiPlugin(): Plugin {
 
       server.middlewares.use('/api/weather', async (req, res) => {
         const { default: handler } = await import('./api/weather')
+        await handleLocalApiRequest(req, res, handler)
+      })
+
+      server.middlewares.use('/api/current-weather', async (req, res) => {
+        const { default: handler } = await import('./api/current-weather')
         await handleLocalApiRequest(req, res, handler)
       })
     },
@@ -134,6 +143,8 @@ async function handleLocalApiRequest(
       body,
       query: {
         location: requestUrl.searchParams.get('location') ?? undefined,
+        lat: requestUrl.searchParams.get('lat') ?? undefined,
+        lng: requestUrl.searchParams.get('lng') ?? undefined,
       },
       headers: {
         authorization: req.headers.authorization,

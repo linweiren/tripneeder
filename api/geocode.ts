@@ -21,12 +21,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  const { lat, lng } = (req.body as { lat?: number; lng?: number }) || {}
-
-  if (typeof lat !== 'number' || typeof lng !== 'number') {
-    res.status(400).json({ error: 'Missing coordinates' })
-    return
-  }
+  const { lat, lng, address } = (req.body as {
+    lat?: number
+    lng?: number
+    address?: string
+  }) || {}
 
   const apiKey = process.env.GOOGLE_PLACES_API_KEY
 
@@ -36,13 +35,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    const isAddressSearch = Boolean(address?.trim())
+    if (!isAddressSearch && (typeof lat !== 'number' || typeof lng !== 'number')) {
+      res.status(400).json({ error: '請提供座標或地點名稱' })
+      return
+    }
+
+    const query = isAddressSearch
+      ? `address=${encodeURIComponent(address!.trim())}&components=country:TW`
+      : `latlng=${lat},${lng}`
     const response = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}&language=zh-TW&region=tw`
+      `https://maps.googleapis.com/maps/api/geocode/json?${query}&key=${apiKey}&language=zh-TW&region=tw`
     )
     const data = (await response.json()) as {
       status: string
       results: Array<{
         formatted_address: string
+        geometry?: { location?: { lat: number; lng: number } }
         address_components: Array<{
           long_name: string
           short_name?: string
@@ -51,15 +60,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }>
     }
 
-    if (data.status !== 'OK') {
-      res.status(502).json({ error: 'Geocoding failed', status: data.status })
+    if (data.status !== 'OK' || !data.results?.[0]) {
+      res.status(data.status === 'ZERO_RESULTS' ? 404 : 502).json({
+        error: data.status === 'ZERO_RESULTS' ? '找不到這個地點' : 'Geocoding failed',
+        status: data.status,
+      })
       return
     }
 
     const result = data.results[0]
     const components = result.address_components
-
-    // 台灣地名邏輯：優先找 administrative_area_level_1 (縣市) 與 sublocality_level_1 / locality (區)
     const city = components.find((c) => c.types.includes('administrative_area_level_1'))?.long_name || ''
     const countryComponent = components.find((c) => c.types.includes('country'))
     const country = countryComponent?.short_name || countryComponent?.long_name || ''
@@ -69,12 +79,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       c.types.includes('administrative_area_level_2')
     )?.long_name || ''
 
+    if (isAddressSearch && country !== 'TW' && country !== 'Taiwan') {
+      res.status(400).json({ error: '目前僅支援台灣地點' })
+      return
+    }
+
     const shortName = city + district
 
     res.status(200).json({
       name: shortName || result.formatted_address,
       address: result.formatted_address,
       country,
+      city,
+      lat: result.geometry?.location?.lat,
+      lng: result.geometry?.location?.lng,
     })
   } catch (error) {
     console.error('Geocoding error:', error)

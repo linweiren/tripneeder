@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TripRecordList } from '../components/TripRecordList'
+import { shareTrip } from '../services/community/communityService'
 import { useAuth } from '../contexts/auth'
 import { useDialog } from '../contexts/dialog'
 import {
@@ -130,6 +131,23 @@ export function FavoritesPage() {
     }
   }
 
+  async function handleShare(record: StoredTripRecord) {
+    if (!user) return
+    try {
+      const sharedTripId = await shareTrip(record.plan, record.input)
+      await dialog.alert({
+        title: '行程已分享',
+        message: '其他旅人現在可以瀏覽這份行程。獲得 10 個喜歡後，你會得到 20 點。',
+      })
+      navigate(`/community/${sharedTripId}`)
+    } catch (error) {
+      await dialog.alert({
+        title: '分享失敗',
+        message: error instanceof Error ? error.message : '目前無法分享行程，請稍後再試。',
+      })
+    }
+  }
+
   return (
     <section className="history-page history-page-favorites">
       <section className="history-hero" aria-label="收藏">
@@ -163,6 +181,7 @@ export function FavoritesPage() {
             emptyTitle="還沒有收藏任何方案呢"
             source="favorites"
             onRemove={(recordId) => void handleRemove(recordId)}
+            onShare={(record) => void handleShare(record)}
           />
         ) : null}
       </div>
