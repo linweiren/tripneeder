@@ -6,6 +6,8 @@ import { loadGeneratedPlans } from '../utils/tripPlanStorage'
 import { getPlanActualDuration } from '../utils/tripTiming'
 import mascotComplete from '../assets/mascot/mascot-complete.webp'
 import mascotError from '../assets/mascot/mascot-error.webp'
+import { loadLastTripInput } from '../utils/tripPlanStorage'
+import { ShareTripButton } from '../components/community/ShareTripButton'
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -17,6 +19,7 @@ export function ResultsPage() {
   const navigate = useNavigate()
   const { session, resetAnalysisFlow, setFlowRoute, requestPlanDetails } =
     useAnalysisSession()
+  const tripInput = loadLastTripInput()
   const plans = loadGeneratedPlans()
   const warnings = session?.status === 'success' ? (session.warnings ?? []) : []
 
@@ -79,6 +82,7 @@ export function ResultsPage() {
           <PlanCard
             key={plan.id}
             plan={plan}
+            input={tripInput}
             label={`方案${toChineseNumber(index + 1)}`}
             onSelect={(route) => {
               setFlowRoute(route)
@@ -94,10 +98,12 @@ export function ResultsPage() {
 
 function PlanCard({
   plan,
+  input,
   label,
   onSelect,
 }: {
   plan: TripPlan
+  input: ReturnType<typeof loadLastTripInput>
   label: string
   onSelect: (route: string) => void
 }) {
@@ -175,6 +181,7 @@ function PlanCard({
               </div>
             ))}
           </dl>
+          <ShareTripButton plan={plan} input={input} className="community-result-share" />
         </div>
       </div>
     </article>

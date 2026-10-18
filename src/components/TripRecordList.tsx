@@ -7,6 +7,7 @@ import {
   type StoredTripRecord,
 } from '../utils/tripPlanStorage'
 import mascotEmptyState from '../assets/mascot/mascot-empty-state.webp'
+import { ShareTripButton } from './community/ShareTripButton'
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -19,7 +20,7 @@ type TripRecordListProps = {
   emptyTitle: string
   source: 'favorites' | 'recent'
   onRemove?: (recordId: string) => void
-  onShare?: (record: StoredTripRecord) => void
+  onShare?: boolean
 }
 
 export function TripRecordList({
@@ -80,17 +81,7 @@ export function TripRecordList({
             <span className="plan-type history-card-tag">行程方案</span>
             <div className="history-card-actions">
             {onShare ? (
-              <button
-                className="community-share-trigger"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onShare(record)
-                }}
-                onKeyDown={(event) => event.stopPropagation()}
-              >
-                分享行程
-              </button>
+              <ShareTripButton plan={record.plan} input={record.input} />
             ) : null}
             {onRemove ? (
               <button

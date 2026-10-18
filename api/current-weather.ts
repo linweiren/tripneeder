@@ -122,11 +122,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       })
       .filter((item): item is NonNullable<typeof item> => item !== null)
-    const requestedCounty = normalizeCounty(req.query?.city ?? '')
-    const countyCandidates = requestedCounty
-      ? stationCandidates.filter(({ station }) => normalizeCounty(station.GeoInfo?.CountyName ?? '') === requestedCounty)
-      : []
-    const nearest = [...(countyCandidates.length ? countyCandidates : stationCandidates)]
+    const nearest = [...stationCandidates]
       .sort((a, b) => a.distanceKm - b.distanceKm)[0]
 
     if (!nearest) {
@@ -300,10 +296,6 @@ function getField(record: AirQualityRow, name: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function normalizeCounty(value: string) {
-  return value.trim().replaceAll('台', '臺').replace(/[縣市]$/, '')
 }
 
 async function fetchForecastLocations(apiKey: string, city: string) {

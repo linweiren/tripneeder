@@ -77,6 +77,8 @@ import { useAuth } from '../contexts/auth'
 import { useDialog, type DialogContextValue } from '../contexts/dialog'
 import * as pointsService from '../services/points/pointsService'
 import WeatherCard from '../components/WeatherCard'
+import { ShareTripButton } from '../components/community/ShareTripButton'
+import { SharedTripDiscussion } from '../components/community/SharedTripDiscussion'
 
 type OrderMode = 'main' | 'rain'
 type SegmentModeOverrides = Partial<Record<OrderMode, Record<string, TransportMode>>>
@@ -161,24 +163,41 @@ export function DetailPage() {
   const dialog = useDialog()
   const plans = loadGeneratedPlans()
   const sourcePage = getDetailSource(location.state, location.search)
+  const communityShareId = new URLSearchParams(location.search).get('shareId')
+  const isCommunityShared = Boolean(communityShareId)
+  const communityReturnPath = new URLSearchParams(location.search).get('from') === 'mine' ? '/community/mine' : '/community'
+  const communityReturnLabel = communityReturnPath === '/community/mine' ? '返回我的分享' : '返回旅人分享'
   const isStoredSource = sourcePage === 'favorites' || sourcePage === 'recent'
-  const detailSource: PlanDetailSource = sourcePage ?? 'generated'
+  const hasLocalDetailPlan = isStoredSource || isCommunityShared
+  const detailSource: PlanDetailSource = isCommunityShared ? 'shared' : sourcePage ?? 'generated'
   const detailRecordId = isStoredSource ? getDetailRecordId(location.state, location.search) : null
   const storedDetailPlan = loadPlanForDetail(planId)
   const generatedPlan = plans.find((plan) => plan.id === planId)
-  const initialSelectedPlan = isStoredSource ? storedDetailPlan : generatedPlan
+  const initialSelectedPlan = hasLocalDetailPlan ? storedDetailPlan : generatedPlan
   // Memoize with stable deps to prevent a new object reference on every render.
   // A new reference would cause the detail-completion useEffect to abort its own fetch
   // each time setDetailCompletionStatus triggers a re-render.
   const lastInput = useMemo(() => {
-    return isStoredSource ? loadInputForDetail() : loadLastTripInput()
+    return hasLocalDetailPlan ? loadInputForDetail() : loadLastTripInput()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailRecordId, isStoredSource, planId])
+  }, [detailRecordId, hasLocalDetailPlan, planId])
   const [selectedPlan, setSelectedPlan] = useState(initialSelectedPlan)
   const weatherLocation = getWeatherCity(
     lastInput?.location.name,
     selectedPlan?.stops.map((stop) => stop.address),
   )
+  const weatherArea = selectedPlan?.stops[0]?.name || lastInput?.location.name || weatherLocation
+  const weatherCoordinates = useMemo(() => {
+    const stop = selectedPlan?.stops.find((item) => Number.isFinite(item.lat) && Number.isFinite(item.lng))
+    if (stop && typeof stop.lat === 'number' && typeof stop.lng === 'number') {
+      return { latitude: stop.lat, longitude: stop.lng }
+    }
+    const inputLocation = lastInput?.location
+    if (inputLocation && typeof inputLocation.lat === 'number' && typeof inputLocation.lng === 'number') {
+      return { latitude: inputLocation.lat, longitude: inputLocation.lng }
+    }
+    return { latitude: undefined, longitude: undefined }
+  }, [lastInput, selectedPlan])
   const [isRainMode, setIsRainMode] = useState(false)
   const [stopOrders, setStopOrders] = useState<Partial<Record<OrderMode, string[]>>>(
     {},
@@ -356,7 +375,7 @@ export function DetailPage() {
   }
 
   function persistSelectedPlanLocally(updatedPlan: TripPlan) {
-    if (isStoredSource) {
+    if (hasLocalDetailPlan) {
       updateDetailPlan(updatedPlan)
     } else {
       updateGeneratedPlan(updatedPlan)
@@ -367,6 +386,7 @@ export function DetailPage() {
     previousPlan: TripPlan,
     updatedPlan: TripPlan,
   ) {
+    if (isCommunityShared) return
     if (!user) {
       return
     }
@@ -500,7 +520,7 @@ export function DetailPage() {
   useEffect(() => {
     const nextStoredDetailPlan = loadPlanForDetail(planId)
     const nextGeneratedPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
-    const nextSelectedPlan = isStoredSource ? nextStoredDetailPlan : nextGeneratedPlan
+    const nextSelectedPlan = hasLocalDetailPlan ? nextStoredDetailPlan : nextGeneratedPlan
 
     // Only replace the selectedPlan reference when the meaningful state changes;
     // otherwise the detail-completion useEffect will see a new selectedPlan ref
@@ -516,7 +536,7 @@ export function DetailPage() {
       }
       return nextSelectedPlan
     })
-  }, [isStoredSource, planId])
+  }, [hasLocalDetailPlan, planId])
 
   // Ensure a detail-completion fetch is running for this plan. The fetch is
   // owned by the AnalysisSession context so it keeps running even if the user
@@ -524,7 +544,7 @@ export function DetailPage() {
   useEffect(() => {
     if (!planId || !selectedPlan || selectedPlan.isDetailComplete) return
     requestPlanDetails(planId, { source: detailSource, recordId: detailRecordId })
-  }, [detailRecordId, detailSource, planId, requestPlanDetails, selectedPlan])
+  }, [detailRecordId, detailSource, isCommunityShared, planId, requestPlanDetails, selectedPlan])
 
   // When the context marks this plan as complete, re-read the upgraded plan
   // from sessionStorage so the current detail view refreshes in-place.
@@ -535,12 +555,12 @@ export function DetailPage() {
 
     const upgradedGenerated = loadGeneratedPlans().find((plan) => plan.id === planId)
     const upgradedStored = loadPlanForDetail(planId)
-    const upgraded = isStoredSource ? upgradedStored : upgradedGenerated
+    const upgraded = hasLocalDetailPlan ? upgradedStored : upgradedGenerated
 
     if (upgraded?.isDetailComplete) {
       setSelectedPlan(upgraded)
     }
-  }, [detailState?.status, isStoredSource, planId, selectedPlan])
+  }, [detailState?.status, hasLocalDetailPlan, planId, selectedPlan])
 
   useEffect(() => {
     function refreshFavoriteStatus() {
@@ -585,7 +605,7 @@ export function DetailPage() {
   }, [replacingStopId])
 
   useEffect(() => {
-    if (!selectedPlan || !user || isSavingFavorite) {
+    if (!selectedPlan || !user || isSavingFavorite || isCommunityShared) {
       return
     }
 
@@ -616,6 +636,7 @@ export function DetailPage() {
   }, [
     favoriteRevision,
     isSavingFavorite,
+    isCommunityShared,
     segmentModeOverrides,
     selectedPlan,
     stopOrders,
@@ -896,7 +917,7 @@ export function DetailPage() {
   if (!selectedPlan) {
     return (
       <section className="page">
-        <DetailBackControl isStoredSource={isStoredSource} onBack={() => navigate(-1)} />
+        {isCommunityShared ? <Link className="back-link back-icon-button" to={communityReturnPath} aria-label={communityReturnLabel}><ArrowLeft aria-hidden="true" /></Link> : <DetailBackControl isStoredSource={isStoredSource} onBack={() => navigate(-1)} />}
         <p className="page-kicker">找不到方案</p>
         <h1 className="page-title">這趟行程暫時讀不到</h1>
         <p className="page-copy">
@@ -908,19 +929,26 @@ export function DetailPage() {
 
   return (
     <section className="page detail-page">
-      <DetailBackControl
-        isStoredSource={isStoredSource}
-        onBack={() => navigate(-1)}
-        onReturnToResults={() => setFlowRoute('/results')}
-      />
+      {isCommunityShared ? <Link className="back-link back-icon-button" to={communityReturnPath} aria-label={communityReturnLabel}><ArrowLeft aria-hidden="true" /></Link> : (
+        <DetailBackControl
+          isStoredSource={isStoredSource}
+          onBack={() => navigate(-1)}
+          onReturnToResults={() => setFlowRoute('/results')}
+        />
+      )}
 
       <div className="detail-hero">
-        <p className="page-kicker">{isRainMode ? '雨天備案' : '一般行程'}</p>
+        <p className="page-kicker">{isCommunityShared ? '旅人分享' : isRainMode ? '雨天備案' : '一般行程'}</p>
         <h1 className="page-title">{selectedPlan.title}</h1>
         <p className="page-copy">{selectedPlan.summary}</p>
+        {!isCommunityShared ? <ShareTripButton
+          className="community-detail-share-button"
+          plan={buildSnapshotPlan({ plan: selectedPlan, stopOrders, transportModeOverrides, segmentModeOverrides })}
+          input={lastInput}
+        /> : null}
       </div>
 
-      <WeatherCard location={weatherLocation} />
+      <WeatherCard location={weatherArea} city={weatherLocation} latitude={weatherCoordinates.latitude} longitude={weatherCoordinates.longitude} />
 
       <dl className="detail-metrics">
         <div className="detail-metric-card">
@@ -1234,39 +1262,41 @@ export function DetailPage() {
         </SortableContext>
       </DndContext>
 
-      <div className="detail-action-row">
-        <div className="rain-toggle-panel action-strip">
-          <button
-            className="submit-button"
-            type="button"
-            onClick={() => setIsRainMode((current) => !current)}
-            disabled={isRainMode ? false : !canShowRainBackup}
-          >
-            {isRainMode
-              ? '查看一般行程'
-              : selectedPlan.isDetailComplete
-                ? hasValidRainBackup
-                  ? '切換雨天備案'
-                  : '無符合雨備'
-                : '補完後可看雨備'}
-          </button>
-        </div>
+      {isCommunityShared && communityShareId ? <SharedTripDiscussion tripId={communityShareId} /> : (
+        <div className="detail-action-row">
+          <div className="rain-toggle-panel action-strip">
+            <button
+              className="submit-button"
+              type="button"
+              onClick={() => setIsRainMode((current) => !current)}
+              disabled={isRainMode ? false : !canShowRainBackup}
+            >
+              {isRainMode
+                ? '查看一般行程'
+                : selectedPlan.isDetailComplete
+                  ? hasValidRainBackup
+                    ? '切換雨天備案'
+                    : '無符合雨備'
+                  : '補完後可看雨備'}
+            </button>
+          </div>
 
-        <div className="favorite-action-panel action-strip">
-          <button
-            className={`submit-button${hasSavedFavorite ? ' favorite-button-saved' : ''}`}
-            type="button"
-            onClick={() => void handleSaveFavorite()}
-            disabled={hasSavedFavorite || isSavingFavorite}
-          >
-            {hasSavedFavorite
-              ? '已收藏'
-              : selectedPlan.isDetailComplete
-                ? '收藏此方案'
-                : '補完細節後可收藏'}
-          </button>
+          <div className="favorite-action-panel action-strip">
+            <button
+              className={`submit-button${hasSavedFavorite ? ' favorite-button-saved' : ''}`}
+              type="button"
+              onClick={() => void handleSaveFavorite()}
+              disabled={hasSavedFavorite || isSavingFavorite}
+            >
+              {hasSavedFavorite
+                ? '已收藏'
+                : selectedPlan.isDetailComplete
+                  ? '收藏此方案'
+                  : '補完細節後可收藏'}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </section>
   )
 }

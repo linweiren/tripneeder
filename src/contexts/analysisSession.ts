@@ -17,7 +17,7 @@ export type AnalysisSession = {
 }
 
 export type PlanDetailStatus = 'loading' | 'complete' | 'error'
-export type PlanDetailSource = 'generated' | 'recent' | 'favorites'
+export type PlanDetailSource = 'generated' | 'recent' | 'favorites' | 'shared'
 
 export type PlanDetailRequestOptions = {
   source?: PlanDetailSource
