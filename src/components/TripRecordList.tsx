@@ -19,6 +19,7 @@ type TripRecordListProps = {
   emptyTitle: string
   source: 'favorites' | 'recent'
   onRemove?: (recordId: string) => void
+  onShare?: (record: StoredTripRecord) => void
 }
 
 export function TripRecordList({
@@ -26,6 +27,7 @@ export function TripRecordList({
   emptyTitle,
   source,
   onRemove,
+  onShare,
 }: TripRecordListProps) {
   const navigate = useNavigate()
   const dialog = useDialog()
@@ -76,6 +78,20 @@ export function TripRecordList({
         >
           <div className="history-card-head">
             <span className="plan-type history-card-tag">行程方案</span>
+            <div className="history-card-actions">
+            {onShare ? (
+              <button
+                className="community-share-trigger"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onShare(record)
+                }}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                分享行程
+              </button>
+            ) : null}
             {onRemove ? (
               <button
                 className="remove-record-button history-remove-button"
@@ -98,11 +114,12 @@ export function TripRecordList({
               >
                 移除收藏
               </button>
-            ) : (
+            ) : !onShare ? (
               <span className="history-view-link" aria-hidden="true">
                 查看行程
               </span>
-            )}
+            ) : null}
+            </div>
           </div>
 
           <div className="stored-trip-main history-card-main">

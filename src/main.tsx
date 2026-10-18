@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import App from './App.tsx'
 import { DetailPage } from './pages/DetailPage.tsx'
+import { CommunityPage } from './pages/CommunityPage.tsx'
 import { FavoritesPage } from './pages/FavoritesPage.tsx'
 import { HomePage } from './pages/HomePage.tsx'
 import { LoginPage } from './pages/LoginPage.tsx'
@@ -21,6 +22,8 @@ const router = createBrowserRouter([
       { path: 'results', element: <ResultsPage /> },
       { path: 'plans/:planId', element: <DetailPage /> },
       { path: 'favorites', element: <FavoritesPage /> },
+      { path: 'community', element: <CommunityPage /> },
+      { path: 'community/:tripId', element: <CommunityPage /> },
       { path: 'recent', element: <RecentPage /> },
       { path: 'login', element: <LoginPage /> },
       { path: 'points', element: <PointsPage /> },
