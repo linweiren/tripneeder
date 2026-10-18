@@ -6,6 +6,7 @@ import { buildTripPrompt, buildRetryTripSkeletonPrompt, parseTripPlanSkeletonRes
 import { getTripPlanStyleLabel, normalizeTripPlanIdentity, normalizeTripPlanIdentities } from '../src/services/ai/tripPlanIdentity.js'
 import { getMealSuitabilityRank, MEAL_SUITABILITY_PROMPT_RULE } from '../src/services/ai/mealSuitability.js'
 import { compareOriginalActivities, getActivityPurpose } from './_lib/trip-activity-purpose.js'
+import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
 import { recordCapacityDurationLoss, proposeStopDurationRedistribution,
   getDurationRedistributionIssues, type CapacityDurationLoss } from './_lib/trip-stop-duration-quality.js'
 import { compareFoodPurposes, getFoodPurposeHint, hasFoodPurposeConflict, recordFoodReplacement,
@@ -449,7 +450,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           upsertValidatedPlan(validatedPlans, validatedPlan)
-          writeEvent({ event: 'plan', plan: validatedPlan })
+          writeEvent({ event: 'plan', plan: finalizePlanText(validatedPlan) })
         }
       }
     }
@@ -496,7 +497,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           upsertValidatedPlan(validatedPlans, validatedPlan)
-          writeEvent({ event: 'plan', plan: validatedPlan })
+          writeEvent({ event: 'plan', plan: finalizePlanText(validatedPlan) })
         }
       }
     }
@@ -985,6 +986,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return
     }
 
+    finalResponse.plans = finalResponse.plans.map(plan => finalizePlanText(rememberPlanTextTransition(
+      validatedPlans.find(previous => previous.id === plan.id) ?? plan, plan)))
     writeGenerateDebugLog('generate-trip-done', {
       planIds: finalResponse.plans.map((plan) => plan.id),
       planCount: finalResponse.plans.length,
@@ -1022,7 +1025,7 @@ function carryOriginalActivities(source: TripPlan, target: TripPlan) {
   if (foodTrace) foodPurposeProvenance.set(target, foodTrace)
   const durationEvidence = durationRepairEvidence.get(source)
   if (durationEvidence) durationRepairEvidence.set(target, durationEvidence)
-  return target
+  return rememberPlanTextTransition(source, target)
 }
 
 export function getOriginalActivityImpact(source: TripPlan, finalStops: Stop[]) {
@@ -1064,7 +1067,7 @@ function upsertValidatedPlan(plans: TripPlan[], nextPlan: TripPlan) {
   const existingIndex = plans.findIndex((plan) => plan.id === nextPlan.id)
 
   if (existingIndex >= 0) {
-    plans[existingIndex] = nextPlan
+    plans[existingIndex] = rememberPlanTextTransition(plans[existingIndex], nextPlan)
     return
   }
 
@@ -1330,7 +1333,7 @@ export function applyCandidateGroundingToPlan(
   foodPurposeProvenance.set(grounded, foodPurposeProvenance.get(plan) ?? {
     baseline: grounded.stops.map(stop => ({ ...stop, googleTypes: stop.googleTypes?.slice() })), replacements: [],
   })
-  return grounded
+  return rememberPlanTextTransition(plan, grounded)
 }
 
 function groundStopWithCandidate(
@@ -1570,6 +1573,10 @@ export async function repairPlanForDelivery(
         crossPlanUsedPlaceIds)
     : { plan: finalCapacityRepair.plan, routesFailed: false }
   const finalPlan = normalizePlanTotalTime(finalMealRepair.plan)
+  rememberPlanTextTransition(plan, finalPlan, repairedStops, scheduleAlignedStops,
+    routedPlan, initialCapacityRepair.plan, mealRepair.plan, mealCapacityRepair.plan, preExpansionPlan,
+    expandedStops, routeRepairedPlan, coverageRepairedPlan, trimmedPlan, postCoverageMealAlignment.plan,
+    postTimingAlignment.plan, finalMealAlignment.plan, finalTimingAlignment.plan, finalCapacityRepair.plan)
   debug?.recordPlanTransition(coverageRepairedPlan, finalPlan, 'repair:final-capacity-meal-and-availability', { attemptId })
   const originalStayLoss = getOriginalStayLoss(initialCapacityRepair.plan.stops, finalPlan.stops)
   const addedActivities = expansionResult.stops.filter(stop =>
@@ -1715,6 +1722,7 @@ async function realignPlanCandidatesAfterTiming(
       routesFailed = routesFailed || routeRepair.routesFailed
     }
 
+    const previousPlan = nextPlan
     nextPlan = shrinkPlanDurationToScheduleCapacity(
       normalizePlanTotalTime({
         ...nextPlan,
@@ -1723,6 +1731,7 @@ async function realignPlanCandidatesAfterTiming(
       }),
       input,
     )
+    rememberPlanTextTransition(previousPlan, nextPlan, alignedStops)
     appliedPasses = pass
   }
 
@@ -2964,7 +2973,7 @@ async function repairRequiredMeals(plan: TripPlan, input: GenerateTripPlansReque
     choices.sort((a, b) => a.loss - b.loss || a.travel - b.travel || b.suitability - a.suitability ||
       Number(crossPlanUsed.has(a.candidate?.placeId ?? '')) - Number(crossPlanUsed.has(b.candidate?.placeId ?? '')) ||
       (b.candidate?.score ?? 0) - (a.candidate?.score ?? 0))
-    if (choices[0]) next = { ...choices[0].plan, scheduleStartTime: timeline.startTime }
+    if (choices[0]) next = rememberPlanTextTransition(next, { ...choices[0].plan, scheduleStartTime: timeline.startTime })
     else routesFailed ||= failedComparison
   }
   console.info('[meal-consistency-repair]', { planId: plan.id,

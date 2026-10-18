@@ -24,6 +24,7 @@ import {
   type VerifiedPlaceCandidate,
 } from './_lib/google-places.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
+import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
 
 type VercelRequest = {
   method?: string
@@ -239,7 +240,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const bias = request.input.location.lat && request.input.location.lng
       ? { lat: request.input.location.lat, lng: request.input.location.lng }
       : undefined
-    const stableDetailedPlan = preserveMainStopIdentity(detailedPlan, request.plan)
+    const stableDetailedPlan = rememberPlanTextTransition(request.plan,
+      preserveMainStopIdentity(detailedPlan, request.plan), detailedPlan.stops, detailedPlan.rainBackup)
     const stablePlan = await validateRainBackupWithPlaces(
       stableDetailedPlan,
       bias,
@@ -249,14 +251,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     logPhase('rain-places-validation-complete', {
       rainStopCount: stablePlan.rainBackup?.length ?? 0,
     })
-    const routedPlan = await repairDetailedPlanRoutes(stablePlan, request.input)
+    const routedPlan = rememberPlanTextTransition(stablePlan, await repairDetailedPlanRoutes(stablePlan, request.input))
     logPhase('routes-complete', {
       mainSegments: routedPlan.transportSegments.length,
       rainSegments: routedPlan.rainTransportSegments.length,
     })
 
     res.status(200).json({
-      plan: routedPlan,
+      plan: finalizePlanText(routedPlan),
     })
     logPhase('done')
   } catch (error) {
@@ -330,7 +332,7 @@ async function validateRainBackupWithPlaces(
     })
   }
 
-  return {
+  return rememberPlanTextTransition(plan, {
     ...plan,
     rainBackup: repairedRainBackup,
     rainTransportSegments: rainBackupChanged
@@ -340,7 +342,7 @@ async function validateRainBackupWithPlaces(
             !invalidRainBackupStopIds.has(segment.fromStopId) &&
             !invalidRainBackupStopIds.has(segment.toStopId),
         ),
-  }
+  }, validation.validatedPlan.rainBackup ?? [], validRainBackup, indoorRainBackup, dedupedRainBackup)
 }
 
 export function getRainBackupValidationInput(plan: TripPlan, input: TripInput): TripInput {
