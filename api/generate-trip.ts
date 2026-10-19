@@ -7,6 +7,7 @@ import { getTripPlanStyleLabel, normalizeTripPlanIdentity, normalizeTripPlanIden
 import { getMealSuitabilityRank, MEAL_SUITABILITY_PROMPT_RULE } from '../src/services/ai/mealSuitability.js'
 import { compareOriginalActivities, getActivityPurpose } from './_lib/trip-activity-purpose.js'
 import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
+import { buildIntentCandidateGrounding } from './_lib/trip-intent-candidate-grounding.js'
 import { recordCapacityDurationLoss, proposeStopDurationRedistribution,
   getDurationRedistributionIssues, type CapacityDurationLoss } from './_lib/trip-stop-duration-quality.js'
 import { compareFoodPurposes, getFoodPurposeHint, hasFoodPurposeConflict, recordFoodReplacement,
@@ -287,7 +288,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }, candidateDebugSession ?? undefined, { preferenceProfile })
   candidateDebugSession?.recordCandidateSets(nearbyPlaceCandidates)
   candidateDebugSession?.recordAiInput(getPromptCandidateSelection(nearbyPlaceCandidates))
-  const nearbyPlaces = formatNearbyRecommendations(nearbyPlaceCandidates)
+  const nearbyPlaces = [formatNearbyRecommendations(nearbyPlaceCandidates),
+    buildIntentCandidateGrounding(request.input, nearbyPlaceCandidates)].filter(Boolean).join('\n\n')
   if (nearbyPlaceCandidates.allCandidates.length === 0) {
     const message = '目前這個時間窗附近沒有可驗證且營業時間已知的候選地點，系統不會用 AI 自創地點硬湊方案。請調整開始時間或拉長行程後再試。'
     writeGenerateDebugLog('candidate-pool-empty-aborted', {

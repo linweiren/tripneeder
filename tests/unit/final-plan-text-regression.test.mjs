@@ -2,9 +2,18 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
+import { stripIntentLinks } from './fixtures/intent-candidate-grounding.mjs'
 const textless = ({ title, subtitle, summary, ...rest }) => rest
+// The later intent projection intentionally adds one prompt-only block. Its full
+// request delta is checked against fedd41fc in intent-candidate-grounding.test.mjs.
+const withoutIntentPrompt = calls => calls.map(call => {
+  if (call.url !== 'https://api.openai.com/v1/chat/completions') return call
+  const body = JSON.parse(call.init.body)
+  body.messages = body.messages.map(message => ({ ...message, content: stripIntentLinks(message.content) }))
+  return { ...call, init: { ...call.init, body: JSON.stringify(body) } }
+})
 
-test('HEAD comparison: only proven stale text changes; all itinerary data and external requests stay identical', () => {
+test('HEAD comparison: only proven stale text changes; itinerary data and non-intent request content stay identical', () => {
   const replay = mode => JSON.parse(execFileSync(process.execPath, ['--import', './tests/unit/register-ts-js-extension-loader.mjs',
     './tests/unit/fixtures/final-plan-text-replay.mjs', mode], { encoding: 'utf8', maxBuffer: 15 * 1024 * 1024 }))
   const before = replay('before'), after = replay('after')
@@ -30,7 +39,7 @@ test('HEAD comparison: only proven stale text changes; all itinerary data and ex
       if (['region-description', 'short-reference'].includes(row.kind)) assert.equal(row.plan.stops[1].name, '草圖咖啡')
     }
   }
-  assert.deepEqual(after.generationCalls, before.generationCalls)
+  assert.deepEqual(withoutIntentPrompt(after.generationCalls), withoutIntentPrompt(before.generationCalls))
   const oldPlans = before.generation.response.plans, newPlans = after.generation.response.plans
   assert.deepEqual(newPlans.map(textless), oldPlans.map(textless))
   assert.notEqual(newPlans[0].summary, oldPlans[0].summary)
