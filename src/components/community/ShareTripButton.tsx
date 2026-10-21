@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/auth'
 import { useDialog } from '../../contexts/dialog'
 import type { TripInput, TripPlan } from '../../types/trip'
-import { COMMUNITY_TAG_LIMIT, hasSharedPlan, shareTrip } from '../../services/community/communityService'
+import { COMMUNITY_TAG_LIMIT, getSharedPlanSignature, hasSharedPlan, shareTrip } from '../../services/community/communityService'
 import { savePlanForDetail } from '../../utils/tripPlanStorage'
 
 const suggestedTags = ['美食', '小資', '親子', '約會', '戶外', '雨天備案']
@@ -24,6 +24,7 @@ export function ShareTripButton({
   const location = useLocation()
   const { user, isAuthLoading } = useAuth()
   const dialog = useDialog()
+  const planSignature = getSharedPlanSignature(plan)
   const [isOpen, setIsOpen] = useState(false)
   const [tagDraft, setTagDraft] = useState('')
   const [tags, setTags] = useState<string[]>([])
@@ -40,12 +41,12 @@ export function ShareTripButton({
       return () => { active = false }
     }
     setIsShareStatusLoading(true)
-    void hasSharedPlan(plan.id)
+    void hasSharedPlan(planSignature)
       .then((shared) => { if (active) setIsAlreadyShared(shared) })
       .catch(() => { if (active) setIsAlreadyShared(false) })
       .finally(() => { if (active) setIsShareStatusLoading(false) })
     return () => { active = false }
-  }, [isAuthLoading, plan.id, user])
+  }, [isAuthLoading, planSignature, user])
 
   function stopCardEvent(event: MouseEvent<HTMLButtonElement> | KeyboardEvent<HTMLButtonElement>) {
     event.stopPropagation()

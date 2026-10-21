@@ -6,7 +6,7 @@ export const COMMUNITY_LIKE_REWARD_POINTS = 20
 export const COMMUNITY_TAG_LIMIT = 2
 export const COMMUNITY_COMMENT_LIMIT = 500
 
-let ownSharedPlanIdsRequest: Promise<Set<string>> | null = null
+let ownSharedPlanSignaturesRequest: Promise<Set<string>> | null = null
 
 export type SharedTrip = {
   id: string
@@ -33,19 +33,35 @@ export async function loadSharedTrips(tripId?: string, ownerOnly = false): Promi
   return (data ?? []) as SharedTrip[]
 }
 
-export async function hasSharedPlan(planId: string): Promise<boolean> {
-  if (!ownSharedPlanIdsRequest) {
-    ownSharedPlanIdsRequest = loadSharedTrips(undefined, true)
+export function getSharedPlanSignature(plan: TripPlan): string {
+  const normalize = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(normalize)
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value)
+          .filter(([, item]) => item !== undefined)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, item]) => [key, normalize(item)]),
+      )
+    }
+    return value
+  }
+  return JSON.stringify(normalize(plan))
+}
+
+export async function hasSharedPlan(planSignature: string): Promise<boolean> {
+  if (!ownSharedPlanSignaturesRequest) {
+    ownSharedPlanSignaturesRequest = loadSharedTrips(undefined, true)
       .then((trips) => {
-        return new Set(trips.map((trip) => trip.plan.id))
+        return new Set(trips.map((trip) => getSharedPlanSignature(trip.plan)))
       })
       .catch((error: unknown) => {
-        ownSharedPlanIdsRequest = null
+        ownSharedPlanSignaturesRequest = null
         throw error
       })
   }
-  const planIds = await ownSharedPlanIdsRequest
-  return planIds.has(planId)
+  const planSignatures = await ownSharedPlanSignaturesRequest
+  return planSignatures.has(planSignature)
 }
 
 export async function shareTrip(plan: TripPlan, input: TripInput | null, tags: string[] = []) {
@@ -56,7 +72,7 @@ export async function shareTrip(plan: TripPlan, input: TripInput | null, tags: s
     p_tags: tags.slice(0, COMMUNITY_TAG_LIMIT),
   })
   if (error) throw error
-  ownSharedPlanIdsRequest = null
+  ownSharedPlanSignaturesRequest = null
   return data as string
 }
 
