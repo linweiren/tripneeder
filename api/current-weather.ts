@@ -1,4 +1,6 @@
-import { matchForecastPeriod, normalizeCwaCounty, readCwaElementValue } from './_lib/weather-parsing'
+/// <reference types="node" />
+
+import { matchForecastPeriod, normalizeCwaCounty, readCwaElementValue } from './_lib/weather-parsing.js'
 
 type VercelRequest = {
   method?: string

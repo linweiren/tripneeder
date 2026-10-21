@@ -2049,12 +2049,8 @@ function googleFetch(url: string, init?: RequestInit) {
               status: res.statusCode ?? 500,
               statusText: res.statusMessage ?? '',
               headers: new Headers(
-                Object.entries(res.headers).flatMap(([key, value]) =>
-                  value === undefined
-                    ? []
-                    : Array.isArray(value)
-                      ? [[key, value.join(', ')]]
-                      : [[key, value]],
+                Object.entries(res.headers).flatMap(([key, value]): [string, string][] =>
+                  value === undefined ? [] : [[key, Array.isArray(value) ? value.join(', ') : String(value)]],
                 ),
               ),
             }),
