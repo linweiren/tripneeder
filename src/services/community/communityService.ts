@@ -1,8 +1,8 @@
 import { supabase } from '../auth/supabaseClient'
 import type { TripInput, TripPlan } from '../../types/trip'
+import { deduplicateAndValidateSharedTrips, sanitizeSharedPlan } from './communityData'
+export { deduplicateAndValidateSharedTrips, sanitizeSharedPlan } from './communityData'
 
-export const COMMUNITY_LIKE_REWARD_THRESHOLD = 10
-export const COMMUNITY_LIKE_REWARD_POINTS = 20
 export const COMMUNITY_TAG_LIMIT = 2
 export const COMMUNITY_COMMENT_LIMIT = 500
 
@@ -30,7 +30,8 @@ export async function loadSharedTrips(tripId?: string, ownerOnly = false): Promi
     p_owner_only: ownerOnly,
   })
   if (error) throw error
-  return (data ?? []) as SharedTrip[]
+  if (!Array.isArray(data)) throw new Error('分享平台回傳格式不正確。')
+  return deduplicateAndValidateSharedTrips(data)
 }
 
 export function getSharedPlanSignature(plan: TripPlan): string {
@@ -64,16 +65,26 @@ export async function hasSharedPlan(planSignature: string): Promise<boolean> {
   return planSignatures.has(planSignature)
 }
 
-export async function shareTrip(plan: TripPlan, input: TripInput | null, tags: string[] = []) {
+export async function shareTrip(plan: TripPlan, tags: string[] = []) {
   if (!supabase) throw new Error('分享平台尚未連接 Supabase。')
+  const publicPlan = sanitizeSharedPlan(plan)
+  const serialized = JSON.stringify(publicPlan)
+  if (serialized.length > 200_000) throw new Error('行程資料過大，請精簡行程後再分享。')
   const { data, error } = await supabase.rpc('share_trip', {
-    p_plan: plan,
-    p_input: input,
+    p_plan: publicPlan,
+    p_input: null,
     p_tags: tags.slice(0, COMMUNITY_TAG_LIMIT),
   })
   if (error) throw error
   ownSharedPlanSignaturesRequest = null
   return data as string
+}
+
+export async function unshareTrip(tripId: string) {
+  if (!supabase) throw new Error('分享平台尚未連接 Supabase。')
+  const { error } = await supabase.rpc('unshare_trip', { p_trip_id: tripId })
+  if (error) throw error
+  ownSharedPlanSignaturesRequest = null
 }
 
 export type SharedTripComment = {

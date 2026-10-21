@@ -1,4 +1,6 @@
 
+import { matchForecastPeriod } from './_lib/weather-parsing'
+
 type VercelRequest = {
   method?: string
   query?: {
@@ -59,7 +61,7 @@ export default async function handler(
   try {
     const params = new URLSearchParams({
       Authorization: apiKey,
-      locationName: location,
+      LocationName: location,
     })
 
     const url =
@@ -94,18 +96,22 @@ export default async function handler(
     const maxT = getElement('MaxT')
     const ci = getElement('CI')
 
-    const forecasts = (wx?.time ?? []).map((period, index) => ({
+    const findMatchingPeriod = <T extends { startTime: string; endTime: string }>(periods: T[] | undefined, target: T) => {
+      if (!periods) return undefined
+      return matchForecastPeriod(periods, Date.parse(target.startTime))
+    }
+    const forecasts = (wx?.time ?? []).map((period) => ({
       startTime: period.startTime,
       endTime: period.endTime,
       weather: period.parameter?.parameterName ?? '',
       rainProbability:
-        pop?.time[index]?.elementValue?.[0]?.value ?? '',
+        findMatchingPeriod(pop?.time, period)?.elementValue?.[0]?.value ?? '',
       minTemperature:
-        minT?.time[index]?.elementValue?.[0]?.value ?? '',
+        findMatchingPeriod(minT?.time, period)?.elementValue?.[0]?.value ?? '',
       maxTemperature:
-        maxT?.time[index]?.elementValue?.[0]?.value ?? '',
+        findMatchingPeriod(maxT?.time, period)?.elementValue?.[0]?.value ?? '',
       comfort:
-        ci?.time[index]?.parameter?.parameterName ?? '',
+        findMatchingPeriod(ci?.time, period)?.parameter?.parameterName ?? '',
     }))
 
     res.status(200).json({

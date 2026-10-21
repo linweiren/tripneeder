@@ -77,7 +77,7 @@ export function ShareTripButton({
     event.preventDefault()
     setIsSharing(true)
     try {
-      const sharedId = await shareTrip(plan, input, tags)
+      const sharedId = await shareTrip(plan, tags)
       setIsOpen(false)
       savePlanForDetail(plan, input)
       navigate(`/plans/${encodeURIComponent(plan.id)}?source=community&shareId=${encodeURIComponent(sharedId)}&from=mine`)

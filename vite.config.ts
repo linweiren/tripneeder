@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 type LocalApiRequest = {
   method?: string
   body?: unknown
-  query?: { location?: string; lat?: string; lng?: string }
+  query?: { location?: string; lat?: string; lng?: string; city?: string }
   headers?: { authorization?: string }
   signal?: AbortSignal
 }
@@ -145,6 +145,7 @@ async function handleLocalApiRequest(
         location: requestUrl.searchParams.get('location') ?? undefined,
         lat: requestUrl.searchParams.get('lat') ?? undefined,
         lng: requestUrl.searchParams.get('lng') ?? undefined,
+        city: requestUrl.searchParams.get('city') ?? undefined,
       },
       headers: {
         authorization: req.headers.authorization,

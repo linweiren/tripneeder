@@ -33,6 +33,7 @@ export default function CurrentWeatherDashboard({ userId }: CurrentWeatherDashbo
     void getWeatherLocationFromDevice()
       .then((currentLocation) => {
         if (cancelled) return
+        setWeather(null)
         setLocation(currentLocation)
         setPlaceLookupStatus('loading')
         void getReverseGeocodedPlace(currentLocation).then((place) => {
@@ -64,6 +65,7 @@ export default function CurrentWeatherDashboard({ userId }: CurrentWeatherDashbo
     }
 
     let cancelled = false
+    setWeather(null)
     setLoading(true)
     setError('')
     void getCurrentWeather(location)
@@ -103,6 +105,7 @@ export default function CurrentWeatherDashboard({ userId }: CurrentWeatherDashbo
     setError('')
     try {
       const currentLocation = await getWeatherLocationFromDevice()
+      setWeather(null)
       setLocation(currentLocation)
       setPlaceLookupStatus('loading')
       void getReverseGeocodedPlace(currentLocation).then((place) => {
@@ -143,6 +146,7 @@ export default function CurrentWeatherDashboard({ userId }: CurrentWeatherDashbo
       if (!response.ok || typeof place.lat !== 'number' || typeof place.lng !== 'number') {
         throw new Error(place.error || '找不到這個地點，請試試縣市、區域或完整地址。')
       }
+      setWeather(null)
       setLocation({ lat: place.lat, lng: place.lng, name: place.address || place.name || address, city: place.city || '', mode: 'manual' })
       setPlaceInput('')
     } catch (reason) {

@@ -6808,6 +6808,7 @@
 .community-my-share-metrics .history-info-item { min-width: 0; }
 .community-my-share-metrics dd { overflow-wrap: anywhere; }
 .community-my-share-views { justify-self: end; margin-top: -3px; color: #899286; font-size: .8rem; }
+.community-my-share-footer { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; }
 .community-back-link {
   display: inline-flex;
   align-items: center;

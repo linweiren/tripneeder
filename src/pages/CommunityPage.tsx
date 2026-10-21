@@ -4,10 +4,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/auth'
 import { useDialog } from '../contexts/dialog'
 import {
-  COMMUNITY_LIKE_REWARD_THRESHOLD,
   loadSharedTrips,
   recordSharedTripView,
   toggleSharedTripLike,
+  unshareTrip,
   type SharedTrip,
 } from '../services/community/communityService'
 import { getPlanActualDuration } from '../utils/tripTiming'
@@ -119,13 +119,21 @@ function CommunityFeed({ ownerOnly }: { ownerOnly: boolean }) {
       setTrips((current) => current.map((item) => item.id === trip.id
         ? { ...item, liked_by_me: result.liked, like_count: result.like_count, reward_awarded: result.reward_awarded }
         : item))
-      if (result.points_awarded > 0) {
-        await dialog.alert({ title: '分享達成里程碑', message: `這份行程已達 ${COMMUNITY_LIKE_REWARD_THRESHOLD} 個喜歡，分享者獲得 ${result.points_awarded} 點。` })
-      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '喜歡狀態更新失敗。')
     } finally {
       setPendingLikeId('')
+    }
+  }
+
+  async function handleUnshare(trip: SharedTrip) {
+    if (!(await dialog.confirm({ title: '取消公開分享', message: '取消後，其他旅人將無法再查看此行程；相關按讚、留言與瀏覽紀錄也會一併移除。確定取消公開分享嗎？', confirmLabel: '取消分享' }))) return
+    try {
+      await unshareTrip(trip.id)
+      setTrips((current) => current.filter((item) => item.id !== trip.id))
+      await dialog.alert({ title: '已取消公開分享', message: '此行程已從公開列表移除，相關互動紀錄也已刪除。原因：你已選擇取消公開分享。' })
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '取消分享失敗，請稍後再試。')
     }
   }
 
@@ -162,7 +170,7 @@ function CommunityFeed({ ownerOnly }: { ownerOnly: boolean }) {
       ) : null}
       {!isLoading && visibleTrips.length > 0 ? <div className="community-list">
         {visibleTrips.map((trip) => ownerOnly
-          ? <MySharedTripCard key={trip.id} trip={trip} onOpen={() => openTrip(trip)} />
+          ? <MySharedTripCard key={trip.id} trip={trip} onOpen={() => openTrip(trip)} onUnshare={() => void handleUnshare(trip)} />
           : <SharedTripCard key={trip.id} trip={trip} pending={pendingLikeId === trip.id} onLike={() => void handleLike(trip)} onOpen={() => openTrip(trip)} />)}
       </div> : null}
     </section>
@@ -195,7 +203,7 @@ function CommunityFilters({
   )
 }
 
-function MySharedTripCard({ trip, onOpen }: { trip: SharedTrip; onOpen: () => void }) {
+function MySharedTripCard({ trip, onOpen, onUnshare }: { trip: SharedTrip; onOpen: () => void; onUnshare: () => void }) {
   const plan = trip.plan
   const date = new Intl.DateTimeFormat('zh-TW', { month: '2-digit', day: '2-digit' }).format(new Date(trip.created_at))
   return (
@@ -210,7 +218,7 @@ function MySharedTripCard({ trip, onOpen }: { trip: SharedTrip; onOpen: () => vo
         <div className="history-info-item"><span className="history-info-icon"><Wallet aria-hidden="true" /></span><dt>預算</dt><dd>約 NT$ {plan.budget.toLocaleString('zh-TW')}</dd></div>
         <div className="history-info-item"><span className="history-info-icon"><Heart aria-hidden="true" /></span><dt>互動</dt><dd>{trip.like_count} 喜歡・{trip.comment_count} 討論</dd></div>
       </dl>
-      <span className="community-my-share-views">{trip.view_count} 次瀏覽</span>
+      <div className="community-my-share-footer"><span className="community-my-share-views">{trip.view_count} 次瀏覽</span><button className="community-detail-button" type="button" onClick={(event) => { event.stopPropagation(); onUnshare() }}>取消公開分享</button></div>
     </article>
   )
 }
@@ -237,7 +245,6 @@ function SharedTripCard({ trip, onLike, pending, onOpen }: {
         <span className="community-stat"><MessageCircle size={16} />{trip.comment_count} 則討論</span>
         <span className="community-stat">{trip.view_count} 次瀏覽</span>
         <button className="community-detail-button" type="button" onClick={onOpen}>查看行程與討論</button>
-        {trip.reward_awarded ? <span className="community-reward-earned">分享已達標</span> : null}
       </footer>
     </article>
   )

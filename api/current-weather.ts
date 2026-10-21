@@ -1,3 +1,5 @@
+import { matchForecastPeriod, normalizeCwaCounty, readCwaElementValue } from './_lib/weather-parsing'
+
 type VercelRequest = {
   method?: string
   query?: { lat?: string; lng?: string; city?: string }
@@ -46,6 +48,7 @@ type CwaForecastTime = {
 
 type CwaForecastLocation = {
   LocationName?: string
+  CountyName?: string
   Latitude?: string
   Longitude?: string
   WeatherElement?: Array<{ ElementName?: string; Time?: CwaForecastTime[] }>
@@ -53,7 +56,7 @@ type CwaForecastLocation = {
 
 type CwaForecastResponse = {
   success?: string
-  records?: { Locations?: Array<{ Location?: CwaForecastLocation[] }> }
+  records?: { Locations?: Array<{ LocationsName?: string; CountyName?: string; Location?: CwaForecastLocation[] }> }
 }
 
 type AirQualityRow = Record<string, string | undefined>
@@ -169,22 +172,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 async function getForecast(apiKey: string, lat: number, lng: number, city: string) {
-  const cacheKey = `${city.trim() || 'all'}:${lat.toFixed(2)}:${lng.toFixed(2)}`
+  const normalizedCity = normalizeCwaCounty(city)
+  const cacheKey = `${normalizedCity || 'all'}:${lat.toFixed(2)}:${lng.toFixed(2)}`
   const cached = forecastCache.get(cacheKey)
-  let locations: CwaForecastLocation[]
   if (cached && cached.expiresAt > Date.now()) {
     return cached.forecast
   }
 
-  locations = await fetchForecastLocations(apiKey, city)
-  if (locations.length === 0 && city.trim()) {
-    locations = await fetchForecastLocations(apiKey, '')
-  }
+  const locations = await fetchForecastLocations(apiKey)
   if (locations.length === 0) {
     throw new Error('CWA response did not contain township forecasts')
   }
 
-  const nearest = locations
+  const countyLocations = normalizedCity
+    ? locations.filter((location) => normalizeCwaCounty(location.CountyName ?? '') === normalizedCity)
+    : locations
+  const nearest = (countyLocations.length ? countyLocations : locations)
     .map((location) => ({
       location,
       distanceKm: haversineDistanceKm(
@@ -217,8 +220,8 @@ async function getForecast(apiKey: string, lat: number, lng: number, city: strin
       return {
         startTime,
         weather: getForecastValue(weatherTime, 'Weather'),
-        temperature: parseNumber(getForecastValue(temperatureTime, 'Temperature')),
-        rainProbability: parseNumber(getForecastValue(rainTime, 'ProbabilityOfPrecipitation')),
+        temperature: readCwaElementValue(getForecastValue(temperatureTime, 'Temperature')),
+        rainProbability: readCwaElementValue(getForecastValue(rainTime, 'ProbabilityOfPrecipitation')),
       }
     })
     .filter((item): item is NonNullable<typeof item> => item !== null)
@@ -229,20 +232,11 @@ async function getForecast(apiKey: string, lat: number, lng: number, city: strin
 }
 
 function findTimePeriod(periods: CwaForecastTime[], timestamp: number) {
-  let closest: CwaForecastTime | undefined
-  let closestDistance = Number.POSITIVE_INFINITY
-  for (const period of periods) {
-    const start = Date.parse(period.StartTime ?? period.DataTime ?? '')
-    const end = Date.parse(period.EndTime ?? '')
-    if (Number.isFinite(start) && Number.isFinite(end) && timestamp >= start && timestamp < end) {
-      return period
-    }
-    if (Number.isFinite(start) && Math.abs(timestamp - start) < closestDistance) {
-      closest = period
-      closestDistance = Math.abs(timestamp - start)
-    }
-  }
-  return closest
+  return matchForecastPeriod(periods.map((period) => ({
+    ...period,
+    startTime: period.StartTime ?? period.DataTime,
+    endTime: period.EndTime,
+  })), timestamp)
 }
 
 async function getAirQuality(lat: number, lng: number): Promise<AirQuality | null> {
@@ -298,21 +292,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-async function fetchForecastLocations(apiKey: string, city: string) {
+async function fetchForecastLocations(apiKey: string) {
   const params = new URLSearchParams({ Authorization: apiKey, format: 'JSON' })
-  if (city.trim()) params.set('LocationName', city.trim())
   params.set('ElementName', '溫度,天氣現象,3小時降雨機率')
   const response = await fetch(
     `https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089?${params.toString()}`,
   )
   if (!response.ok) throw new Error(`CWA forecast HTTP status: ${response.status}`)
   const data = (await response.json()) as CwaForecastResponse
-  return data.records?.Locations?.flatMap((group) => group.Location ?? []) ?? []
+  return data.records?.Locations?.flatMap((group) => (group.Location ?? []).map((location) => ({
+    ...location,
+    CountyName: group.LocationsName ?? group.CountyName ?? location.CountyName,
+  }))) ?? []
 }
 
 function getForecastValue(time: CwaForecastTime | undefined, key: string) {
   const value = time?.ElementValue?.[0]
-  return value?.[key] ?? value?.parameterName ?? value?.value ?? ''
+  return value?.[key] ?? value?.parameterName ?? value?.value ?? Object.values(value ?? {}).find((item) => item !== undefined) ?? ''
 }
 
 async function getStations(apiKey: string) {
