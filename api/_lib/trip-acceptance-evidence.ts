@@ -95,7 +95,17 @@ export async function evidenceAiFetch(stage: Stage, targets: readonly string[], 
     let links: Record<string, string[]> | null = null
     if (blocks.length) {
       const raw = object(JSON.parse(blocks[0][1].split('\n').at(-1)!))
-      links = Object.fromEntries(['culture_primary', 'coffee_venue', 'mixed_or_uncertain'].map(key => [key,
+      const keys = ['culture_primary', 'coffee_venue', 'mixed_or_uncertain']
+      // Optional for historical Prompts: absent is different from a captured [].
+      // Project only the actual request, never reclassify candidates here.
+      if (Object.hasOwn(raw, 'culture_related_unverified')) {
+        const related = raw.culture_related_unverified
+        if (Array.isArray(related)) keys.push('culture_related_unverified')
+        if (!Array.isArray(related) || related.length > 42 || related.some(value => !id(value))) {
+          c.incomplete.add('culture_related_unverified_projection_omitted')
+        }
+      }
+      links = Object.fromEntries(keys.map(key => [key,
         Array.isArray(raw[key]) ? raw[key].slice(0, 42).map(id).filter((value: string | null): value is string => value !== null) : []]))
     }
     c.prompts.push({ attemptId: attempt.id, stage, exposedIds: exposedIds.slice(0, 42),

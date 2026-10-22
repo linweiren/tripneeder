@@ -9,6 +9,7 @@ import { syncBuiltinESMExports } from 'node:module'
 import { withAcceptanceEvidence, evidenceAiFetch, recordAiModelText, bindEvidencePlan,
   recordEvidenceDelivery, captureAcceptanceDiagnostics, observeEvidenceCall } from '../../api/_lib/trip-acceptance-evidence.ts'
 import { createSupplementRouteContext, createRepairRouteResolver } from '../../api/_lib/trip-supplement-quality.ts'
+import { capturedLinks } from './fixtures/culture-evidence-projection.mjs'
 
 const checkoutRevision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
 const replay = (mode, kind = 'normal') => JSON.parse(execFileSync(process.execPath,
@@ -22,7 +23,8 @@ const service = call => {
       : url.pathname.endsWith(':searchText') ? 'places_search' : 'places_details'
 }
 for (const kind of ['normal', 'history-coffee', 'raw-identity', 'retry', 'retry-envelope', 'refill', 'reject-refill', 'parse-failure', 'stream-fallback',
-  'fallback', 'geocoding-details', 'usage', 'points-failure', 'route-failure', 'ai-http-failure', 'ai-network-failure']) {
+  'fallback', 'geocoding-details', 'usage', 'points-failure', 'route-failure', 'ai-http-failure', 'ai-network-failure',
+  'related-history', 'related-retry', 'related-refill']) {
   test(`actual handler and disk: ${kind}, evidence off/on preserve every event and external request`, () => {
     const baseline = replay('baseline', kind), off = replay('off', kind), on = replay('on', kind)
     assert.deepEqual(off.result, baseline.result)
@@ -63,6 +65,20 @@ for (const kind of ['normal', 'history-coffee', 'raw-identity', 'retry', 'retry-
       assert.equal(ledger.points.outcome, 'not_attempted')
     }
     const prompts = files['prompt-evidence.json'].data
+    if (kind.startsWith('related-')) {
+      const actualCalls = on.calls.filter(c => service(c) === 'ai')
+      assert.deepEqual(prompts.map(p => p.stage), kind === 'related-retry' ? ['initial', 'retry']
+        : kind === 'related-refill' ? ['initial', 'refill'] : ['initial'])
+      assert.equal(prompts.length, actualCalls.length)
+      for (const [i, prompt] of prompts.entries()) {
+        const actual = JSON.parse(actualCalls[i].init.body).messages[0].content
+        const raw = JSON.parse(actual.match(/CURRENT_INTENT_CANDIDATE_LINKS:\n([^]*?)\nEND_CURRENT_INTENT_CANDIDATE_LINKS/)[1].split('\n').at(-1))
+        assert.deepEqual(prompt.links, raw)
+        assert.equal(prompt.links.culture_related_unverified.length, 4)
+        assert.equal(prompt.sha256, createHash('sha256').update(actual).digest('hex'))
+        assert.equal(prompt.linkedIdsExposed, true)
+      }
+    }
     if (kind === 'normal') {
       assert.ok(prompts[0].linksPresent)
       assert.equal(prompts[0].blockCount, 1)
@@ -286,4 +302,94 @@ test('an identity outside the capture allowlist is incomplete evidence, not an i
   assert.equal(raw.stops[0].id, null)
   assert.ok(!raw.reasons.includes('invalid_stop'))
   assert.equal(raw.disposition, 'final_selected')
+})
+
+test('culture evidence v1.1: real 38-candidate Prompt writes all four groups for initial/retry/refill', () => {
+  const run = mode => JSON.parse(execFileSync(process.execPath,
+    ['--disable-warning=ExperimentalWarning', '--import', './tests/unit/register-ts-js-extension-loader.mjs',
+      './tests/unit/fixtures/acceptance-culture-evidence-replay.mjs', mode],
+    { encoding: 'utf8', maxBuffer: 5 * 1024 * 1024, timeout: 60000 }))
+  const off = run('off'), on = run('on'), production = run('production')
+  assert.deepEqual(on.calls, off.calls); assert.deepEqual(on.events, off.events)
+  assert.deepEqual(production.calls, off.calls); assert.deepEqual(production.events, off.events)
+  assert.deepEqual(off.bundles, []); assert.deepEqual(off.logs, [])
+  assert.deepEqual(production.bundles, []); assert.deepEqual(production.logs, [])
+  assert.equal(on.bundles.length, 1)
+  const bundle = on.bundles[0], files = bundle.data
+  assert.equal(bundle.files.length, 6)
+  assert.equal(files['manifest.json'].schemaVersion, 1)
+  assert.equal(files['manifest.json'].status, 'complete')
+  const prompts = files['prompt-evidence.json'].data
+  assert.deepEqual(prompts.map(p => p.stage), ['initial', 'retry', 'refill'])
+  assert.deepEqual(prompts.map(p => p.attemptId), [1, 2, 3])
+  for (const [i, prompt] of prompts.entries()) {
+    assert.equal(prompt.exposedIds.length, 38)
+    assert.deepEqual(prompt.links, on.calls[i].links)
+    for (const key of Object.keys(capturedLinks)) assert.deepEqual(prompt.links[key], capturedLinks[key])
+    assert.deepEqual(prompt.links.culture_primary, [])
+    assert.deepEqual(prompt.links.culture_related_unverified, [
+      'ChIJifn-9_ADbjQRTR2Q9DmlzEo', 'ChIJTc5MKfEDbjQRQ7UUWqpeQhA',
+      'ChIJWSxbrYoDbjQRqKW-W4bCuHQ', 'ChIJay59ifEDbjQRld7ipbyyH-4',
+    ])
+    for (const id of ['ChIJKTktNo4EbjQRoRKMt38KIUY', 'ChIJ6RxSfH0EbjQRFGeK2utk8Q4', 'ChIJly3pNogDbjQR2wMsjRKBQFA']) {
+      assert.ok(!prompt.links.culture_related_unverified.includes(id))
+    }
+    assert.equal(prompt.sha256, on.calls[i].sha256)
+    assert.equal(prompt.utf8Bytes, on.calls[i].utf8Bytes)
+    assert.equal(prompt.characters, on.calls[i].characters)
+    assert.equal(prompt.linkedIdsExposed, true)
+    assert.equal(prompt.blockCount, 1)
+  }
+  assert.deepEqual(files['ai-attempts.json'].data.attempts.map(a => a.stage), ['initial', 'retry', 'refill'])
+  assert.equal(files['calls-and-points.json'].data.totals.ai.sent, 3)
+  assert.equal(files['calls-and-points.json'].data.points.outcome, 'not_attempted')
+  const serialized = JSON.stringify(files)
+  assert.doesNotMatch(serialized, /SECRET_|Authorization|CURRENT_INTENT_CANDIDATE_LINKS|https:\/\/unit-test/)
+  assert.equal(files['final-response.json'].data.sha256,
+    createHash('sha256').update(JSON.stringify(on.events[0].response)).digest('hex'))
+})
+
+test('legacy, absent, empty and populated related groups stay distinct without recomputing classifications', async t => {
+  const original = { culture_primary: [], coffee_venue: ['coffee'], mixed_or_uncertain: ['mixed'] }
+  const cases = [null, original, { ...original, culture_related_unverified: [] },
+    { ...original, culture_related_unverified: ['related-second', 'related-first'] }]
+  const rows = await memoryCapture(t, async run => {
+    for (const links of cases) await run(async () => {
+      const exposed = ['coffee', 'mixed', 'related-first', 'related-second']
+        .map(id => `- name=ordinary placeId="${id}"`).join('\n')
+      const prompt = exposed + (links ? `\nCURRENT_INTENT_CANDIDATE_LINKS:\n${JSON.stringify(links)}\nEND_CURRENT_INTENT_CANDIDATE_LINKS` : '')
+      const response = await evidenceAiFetch('initial', ['safe'], 'https://unit-test.invalid/ai',
+        { body: JSON.stringify({ messages: [{ content: prompt }] }) })
+      recordAiModelText(response, '{"plans":[]}')
+      captureAcceptanceDiagnostics({ version: 1 })
+      recordEvidenceDelivery({ event: 'done', response: { plans: [] } })
+    })
+  })
+  const prompts = rows.filter(([file]) => file.endsWith('prompt-evidence.json')).map(([, report]) => report.data[0])
+  assert.deepEqual(prompts.map(p => p.links), cases)
+  assert.deepEqual(prompts.map(p => p.linksPresent), [false, true, true, true])
+  assert.ok(!Object.hasOwn(prompts[1].links, 'culture_related_unverified'))
+  assert.ok(Object.hasOwn(prompts[2].links, 'culture_related_unverified'))
+  assert.ok(rows.filter(([file]) => file.endsWith('manifest.json')).every(([, manifest]) => manifest.status === 'complete'))
+})
+
+test('related capture cannot silently present invalid or bounded-out identities as complete evidence', async t => {
+  const cases = [null, ['bad identity', 'valid'], ['x'.repeat(201)], Array.from({ length: 43 }, (_, i) => `id-${i}`)]
+  const rows = await memoryCapture(t, async run => {
+    for (const related of cases) await run(async () => {
+      const prompt = `CURRENT_INTENT_CANDIDATE_LINKS:\n${JSON.stringify({ culture_primary: [], coffee_venue: [],
+        mixed_or_uncertain: [], culture_related_unverified: related })}\nEND_CURRENT_INTENT_CANDIDATE_LINKS`
+      const response = await evidenceAiFetch('initial', ['safe'], 'https://unit-test.invalid/ai',
+        { body: JSON.stringify({ messages: [{ content: prompt }] }) })
+      recordAiModelText(response, '{"plans":[]}')
+      captureAcceptanceDiagnostics({ version: 1 })
+      recordEvidenceDelivery({ event: 'done', response: { plans: [] } })
+    })
+  })
+  for (const [, manifest] of rows.filter(([file]) => file.endsWith('manifest.json'))) {
+    assert.equal(manifest.status, 'incomplete')
+    assert.ok(manifest.reasons.includes('culture_related_unverified_projection_omitted'))
+  }
+  const invalid = rows.find(([file]) => file.endsWith('prompt-evidence.json'))[1].data[0]
+  assert.ok(!Object.hasOwn(invalid.links, 'culture_related_unverified'))
 })

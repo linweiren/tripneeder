@@ -110,3 +110,40 @@ geocoding-details 預演：AI 1、Places Search 10、Details 1、Geocoding 1、R
 本次另外重跑四組實際寫檔預演，產物在同一個 repository 外的 `acceptance-evidence-v1-commit-review-20261022/`，索引為 `dry-run-summary.json`。24 份資料檔與前次產物分開保存；除了共同 UUID、五檔雜湊及來源雜湊，另逐方案核對 done.response 雜湊、站點身分／停留時間及 diagnostics.final 的 AI 來源版本，全部一致。產物沒有納入提交。
 
 預設保存位置固定為已 ignore 的本機 `.tripneeder-acceptance-evidence/`；本次所有預演明確指定 repository 外本機目錄。獨立詳情頁請求沒有建立本次生成的 context，不會誤計入初始總帳。此次只提交前述觀測程式、接線、必要測試與本文件，不提交既有調查資料、scripts、無關 fixture 或任何診斷 JSON／日誌。
+
+## v1.1：Culture Evidence Projection 觀測對齊
+
+基準 dev `6d3392d`。只擴充 `evidenceAiFetch` 的內部白名單投影；從實際 `init.body.messages[0].content` 中既有用途對照區塊的 JSON 取得 `culture_related_unverified`，不再呼叫分類器、不改 Prompt 或推薦決策。Initial、Retry、Refill 共用此入口；不新增外部請求。
+
+沿用六檔、UUID、`schemaVersion: 1`、Prompt SHA-256／字元數／UTF-8 bytes。`links` 的原三欄不變，第四欄是選擇性欄位：
+
+- Prompt 沒有整個區塊：仍是 `links: null`、`linksPresent: false`。
+- 舊 Prompt 只有三組：不補出第四欄，不將「未提供」冒充空陣列。
+- 新組存在且為空：保存 `culture_related_unverified: []`。
+- 新組有合法 ID：保留完整 ID 及陣列順序。既有最多42個、ID最多200字的安全界限不變；不截短 ID。
+- 新組格式不是陣列、含無法投影的 ID 或超限：manifest 標為 incomplete，原因 `culture_related_unverified_projection_omitted`。非陣列不保存為假空陣列；部分可保存資料也不能視為完整證據。未曝光 ID 沿用既有 `intent_identity_not_exposed` 檢查。
+
+因此舊三組證據仍可讀；讀取新欄位的工具須辨識屬性是否存在，不能用缺欄補空陣列來推定當時沒有歷史線索。原始三組白名單、未知 usage／費用及扣點規則完全不變，不回填或覆寫舊證據。
+
+實際全 mock 寫檔預演使用已提交的第三次真實生成38候選 fixture，以目前 Prompt builder 組裝請求，經真正 `evidenceAiFetch` 投影；並非還原未保存的歷史全文或重跑真實生成。三階段用同一份固定 Prompt 測試觀測入口；另外19組真正 handler 情境（原16組加 related-history／related-retry／related-refill）驗證實際不同階段請求、hash、完整 response、串流事件及所有外部請求開關前後一致。檔案寫入、讀回與雜湊核對沒有 mock。
+
+預演目錄：
+
+`C:/Users/wr124/.codex/visualizations/2026/10/18/01a14f39-7e6b-7bb3-81d9-a88b3de9fad5/acceptance-evidence-v1.1-20261022/disk-9YWBWI/793899d8-d518-422f-8551-0708329b6990/`
+
+六檔皆已落地，共同 UUID `793899d8-d518-422f-8551-0708329b6990`，manifest complete；獨立父程序重新讀檔核對五檔雜湊、共同 UUID、實際請求的 Prompt hash 與四組內容。初始／retry／refill 的 attemptId 依序為1／2／3；每次曝光38個 ID，保存內容為：
+
+```json
+{
+  "culture_primary": [],
+  "coffee_venue": ["ChIJH84gKYgEbjQRm8xsvOZ5rKM", "ChIJuTyah88DbjQRnTzSrugnKs8", "ChIJhywNqsMFbjQRQRq6qpXiYDQ"],
+  "mixed_or_uncertain": ["ChIJKcnoVXAFbjQRGsXLEj-Me78", "ChIJq6qqqmUDbjQR4vm-YC7Q7QA", "ChIJdfvRg4UFbjQRUkFOZNwXbEs"],
+  "culture_related_unverified": ["ChIJifn-9_ADbjQRTR2Q9DmlzEo", "ChIJTc5MKfEDbjQRQ7UUWqpeQhA", "ChIJWSxbrYoDbjQRqKW-W4bCuHQ", "ChIJay59ifEDbjQRld7ipbyyH-4"]
+}
+```
+
+新組依序為高雄燈塔、雄鎮北門、新濱老街、旗津老街；光之穹頂、城市光廊、駁二塔沒有升格。此預演只是觀測邊界的合成方案，不能拿它評估真實AI採用率、行程可行性或正式扣點。三次AI邊界均為 mock，其他付費服務不允許呼叫，實際扣點為零；ledger 為 `not_attempted`，不是實際20點扣除。產物保存在 repository 外，不納入 Git。
+
+另有舊三組／無區塊／新組空陣列／非空陣列及異常／超限測試。以刻意不同於候選順序的已曝光 ID 驗證直接投影、不重新分類或排序；診斷關閉與 production 即使 flag=true 都無紀錄。完整 Prompt、Authorization 測試值與 URL 未保存。
+
+v1.1 驗證：觀測專項28/28、全專案 `npm.cmd run test` 1375/1375、`npm.cmd run build` 與 `git diff --check` 通過。build 僅保留既有大於500 kB的bundle提示。未修改 Prompt、搜尋／分類／排名／個人化、選站／retry決策、後置保護、點數規則或公開契約；未 stage、commit、push、merge或執行真實生成。

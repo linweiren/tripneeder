@@ -40,7 +40,7 @@ const deny = () => { throw Error('Unmocked network forbidden') }
 mock.method(globalThis, 'fetch', deny); mock.method(http, 'request', deny)
 mock.method(net, 'connect', deny); mock.method(net, 'createConnection', deny); mock.method(tls, 'connect', deny)
 const f = kind === 'fallback' ? mealReliabilityGenerationFixture('fallback-meal')
-  : intentGroundingFixture(kind === 'history-coffee' ? 'history-coffee' : ['retry', 'retry-envelope'].includes(kind) ? 'retry-invalid' : ['refill', 'reject-refill'].includes(kind) ? 'retry-balanced' : 'mixed')
+  : intentGroundingFixture(kind.startsWith('related-') ? kind : kind === 'history-coffee' ? 'history-coffee' : ['retry', 'retry-envelope'].includes(kind) ? 'retry-invalid' : ['refill', 'reject-refill'].includes(kind) ? 'retry-balanced' : 'mixed')
 const validPlans = structuredClone(f.plans)
 if (kind === 'raw-identity') {
   f.aiPlans[0].id = 'original-safe-alias'
