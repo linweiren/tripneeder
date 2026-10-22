@@ -8,6 +8,7 @@ import {
 import {
   getDefaultStopDuration,
   getPlanActualDuration,
+  hasOutdoorStopEvidence,
 } from './trip-plan-metrics.js'
 import { getEstimatedPlanArrivalMinutes } from './trip-timeline.js'
 
@@ -114,9 +115,9 @@ export function hasConsecutiveSimilarStops(
 }
 
 export function inferStopRhythmRole(stop: Stop): StopRhythmRole {
-  const text = `${stop.name} ${stop.address}`.toLocaleLowerCase('zh-TW')
+  const text = stop.name.toLocaleLowerCase('zh-TW')
   if (stop.type === 'food') return 'food'
-  if (/(公園|步道|海邊|湖|山|森林|河濱|草地|濕地|park)/i.test(text)) return 'open_space'
+  if (hasOutdoorStopEvidence(stop) || /濕地/.test(text)) return 'open_space'
   if (/(市場|商圈|老街|夜市|百貨|購物|mall|outlet)/i.test(text)) return 'shopping'
   if (/(咖啡|書店|茶|甜點|cafe|coffee)/i.test(text)) return 'rest'
   return 'main_activity'
