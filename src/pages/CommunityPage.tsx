@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, CalendarDays, Clock3, Heart, MapPin, MessageCircle, Share2, Wallet } from 'lucide-react'
+import { ArrowLeft, CalendarDays, Clock3, Heart, MessageCircle, Share2, Wallet } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/auth'
 import { useDialog } from '../contexts/dialog'
@@ -95,8 +95,8 @@ function CommunityFeed({ ownerOnly }: { ownerOnly: boolean }) {
     const min = minBudget === '' ? null : Number(minBudget)
     const max = maxBudget === '' ? null : Number(maxBudget)
     return trips.filter((trip) => {
-      const location = (trip.input?.location?.name || trip.plan.stops[0]?.address || '').toLocaleLowerCase()
-      if (locationNeedle && !location.includes(locationNeedle)) return false
+      const searchableText = [trip.plan.title, ...trip.plan.stops.map((stop) => stop.name)].join(' ').toLocaleLowerCase()
+      if (locationNeedle && !searchableText.includes(locationNeedle)) return false
       if (min !== null && trip.plan.budget < min) return false
       if (max !== null && trip.plan.budget > max) return false
       if (selectedTag && !(trip.tags ?? []).includes(selectedTag)) return false
@@ -230,15 +230,14 @@ function SharedTripCard({ trip, onLike, pending, onOpen }: {
   onOpen: () => void
 }) {
   const { plan } = trip
-  const location = trip.input?.location?.name || plan.stops[0]?.address || plan.stops[0]?.name || '旅程探索'
   const date = new Intl.DateTimeFormat('zh-TW', { month: 'long', day: 'numeric' }).format(new Date(trip.created_at))
   return (
     <article className="community-trip-card">
       <div className="community-trip-topline"><span className="community-trip-category">旅人行程</span><time>{date}</time></div>
       <h2>{plan.title}</h2>
       <p className="community-trip-subtitle">{plan.subtitle || plan.summary}</p>
-      <div className="community-author-row"><span className="community-avatar">{trip.author_display_name.slice(0, 1).toUpperCase()}</span><span>分享人 <strong>{trip.author_display_name}</strong></span></div>
-      <div className="community-trip-meta"><span><MapPin size={16} />{location}</span><span>{plan.stops.length} 個行程地點</span><span>約 NT$ {plan.budget.toLocaleString('zh-TW')}</span><span><MessageCircle size={15} />討論熱度 {getDiscussionHeat(trip)}</span></div>
+      <div className="community-author-row"><span>分享人 <strong>{trip.author_display_name}</strong></span></div>
+      <div className="community-trip-meta"><span>{plan.stops.length} 個行程地點</span><span>約 NT$ {plan.budget.toLocaleString('zh-TW')}</span><span><MessageCircle size={15} />討論熱度 {getDiscussionHeat(trip)}</span></div>
       {(trip.tags ?? []).length > 0 ? <div className="community-trip-tags">{trip.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div> : null}
       <footer className="community-trip-actions">
         <button className={`community-like-button${trip.liked_by_me ? ' community-like-active' : ''}`} type="button" onClick={onLike} disabled={pending || trip.is_owner} aria-pressed={trip.liked_by_me}><Heart size={18} fill={trip.liked_by_me ? 'currentColor' : 'none'} />{pending ? '處理中…' : trip.is_owner ? '自己的分享' : trip.liked_by_me ? '已喜歡' : '喜歡'}・{trip.like_count}</button>

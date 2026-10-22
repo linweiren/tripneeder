@@ -605,7 +605,7 @@ export function DetailPage() {
   }, [replacingStopId])
 
   useEffect(() => {
-    if (!selectedPlan || !user || isSavingFavorite || isCommunityShared) {
+    if (!selectedPlan || !user || isSavingFavorite) {
       return
     }
 
@@ -636,7 +636,6 @@ export function DetailPage() {
   }, [
     favoriteRevision,
     isSavingFavorite,
-    isCommunityShared,
     segmentModeOverrides,
     selectedPlan,
     stopOrders,
@@ -745,11 +744,16 @@ export function DetailPage() {
   }
 
   async function handleSaveFavorite() {
-    if (!selectedPlan || !user || hasSavedFavorite || isSavingFavorite) {
+    if (!selectedPlan || hasSavedFavorite || isSavingFavorite) {
       return
     }
 
-    if (!selectedPlan.isDetailComplete) {
+    if (!user) {
+      navigate('/login', { state: { from: `${location.pathname}${location.search}` } })
+      return
+    }
+
+    if (!selectedPlan.isDetailComplete && !isCommunityShared) {
       void dialog.alert({
         title: '正在補完整細節',
         message: '正在補完整細節，完成後再收藏。',
@@ -1262,7 +1266,21 @@ export function DetailPage() {
         </SortableContext>
       </DndContext>
 
-      {isCommunityShared && communityShareId ? <SharedTripDiscussion tripId={communityShareId} /> : (
+      {isCommunityShared && communityShareId ? (
+        <>
+          <div className="detail-action-row">
+            <div className="favorite-action-panel action-strip">
+              <FavoriteActionButton
+                hasSavedFavorite={hasSavedFavorite}
+                isSavingFavorite={isSavingFavorite}
+                isDetailComplete={selectedPlan.isDetailComplete || isCommunityShared}
+                onSave={() => void handleSaveFavorite()}
+              />
+            </div>
+          </div>
+          <SharedTripDiscussion tripId={communityShareId} />
+        </>
+      ) : (
         <div className="detail-action-row">
           <div className="rain-toggle-panel action-strip">
             <button
@@ -1282,22 +1300,43 @@ export function DetailPage() {
           </div>
 
           <div className="favorite-action-panel action-strip">
-            <button
-              className={`submit-button${hasSavedFavorite ? ' favorite-button-saved' : ''}`}
-              type="button"
-              onClick={() => void handleSaveFavorite()}
-              disabled={hasSavedFavorite || isSavingFavorite}
-            >
-              {hasSavedFavorite
-                ? '已收藏'
-                : selectedPlan.isDetailComplete
-                  ? '收藏此方案'
-                  : '補完細節後可收藏'}
-            </button>
+            <FavoriteActionButton
+              hasSavedFavorite={hasSavedFavorite}
+              isSavingFavorite={isSavingFavorite}
+              isDetailComplete={Boolean(selectedPlan.isDetailComplete)}
+              onSave={() => void handleSaveFavorite()}
+            />
           </div>
         </div>
       )}
     </section>
+  )
+}
+
+function FavoriteActionButton({
+  hasSavedFavorite,
+  isSavingFavorite,
+  isDetailComplete,
+  onSave,
+}: {
+  hasSavedFavorite: boolean
+  isSavingFavorite: boolean
+  isDetailComplete: boolean
+  onSave: () => void
+}) {
+  return (
+    <button
+      className={`submit-button${hasSavedFavorite ? ' favorite-button-saved' : ''}`}
+      type="button"
+      onClick={onSave}
+      disabled={hasSavedFavorite || isSavingFavorite}
+    >
+      {hasSavedFavorite
+        ? '已收藏'
+        : isDetailComplete
+          ? '收藏此方案'
+          : '補完細節後可收藏'}
+    </button>
   )
 }
 
