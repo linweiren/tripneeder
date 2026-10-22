@@ -16,6 +16,10 @@ const delivery = await import('../../api/generate-trip.ts')
 const experiment = await loadSearchBaseline(true)
 experiment.setQueryPlanner((input, persona) => priorSearchExperiment(baseline, input, persona))
 const observations = []
+// Keep frozen Search v2 evidence intact. The shared duration guidance adds 330
+// characters to the full Prompt only; candidate-block lengths and all pool/call
+// assertions remain exact. activity-duration-prompt.test.mjs locks this delta.
+const withDurationPromptLength = summary => ({ ...summary, fullPromptCharacters: summary.fullPromptCharacters + 330 })
 
 function assertSafety(result, input) {
   const selection = current.getPromptCandidateSelection(result.pool)
@@ -57,7 +61,7 @@ test('Search v2 baseline: replay all previous 136 cases and the prior proposal t
     const profile = rankingProfiles()[row.history]
     for (const [api, saved] of [[baseline, row.baseline], [experiment, row.experiment]]) {
       const result = await replay(api, profile)
-      assert.deepEqual(result.summary, saved.summary)
+      assert.deepEqual(result.summary, withDurationPromptLength(saved.summary))
       assert.deepEqual(result.plans, saved.plans)
       assert.deepEqual(result.facts, saved.candidateRefs.map(ref => searchFixture.facts[ref]))
       assert.deepEqual(result.requests, saved.requests.map(({ maskRef, ...request }) => ({ ...request, mask: searchFixture.fieldMasks[maskRef] })))
@@ -226,8 +230,8 @@ test('Search v2 rejection evidence: empty targeted responses lose matching candi
     const row = { environment: 'city', input: saved.input }
     const replay = createSearchReplay(sub, row, { [saved.query]: [] })
     const before = await replay(baseline), proposal = await replay(current), kept = await replay(production)
-    assert.deepEqual(before.summary, saved.before)
-    assert.deepEqual(proposal.summary, saved.after)
+    assert.deepEqual(before.summary, withDurationPromptLength(saved.before))
+    assert.deepEqual(proposal.summary, withDurationPromptLength(saved.after))
     const theme = saved.intent === 'coffee' ? 'cafe' : saved.intent === 'outdoor' ? 'outdoor' : 'culture'
     assert.equal(proposal.summary.poolUses[theme], 0, 'Reproduces rejection; this is not a safety acceptance test')
     assert.ok(before.summary.poolUses[theme] > 0)
