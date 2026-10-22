@@ -1268,7 +1268,7 @@ export function DetailPage() {
 
       {isCommunityShared && communityShareId ? (
         <>
-          <div className="detail-action-row">
+          <div className="detail-action-row community-shared-favorite-row">
             <div className="favorite-action-panel action-strip">
               <FavoriteActionButton
                 hasSavedFavorite={hasSavedFavorite}

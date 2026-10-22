@@ -2952,6 +2952,18 @@
   max-width: 100%;
 }
 
+.community-shared-favorite-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.community-shared-favorite-row .favorite-action-panel {
+  justify-content: center;
+}
+
+.community-shared-favorite-row .favorite-action-panel .submit-button {
+  width: min(100%, 320px);
+}
+
 .favorite-action-panel .submit-button {
   color: #fffaf2;
   background: #2f5a43;
