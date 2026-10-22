@@ -1,4 +1,5 @@
 import type { TripInput, TripPlan } from '../../src/types/trip.js'
+import { getEvidencePlanVersion } from './trip-acceptance-evidence.js'
 import { getMealSuitability } from '../../src/services/ai/mealSuitability.js'
 import { getFoodPurposeHint } from './trip-food-purpose.js'
 import { resolveCandidateRankingContext } from './candidate-ranking-context.js'
@@ -124,6 +125,7 @@ export class TripQualityDiagnostics {
   private promptConfirmedEntries: Partial<Record<Theme, number>> = {}
   private poolObserved = false
   private nextAttempt = 0
+  private readonly evidenceOrigins = new Map<number, ReturnType<typeof getEvidencePlanVersion>>()
   private readonly stages: ReturnType<TripQualityDiagnostics['snapshot']>[] = []
   private readonly transitions: Array<{
     phase: string; planId: string; context: DiagnosticStageContext
@@ -157,6 +159,7 @@ export class TripQualityDiagnostics {
 
   beginAttempt(plan: TripPlan, phase: string) {
     const attemptId = ++this.nextAttempt
+    this.evidenceOrigins.set(attemptId, getEvidencePlanVersion(plan))
     this.recordStage(plan, `${phase}:input`, { attemptId, disposition: 'provisional' })
     return attemptId
   }
@@ -238,6 +241,7 @@ export class TripQualityDiagnostics {
     const noFullMeals = this.input.tags.includes('no_full_meals')
     return {
       phase, planId: plan.id, planType: plan.type, context: { ...context },
+      aiVersion: getEvidencePlanVersion(plan) ?? (context.attemptId ? this.evidenceOrigins.get(context.attemptId) : null) ?? null,
       requestedStartTime: this.input.startTime, requestedEndTime: this.input.endTime,
       scheduleStartTime: plan.scheduleStartTime ?? this.input.startTime,
       startDelayMinutes: requestedStart === null ? null : (arrivals[0] ?? requestedStart) - requestedStart,

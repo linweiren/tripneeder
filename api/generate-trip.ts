@@ -8,6 +8,10 @@ import { getMealSuitabilityRank, MEAL_SUITABILITY_PROMPT_RULE } from '../src/ser
 import { compareOriginalActivities, getActivityPurpose } from './_lib/trip-activity-purpose.js'
 import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
 import { buildIntentCandidateGrounding } from './_lib/trip-intent-candidate-grounding.js'
+import { withAcceptanceEvidence, evidenceAiFetch, observeEvidenceCall, recordAiModelText,
+  recordRawAiPlan, recordAiUsage, recordAiStreamUsage, bindEvidencePlan, recordEvidenceDecision,
+  recordEvidencePoints, recordEvidenceProfile, recordEvidencePlanDecision, bindLocalEvidencePlan,
+  recordEvidenceDelivery, carryEvidencePlan } from './_lib/trip-acceptance-evidence.js'
 import { recordCapacityDurationLoss, proposeStopDurationRedistribution,
   getDurationRedistributionIssues, type CapacityDurationLoss } from './_lib/trip-stop-duration-quality.js'
 import { compareFoodPurposes, getFoodPurposeHint, hasFoodPurposeConflict, recordFoodReplacement,
@@ -180,6 +184,10 @@ type DeliveryPlanIssueOptions = {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  return withAcceptanceEvidence(req.body, res, sink => generateTrip(req, sink))
+}
+
+async function generateTrip(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Cache-Control', 'no-store')
 
   if (req.method !== 'POST') {
@@ -262,6 +270,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 獲取並合併人設
   const persona = await getMergedPersona(supabase, userId, request.input)
   const preferenceProfile = await loadServerPreferenceProfile(supabase, userId)
+  recordEvidenceProfile(persona.stamina, preferenceProfile.sampleCount, (preferenceProfile.foodSubtypeScores.cafe ?? 0) > 0)
 
   // 9D-7: 智慧前置搜尋 (Search-Inject)
   if (!request.input.location.lat || !request.input.location.lng) {
@@ -340,10 +349,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const writeEvent = (event: Record<string, unknown>) => {
     res.write(`${JSON.stringify(event)}\n`)
+    recordEvidenceDelivery(event)
   }
 
   try {
-    const openAiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    const openAiResponse = await evidenceAiFetch('initial', PLAN_IDS, 'https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -410,6 +420,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       sseBuffer = events.pop() ?? ''
 
       for (const rawEvent of events) {
+        recordAiStreamUsage(openAiResponse, rawEvent)
         const delta = extractDeltaFromSseEvent(rawEvent)
         const finishReason = extractFinishReasonFromSseEvent(rawEvent)
         if (finishReason) streamFinishReasons.push(finishReason)
@@ -419,8 +430,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const plans = extractor.push(delta)
 
         for (const rawPlan of plans) {
+          recordRawAiPlan(openAiResponse, rawPlan)
           const plan = normalizeTripPlanIdentity(rawPlan)
           if (!plan || streamedPlanTypes.has(plan.type)) continue
+          bindEvidencePlan(openAiResponse, plan)
           streamedPlanTypes.add(plan.type)
           const bias = request.input.location.lat && request.input.location.lng
             ? { lat: request.input.location.lat, lng: request.input.location.lng }
@@ -458,6 +471,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (sseBuffer.trim()) {
+      recordAiStreamUsage(openAiResponse, sseBuffer)
       const delta = extractDeltaFromSseEvent(sseBuffer)
       const finishReason = extractFinishReasonFromSseEvent(sseBuffer)
       if (finishReason) streamFinishReasons.push(finishReason)
@@ -466,8 +480,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const plans = extractor.push(delta)
 
         for (const rawPlan of plans) {
+          recordRawAiPlan(openAiResponse, rawPlan)
           const plan = normalizeTripPlanIdentity(rawPlan)
           if (!plan || streamedPlanTypes.has(plan.type)) continue
+          bindEvidencePlan(openAiResponse, plan)
           streamedPlanTypes.add(plan.type)
           const bias = request.input.location.lat && request.input.location.lng
             ? { lat: request.input.location.lat, lng: request.input.location.lng }
@@ -508,7 +524,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let initialDiagnosticPhase = 'initial-ai-output'
     try {
       try {
+        recordAiModelText(openAiResponse, fullText)
         finalResponse = parseTripPlanSkeletonResponse(fullText)
+        finalResponse.plans.forEach(plan => bindEvidencePlan(openAiResponse, plan))
       } catch {
         if (validatedPlans.length > 0) {
           initialDiagnosticPhase = 'initial-stream-validation-fallback'
@@ -578,7 +596,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             nearbyPlaces,
             formatRetryValidationSummaries(invalidPlanIds, validationSummaries),
           )
-          const retryResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+          const retryResponse = await evidenceAiFetch('retry', invalidPlanIds, 'https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -609,8 +627,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const retryData = (await retryResponse.json()) as {
               choices: Array<{ message: { content: string } }>
             }
+            recordAiUsage(retryResponse, retryData)
+            recordAiModelText(retryResponse, retryData.choices?.[0]?.message?.content)
             const retryText = retryData.choices[0].message.content
             const retryParsed = parseTripPlanSkeletonResponse(retryText)
+            retryParsed.plans.forEach(plan => bindEvidencePlan(retryResponse, plan))
             candidateDebugSession?.recordAiOutput(retryParsed.plans, 'retry-ai-output')
 
             for (const plan of retryParsed.plans) {
@@ -705,6 +726,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sourcePlan: plan,
           ...result,
         })
+        recordEvidencePlanDecision(plan, result.plan ? 'delivery_accepted_provisional' : 'delivery_rejected', result.issues)
         if (result.plan) {
           getPlanPlaceIds(result.plan).forEach((placeId) => crossPlanUsedPlaceIds.add(placeId))
         }
@@ -760,6 +782,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   plan as TripPlan,
                   missingPlanId,
                 )
+                carryEvidencePlan(plan, normalizedRetryPlan)
 
                 const bias = request.input.location.lat && request.input.location.lng
                   ? { lat: request.input.location.lat, lng: request.input.location.lng }
@@ -810,6 +833,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   repairResult.issues,
                   'refill-final-repair',
                 )
+                recordEvidencePlanDecision(validatedPlan, repairResult.plan ? 'delivery_accepted_provisional' : 'delivery_rejected', repairResult.issues)
                 if (repairResult.routesFailed) routesApiFailed = true
                 if (!repairResult.plan) {
                   validationSummaries.set(validatedPlan.id, repairResult.issues)
@@ -862,6 +886,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           let lastLocalIssues = ['本地補案未通過最終驗證']
 
           for (const localPlan of localPlans) {
+            bindLocalEvidencePlan(localPlan)
             const repairResult = await repairAndValidatePlanForDelivery(
               localPlan,
               request.input,
@@ -1082,6 +1107,7 @@ function markPlanInvalid(
   planId: string,
   issues: string[],
 ) {
+  recordEvidenceDecision(planId, 'validation_rejected', issues)
   if (!invalidPlanIds.includes(planId)) {
     invalidPlanIds.push(planId)
   }
@@ -1093,6 +1119,7 @@ function markPlanValid(
   validationSummaries: Map<string, string[]>,
   planId: string,
 ) {
+  recordEvidenceDecision(planId, 'validation_accepted_provisional')
   const existingIndex = invalidPlanIds.indexOf(planId)
   if (existingIndex >= 0) {
     invalidPlanIds.splice(existingIndex, 1)
@@ -1211,7 +1238,7 @@ async function fetchRetrySkeletonPlans(
     formatRetryValidationSummaries([...planIds], validationSummaries),
   )
   const retryResponseSchema = buildTripPlanRefillResponseSchema(planIds.length)
-  const retryResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+  const retryResponse = await evidenceAiFetch('refill', planIds, 'https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1243,7 +1270,11 @@ async function fetchRetrySkeletonPlans(
   const retryData = (await retryResponse.json()) as {
     choices: Array<{ message: { content: string } }>
   }
-  return parseTripPlanSkeletonResponse(retryData.choices[0].message.content).plans
+  recordAiUsage(retryResponse, retryData)
+  recordAiModelText(retryResponse, retryData.choices?.[0]?.message?.content)
+  const parsedPlans = parseTripPlanSkeletonResponse(retryData.choices[0].message.content).plans
+  parsedPlans.forEach(plan => bindEvidencePlan(retryResponse, plan))
+  return parsedPlans
     .filter(plan => planIds.includes(plan.type))
 }
 
@@ -1269,7 +1300,7 @@ async function fetchSkeletonPlansNonStreaming(
   prompt: string,
   phase: string,
 ): Promise<GenerateTripPlansResponse> {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await evidenceAiFetch('initial_json_repair', PLAN_IDS, 'https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1306,6 +1337,8 @@ async function fetchSkeletonPlansNonStreaming(
       message: { content: string }
     }>
   }
+  recordAiUsage(response, data)
+  recordAiModelText(response, data.choices?.[0]?.message?.content)
   const choice = data.choices[0]
   if (choice?.finish_reason) {
     console.info('[trip-json-fallback-finish]', {
@@ -1314,7 +1347,9 @@ async function fetchSkeletonPlansNonStreaming(
     })
   }
 
-  return parseTripPlanSkeletonResponse(choice.message.content)
+  const parsed = parseTripPlanSkeletonResponse(choice.message.content)
+  parsed.plans.forEach(plan => bindEvidencePlan(response, plan))
+  return parsed
 }
 
 export function applyCandidateGroundingToPlan(
@@ -4300,7 +4335,7 @@ function createNodeHttpsFetch(): typeof fetch {
     const headers = new Headers(init?.headers ?? (typeof input === 'object' && 'headers' in input ? input.headers : undefined))
     const body = init?.body
 
-    return new Promise<Response>((resolve, reject) => {
+    return observeEvidenceCall('supabase', () => new Promise<Response>((resolve, reject) => {
       const req = https.request(
         requestUrl,
         {
@@ -4352,23 +4387,26 @@ function createNodeHttpsFetch(): typeof fetch {
       }
 
       req.end()
-    })
+    }))
   }
 }
 
 async function consumeAnalysisPoints(supabase: PointsSupabaseClient) {
+  recordEvidencePoints('attempted', ANALYSIS_COST)
   const { error } = await supabase.rpc('consume_points_for_analysis', {
     cost: ANALYSIS_COST,
     reason: 'AI 行程分析',
   })
 
   if (error) {
+    recordEvidencePoints('rpc_failed', ANALYSIS_COST)
     if (error.message.includes('Insufficient points')) {
       throw new Error('點數不足，請先到點數管理確認餘額。')
     }
 
     throw new Error('行程已產生，但扣點流程失敗，請稍後再試。')
   }
+  recordEvidencePoints('rpc_confirmed', ANALYSIS_COST)
 }
 
 function getBearerToken(value?: string) {

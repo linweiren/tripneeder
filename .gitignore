@@ -29,6 +29,7 @@ dist-ssr
 .gemini/
 
 # Local testing
+.tripneeder-acceptance-evidence/
 tests/data/
 tests/output/
 .vercel

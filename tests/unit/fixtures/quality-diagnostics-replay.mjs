@@ -29,6 +29,15 @@ mock.method(fs, 'appendFileSync', (_path, value) => {
   snapshots = data.report.qualityDiagnostics.stages.length
   phases = data.report.qualityDiagnostics.transitions.map(stage => stage.phase)
 })
+mock.method(fs, 'mkdirSync', () => undefined)
+mock.method(fs, 'writeFileSync', (_path, value) => {
+  const data = JSON.parse(value)
+  if (!_path.endsWith('diagnostics.json')) return
+  reports++
+  reportBytes += Buffer.byteLength(value)
+  snapshots = data.data.qualityDiagnostics.stages.length
+  phases = data.data.qualityDiagnostics.transitions.map(stage => stage.phase)
+})
 syncBuiltinESMExports()
 const { TripCandidateDebugSession } = await import('../../../api/_lib/trip-candidate-debug.ts')
 const originalBuild = TripCandidateDebugSession.prototype.buildReport

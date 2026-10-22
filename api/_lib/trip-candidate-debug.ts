@@ -1,6 +1,7 @@
 /// <reference types="node" />
 
 import { appendFileSync } from 'node:fs'
+import { captureAcceptanceDiagnostics } from './trip-acceptance-evidence.js'
 import { TripQualityDiagnostics } from './trip-quality-diagnostics.js'
 import type { DiagnosticStageContext } from './trip-quality-diagnostics.js'
 import type { Stop, TripInput, TripPlan } from '../../src/types/trip.js'
@@ -318,6 +319,9 @@ export function writeTripCandidateDebugReport(
   if (!session || !isTripCandidateDebugEnabled(env)) return null
 
   const report = session.buildReport(finalPlans, validationSummaries, outcome)
+  if (captureAcceptanceDiagnostics(report)) {
+    return report
+  }
   try {
     options.log?.('[trip-candidate-debug-report]', report)
     ;(options.append ?? appendFileSync)(

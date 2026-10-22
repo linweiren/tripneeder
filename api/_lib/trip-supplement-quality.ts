@@ -1,4 +1,5 @@
 import type { Stop, TransportMode, TransportSegment } from '../../src/types/trip.js'
+import { recordEvidenceCache } from './trip-acceptance-evidence.js'
 import { isCandidateOpenForVisit, type VerifiedPlaceCandidate } from './google-places.js'
 import { buildTransportLabel, estimateSegmentDuration, getRouteInfo } from './google-routes.js'
 import { getMaximumStopDuration, getMinimumStopDuration } from './trip-plan-metrics.js'
@@ -35,7 +36,7 @@ function resolveRoute(context: SupplementRouteContext, from: Stop, to: Stop,
       computedRoutes.add(route)
       return route
     }))
-  } else context.cacheHits++
+  } else { context.cacheHits++; recordEvidenceCache('routes') }
   return context.memo.get(key)!
 }
 

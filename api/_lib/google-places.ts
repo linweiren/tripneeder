@@ -1,6 +1,7 @@
 /// <reference types="node" />
 
 import https from 'node:https'
+import { observeGoogleEvidenceCall, recordEvidenceCache } from './trip-acceptance-evidence.js'
 import type { TripPlan, Stop, TripInput } from '../../src/types/trip.js'
 import type { GenerateTripPlansRequest, Persona } from '../../src/services/ai/types.js'
 import type { PreferenceProfile } from '../../src/services/personalization/preferenceProfile.js'
@@ -2195,6 +2196,7 @@ async function getPlaceById(placeId: string): Promise<GooglePlace | null> {
   if (!GOOGLE_PLACES_API_KEY || !placeId.trim()) return null
 
   if (placeDetailsCache.has(placeId)) {
+    recordEvidenceCache('places_details')
     return placeDetailsCache.get(placeId) ?? null
   }
 
@@ -2216,7 +2218,7 @@ async function getPlaceById(placeId: string): Promise<GooglePlace | null> {
 }
 
 function googleFetch(url: string, init?: RequestInit) {
-  return new Promise<Response>((resolve, reject) => {
+  return observeGoogleEvidenceCall(url, () => new Promise<Response>((resolve, reject) => {
     const headers = new Headers(init?.headers)
     const body = init?.body
     const req = https.request(
@@ -2260,7 +2262,7 @@ function googleFetch(url: string, init?: RequestInit) {
     }
 
     req.end()
-  })
+  }))
 }
 
 async function searchPlace(

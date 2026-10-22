@@ -1,6 +1,7 @@
 /// <reference types="node" />
 
 import https from 'node:https'
+import { observeEvidenceCall } from './trip-acceptance-evidence.js'
 import type { Stop, TransportMode, TransportSegment } from '../../src/types/trip.js'
 
 const ROUTES_API_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes'
@@ -78,7 +79,7 @@ export async function getRouteInfo(
 }
 
 function googleRoutesFetch(url: string, init?: RequestInit) {
-  return new Promise<Response>((resolve, reject) => {
+  return observeEvidenceCall('routes', () => new Promise<Response>((resolve, reject) => {
     const headers = new Headers(init?.headers)
     const body = init?.body
     const req = https.request(
@@ -122,7 +123,7 @@ function googleRoutesFetch(url: string, init?: RequestInit) {
     }
 
     req.end()
-  })
+  }))
 }
 
 function toRoutesTravelMode(mode: TransportMode) {
