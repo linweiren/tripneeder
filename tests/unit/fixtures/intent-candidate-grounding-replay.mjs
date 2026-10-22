@@ -10,16 +10,26 @@ import { intentCases, intentGroundingFixture } from './intent-candidate-groundin
 import { mockGeneration, runHandler } from './plan-identity.mjs'
 
 const mode = process.argv[2]
-assert.ok(['before', 'after'].includes(mode))
+assert.ok(['before', 'after', 'projection-before'].includes(mode))
 Object.assign(process.env, { GOOGLE_PLACES_API_KEY: 'unit-test-only', OPENAI_API_KEY: 'unit-test-only',
   SUPABASE_URL: 'https://unit-test.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'unit-test-only',
   NODE_ENV: 'production', ENABLE_LOCAL_FALLBACK_REFILL: 'false' })
 let handler
-if (mode === 'before') {
+if (mode === 'before' || mode === 'projection-before') {
   const file = new URL('../../../api/generate-trip.ts', import.meta.url)
-  const source = execFileSync('git', ['show', 'fedd41fc:api/generate-trip.ts'], { encoding: 'utf8' })
+  const ref = mode === 'before' ? 'fedd41fc' : '342847c'
+  const source = execFileSync('git', ['show', `${ref}:api/generate-trip.ts`], { encoding: 'utf8' })
+  let projectionUrl
+  if (mode === 'projection-before') {
+    const projectionFile = new URL('../../../api/_lib/trip-intent-candidate-grounding.ts', import.meta.url)
+    const original = execFileSync('git', ['show', `${ref}:api/_lib/trip-intent-candidate-grounding.ts`], { encoding: 'utf8' })
+    const projection = stripTypeScriptTypes(original).replace(/from (['"])([^'"]+)\1/g, (_m, q, s) =>
+      `from ${q}${new URL(s.replace(/\.js$/, '.ts'), projectionFile).href}${q}`)
+    projectionUrl = `data:text/javascript;base64,${Buffer.from(projection).toString('base64')}`
+  }
   const js = stripTypeScriptTypes(source).replace(/from (['"])([^'"]+)\1/g, (_m, q, s) =>
-    `from ${q}${s.startsWith('.') ? new URL(s.replace(/\.js$/, '.ts'), file).href : import.meta.resolve(s)}${q}`)
+    `from ${q}${projectionUrl && s === './_lib/trip-intent-candidate-grounding.js' ? projectionUrl
+      : s.startsWith('.') ? new URL(s.replace(/\.js$/, '.ts'), file).href : import.meta.resolve(s)}${q}`)
   handler = (await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)).default
 } else handler = (await import('../../../api/generate-trip.ts')).default
 const rows = []

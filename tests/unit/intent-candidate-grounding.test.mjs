@@ -32,8 +32,8 @@ for (const kind of intentCases) test(`intent-to-candidate projection: ${kind}`, 
     assert.ok(links.coffee_venue.length > 0)
   }
   const exposed = getPromptCandidateSelection(f.candidates).promptCandidates
-  for (const list of Object.values(links)) {
-    assert.ok(list.length <= 3)
+  for (const [group, list] of Object.entries(links)) {
+    assert.ok(list.length <= (group === 'culture_related_unverified' ? 4 : 3))
     assert.ok(list.every(id => ids.includes(id)))
     assert.deepEqual(list, ids.filter(id => list.includes(id)))
   }

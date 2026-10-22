@@ -3,7 +3,7 @@ import { FIXED_NOW } from './supplement-quality.mjs'
 
 export const intentCases = ['mixed', 'unexposed', 'uncertain', 'illegal-culture', 'history-coffee',
   'coffee-only', 'culture-only', 'explore', 'negative', 'conditional', 'unknown', 'three-themes',
-  'retry-balanced', 'retry-invalid', 'stream-tail']
+  'retry-balanced', 'retry-invalid', 'stream-tail', 'related-history', 'related-retry', 'related-refill']
 
 export const stripIntentLinks = text => text.replace(/\n\nCURRENT_INTENT_CANDIDATE_LINKS:\n[^]*?\nEND_CURRENT_INTENT_CANDIDATE_LINKS/g, '')
 export const readIntentLinks = text => {
@@ -18,7 +18,7 @@ export function tokenEstimate(text) {
 }
 
 export function intentGroundingFixture(kind) {
-  const f = styleGenerationFixture(kind === 'retry-balanced' ? 'missing-balanced' : 'positioning')
+  const f = styleGenerationFixture(['retry-balanced', 'related-refill'].includes(kind) ? 'missing-balanced' : 'positioning')
   f.input = { ...f.input, category: 'other', customCategory: '文化景點＋咖啡廳', tags: [] }
   const base = f.candidates.allCandidates[0]
   const extra = (id, name, types, lat, role = 'main_activity') => ({ ...base, id, placeId: id, name, types,
@@ -29,6 +29,8 @@ export function intentGroundingFixture(kind) {
   f.candidates.allCandidates.push(extra('intent-cafe', '地方咖啡館', ['cafe', 'food'], 22.605, 'food'),
     extra('intent-mixed', '複合藝文咖啡館', ['museum', 'cafe'], 22.606, 'food'),
     extra('intent-book-1', '街角書店', ['book_store'], 22.607), extra('intent-book-2', '城市書店', ['book_store'], 22.608))
+  if (kind.startsWith('related-')) f.candidates.allCandidates.push(...Array.from({ length: 4 }, (_, i) =>
+    extra(`intent-history-${i}`, `歷史地標${i}`, ['historical_landmark', 'historical_place'], 22.608 + i * .0001)))
   if (kind === 'uncertain') for (const c of f.candidates.allCandidates.filter(c => c.types?.some(t => ['museum', 'art_gallery'].includes(t)))) {
     c.name = c.placeId === 'intent-mixed' ? c.name : `複合藝文咖啡館${c.id}`
     c.types = ['museum', 'cafe']
@@ -49,12 +51,12 @@ export function intentGroundingFixture(kind) {
     conditional: '如果下雨就看展覽，否則去咖啡廳', unknown: '看心情找有趣的地方', 'three-themes': '想去博物館、咖啡廳與公園' }
   if (custom[kind]) f.input.customCategory = custom[kind]
   if (kind === 'explore') { f.input.category = 'explore'; f.input.customCategory = '' }
-  f.mockOptions = { ...f.mockOptions, preferenceEvents: kind === 'history-coffee' ? Array.from({ length: 15 }, (_, i) => ({
+  f.mockOptions = { ...f.mockOptions, preferenceEvents: ['history-coffee', 'related-history'].includes(kind) ? Array.from({ length: 15 }, (_, i) => ({
     event_type: 'start_navigation', place_id: `history-${i}`, place_name: '歷史咖啡廳', google_types: ['cafe'],
     candidate_role: 'food', food_subtype: 'cafe', stop_type: 'food', input_category: 'food', input_tags: ['food_first'],
     created_at: new Date(FIXED_NOW - 86400000).toISOString(),
   })) : [], streamTail: kind === 'stream-tail' }
-  if (kind === 'retry-invalid') {
+  if (['retry-invalid', 'related-retry'].includes(kind)) {
     f.aiPlans[0].stops[0].duration = 20
     f.aiPlans[0].totalTime -= 130
   }
@@ -65,7 +67,7 @@ export function intentGroundingFixture(kind) {
   f.routes = {}
   for (const a of f.candidates.allCandidates) for (const b of f.candidates.allCandidates) if (a !== b) f.routes[`${a.placeId}>${b.placeId}`] = 4
   // Refill uses the same fixed bodies, except that invalid/missing initial data is repaired.
-  if (!['retry-balanced', 'retry-invalid'].includes(kind)) f.plans = structuredClone(f.aiPlans)
+  if (!['retry-balanced', 'retry-invalid', 'related-retry', 'related-refill'].includes(kind)) f.plans = structuredClone(f.aiPlans)
   f.transformPlace = place => kind === 'illegal-culture' && place.types?.some(t => ['museum', 'art_gallery'].includes(t))
     ? { ...place, currentOpeningHours: { periods: [] }, regularOpeningHours: { periods: [] } } : place
   return f
