@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { consumeRateLimit, getRequestClientKey, isFiniteCoordinate, isJsonWithinLimit, isRecord } from '../../api/_lib/request-guards.js'
+import { consumeApiRateLimit, consumeRateLimit, getRequestClientKey, isFiniteCoordinate, isJsonWithinLimit, isRecord } from '../../api/_lib/request-guards.js'
 
 test('request guards validate bounded JSON and coordinates', () => {
   assert.equal(isRecord({ input: {} }), true)
@@ -23,4 +23,34 @@ test('rate limits requests for the same key during a window and resets later', (
 
 test('client key prefers platform-provided real IP', () => {
   assert.equal(getRequestClientKey({ headers: { 'x-real-ip': '192.0.2.1' } }), 'ip:192.0.2.1')
+})
+
+test('production rate limiting fails closed when the durable store is unavailable', async () => {
+  const previousNodeEnv = process.env.NODE_ENV
+  const previousUrl = process.env.SUPABASE_URL
+  const previousViteUrl = process.env.VITE_SUPABASE_URL
+  const previousKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const previousFetch = globalThis.fetch
+  try {
+    process.env.NODE_ENV = 'production'
+    delete process.env.SUPABASE_URL
+    delete process.env.VITE_SUPABASE_URL
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    assert.equal(await consumeApiRateLimit('test:production-store-missing', 2, 1000), 'unavailable')
+
+    process.env.SUPABASE_URL = 'https://example.supabase.co'
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key'
+    globalThis.fetch = async () => new Response('unavailable', { status: 503 })
+    assert.equal(await consumeApiRateLimit('test:production-store-error', 2, 1000), 'unavailable')
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = previousNodeEnv
+    if (previousUrl === undefined) delete process.env.SUPABASE_URL
+    else process.env.SUPABASE_URL = previousUrl
+    if (previousViteUrl === undefined) delete process.env.VITE_SUPABASE_URL
+    else process.env.VITE_SUPABASE_URL = previousViteUrl
+    if (previousKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = previousKey
+    globalThis.fetch = previousFetch
+  }
 })

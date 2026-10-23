@@ -6739,6 +6739,7 @@
 .community-comment-author .community-avatar { width: 30px; height: 30px; font-size: .84rem; }
 .community-comment-author time { margin-left: auto; color: #98a199; font-size: .78rem; }
 .community-comment-delete { display: grid; place-items: center; border: 0; background: none; color: #a26a60; cursor: pointer; }
+.community-load-more { display: flex; justify-content: center; padding: 1rem 0 2rem; }
 .community-comment > p { margin: .65rem 0 0 2.4rem; color: #596a5e; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
 
 @media (max-width: 640px) {

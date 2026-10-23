@@ -45,11 +45,15 @@ export function consumeRateLimit(key: string, maxRequests: number, windowMs: num
   return true
 }
 
-export async function consumeApiRateLimit(key: string, maxRequests: number, windowMs: number) {
+export type ApiRateLimitDecision = 'allowed' | 'limited' | 'unavailable'
+
+export async function consumeApiRateLimit(key: string, maxRequests: number, windowMs: number): Promise<ApiRateLimitDecision> {
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!supabaseUrl || !serviceRoleKey) {
-    return consumeRateLimit(key, maxRequests, windowMs)
+    return process.env.NODE_ENV === 'production'
+      ? 'unavailable'
+      : consumeRateLimit(key, maxRequests, windowMs) ? 'allowed' : 'limited'
   }
 
   const bucketKey = createHash('sha256').update(key).digest('hex')
@@ -70,10 +74,12 @@ export async function consumeApiRateLimit(key: string, maxRequests: number, wind
     })
     if (!response.ok) throw new Error(`Rate-limit store returned ${response.status}`)
     const result: unknown = await response.json()
-    return result === true || (Array.isArray(result) && result[0] === true)
+    return result === true || (Array.isArray(result) && result[0] === true) ? 'allowed' : 'limited'
   } catch (error) {
-    console.error('Durable API rate limit unavailable; using per-instance fallback.', error)
-    return consumeRateLimit(key, maxRequests, windowMs)
+    console.error('Durable API rate limit unavailable.', error)
+    return process.env.NODE_ENV === 'production'
+      ? 'unavailable'
+      : consumeRateLimit(key, maxRequests, windowMs) ? 'allowed' : 'limited'
   }
 }
 

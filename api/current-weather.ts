@@ -1,15 +1,21 @@
 /// <reference types="node" />
 
 import { matchForecastPeriod, normalizeCwaCounty, readCwaElementValue } from './_lib/weather-parsing.js'
+import { consumeApiRateLimit, getRequestClientKey } from './_lib/request-guards.js'
 
 type VercelRequest = {
   method?: string
   query?: { lat?: string; lng?: string; city?: string }
+  headers?: {
+    'x-real-ip'?: string
+    'x-forwarded-for'?: string
+  }
 }
 
 type VercelResponse = {
   status: (code: number) => VercelResponse
   json: (body: unknown) => void
+  setHeader: (name: string, value: string) => void
 }
 
 type CwaCoordinate = {
@@ -98,6 +104,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(400).json({ error: '請提供有效的經緯度' })
     return
   }
+  const city = req.query?.city?.trim() ?? ''
+  if (city.length > 80 || hasControlCharacter(city)) {
+    res.status(400).json({ error: '縣市名稱格式不正確' })
+    return
+  }
+  const rateLimit = await consumeApiRateLimit(`current-weather:${getRequestClientKey(req)}`, 30, 60_000)
+  if (rateLimit !== 'allowed') {
+    res.status(rateLimit === 'limited' ? 429 : 503).json({ error: rateLimit === 'limited' ? '天氣查詢過於頻繁，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
+    return
+  }
+  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=180, stale-while-revalidate=180')
 
   const apiKey = process.env.CWA_API_KEY
   if (!apiKey) {
@@ -137,7 +154,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const station = nearest.station
     const elements = station.WeatherElement
-    const forecastCity = req.query?.city || station.GeoInfo?.CountyName || ''
+    const forecastCity = city || station.GeoInfo?.CountyName || ''
     const [forecast, airQualityResult] = await Promise.all([
       getForecast(apiKey, lat, lng, forecastCity).catch((error) => {
         console.error('CWA forecast error:', error)
@@ -247,7 +264,9 @@ async function getAirQuality(lat: number, lng: number): Promise<AirQuality | nul
 
   if (!airQualityCache || airQualityCache.expiresAt <= Date.now()) {
     const params = new URLSearchParams({ api_key: apiKey, offset: '0', limit: '1000', format: 'json' })
-    const response = await fetch(`https://data.moenv.gov.tw/api/v2/AQX_P_432?${params.toString()}`)
+  const response = await fetch(`https://data.moenv.gov.tw/api/v2/AQX_P_432?${params.toString()}`, {
+    signal: AbortSignal.timeout(8000),
+  })
     if (!response.ok) throw new Error(`MOENV HTTP status: ${response.status}`)
     const data = (await response.json()) as unknown
     const stations = Array.isArray(data)
@@ -299,6 +318,7 @@ async function fetchForecastLocations(apiKey: string) {
   params.set('ElementName', '溫度,天氣現象,3小時降雨機率')
   const response = await fetch(
     `https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089?${params.toString()}`,
+    { signal: AbortSignal.timeout(8000) },
   )
   if (!response.ok) throw new Error(`CWA forecast HTTP status: ${response.status}`)
   const data = (await response.json()) as CwaForecastResponse
@@ -306,6 +326,10 @@ async function fetchForecastLocations(apiKey: string) {
     ...location,
     CountyName: group.LocationsName ?? group.CountyName ?? location.CountyName,
   }))) ?? []
+}
+
+function hasControlCharacter(value: string) {
+  return Array.from(value).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
 }
 
 function getForecastValue(time: CwaForecastTime | undefined, key: string) {
@@ -324,6 +348,7 @@ async function getStations(apiKey: string) {
   })
   const response = await fetch(
     `https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?${params.toString()}`,
+    { signal: AbortSignal.timeout(8000) },
   )
 
   if (!response.ok) {

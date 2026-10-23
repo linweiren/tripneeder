@@ -82,7 +82,7 @@ export default function CurrentWeatherDashboard({ userId }: CurrentWeatherDashbo
     return () => {
       cancelled = true
     }
-  }, [location?.lat, location?.lng, location?.city, location?.mode, refreshVersion])
+  }, [location, refreshVersion])
 
   useEffect(() => {
     const timer = window.setInterval(() => {

@@ -6,7 +6,7 @@ type LocalApiRequest = {
   method?: string
   body?: unknown
   query?: { location?: string; lat?: string; lng?: string; city?: string }
-  headers?: { authorization?: string }
+  headers?: { authorization?: string; 'x-real-ip'?: string; 'x-forwarded-for'?: string }
   signal?: AbortSignal
 }
 

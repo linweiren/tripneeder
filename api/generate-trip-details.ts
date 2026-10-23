@@ -24,12 +24,16 @@ import {
   type VerifiedPlaceCandidate,
 } from './_lib/google-places.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
+import { verifySupabaseAccessToken } from './_lib/auth.js'
+import { consumeApiRateLimit, getRequestClientKey, isFiniteCoordinate, isJsonWithinLimit, isRecord } from './_lib/request-guards.js'
 
 type VercelRequest = {
   method?: string
   body?: unknown
   headers?: {
     authorization?: string
+    'x-real-ip'?: string
+    'x-forwarded-for'?: string
   }
   signal?: AbortSignal
 }
@@ -71,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  const request = parseRequestBody(req.body)
+  const request = isValidTripDetailsBody(req.body) ? parseRequestBody(req.body) : null
   const accessToken = getBearerToken(req.headers?.authorization)
 
   if (!request) {
@@ -81,6 +85,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (!accessToken) {
     res.status(401).json({ error: '請登入以繼續使用本服務。' })
+    return
+  }
+
+  const ipLimit = await consumeApiRateLimit(`trip-details:ip:${getRequestClientKey(req)}`, 6, 60_000)
+  if (ipLimit !== 'allowed') {
+    res.status(ipLimit === 'limited' ? 429 : 503).json({
+      error: ipLimit === 'limited' ? '細節補充請求過於頻繁，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。',
+    })
+    return
+  }
+
+  const user = await verifySupabaseAccessToken(req.headers?.authorization)
+  if (!user) {
+    res.status(401).json({ error: '登入狀態已失效，請重新登入。' })
+    return
+  }
+  const userLimit = await consumeApiRateLimit(`trip-details:user:${user.id}`, 10, 60_000)
+  if (userLimit !== 'allowed') {
+    res.status(userLimit === 'limited' ? 429 : 503).json({
+      error: userLimit === 'limited' ? '細節補充已達使用上限，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。',
+    })
     return
   }
 
@@ -96,7 +121,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const logPhase = createDetailPhaseTimer(request.plan.id)
     const supabase = createUserScopedSupabaseClient(accessToken)
-    const userId = getUserIdFromToken(accessToken)
+    const userId = user.id
 
     // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
     let locationWarning = ''
@@ -877,17 +902,6 @@ function createNodeHttpsFetch(): typeof fetch {
   }
 }
 
-function getUserIdFromToken(accessToken: string): string | undefined {
-  try {
-    const payload = JSON.parse(
-      Buffer.from(accessToken.split('.')[1], 'base64').toString(),
-    )
-    return payload.sub
-  } catch {
-    return undefined
-  }
-}
-
 type DbPersona = {
   persona_companion: string | null
   persona_budget: string | null
@@ -965,6 +979,35 @@ function parseRequestBody(body: unknown): {
   return body as { input: TripInput; plan: TripPlan }
 }
 
+function isValidTripDetailsBody(body: unknown): body is { input: TripInput; plan: TripPlan } {
+  if (!isRecord(body) || !isRecord(body.input) || !isRecord(body.plan) || !isJsonWithinLimit(body, 128_000)) return false
+  const input = body.input
+  const location = input.location
+  const plan = body.plan
+  if (!isRecord(location) || typeof location.name !== 'string' || location.name.length > 200 ||
+    typeof input.startTime !== 'string' || input.startTime.length > 10 ||
+    typeof input.endTime !== 'string' || input.endTime.length > 10 ||
+    !Array.isArray(input.tags) || input.tags.length > 10 ||
+    !input.tags.every((tag) => typeof tag === 'string' && tag.length <= 40) ||
+    !Array.isArray(plan.stops) || plan.stops.length < 1 || plan.stops.length > 30 ||
+    !plan.stops.every(isValidDetailStop) ||
+    (plan.rainBackup !== undefined && (!Array.isArray(plan.rainBackup) || plan.rainBackup.length > 20 || !plan.rainBackup.every(isValidDetailStop))) ||
+    typeof plan.id !== 'string' || plan.id.length > 100 || typeof plan.title !== 'string' || plan.title.length > 300) return false
+  if ((location.lat !== undefined && !isFiniteCoordinate(location.lat, -90, 90)) ||
+    (location.lng !== undefined && !isFiniteCoordinate(location.lng, -180, 180)) ||
+    ((location.lat === undefined) !== (location.lng === undefined))) return false
+  return true
+}
+
+function isValidDetailStop(value: unknown): value is Stop {
+  return isRecord(value) && typeof value.id === 'string' && value.id.length <= 100 &&
+    typeof value.name === 'string' && value.name.length <= 300 &&
+    typeof value.duration === 'number' && Number.isFinite(value.duration) && value.duration >= 0 && value.duration <= 1440 &&
+    (value.lat === undefined || isFiniteCoordinate(value.lat, -90, 90)) &&
+    (value.lng === undefined || isFiniteCoordinate(value.lng, -180, 180)) &&
+    ((value.lat === undefined) === (value.lng === undefined))
+}
+
 function getBearerToken(value?: string) {
   if (!value?.startsWith('Bearer ')) {
     return ''
@@ -1011,10 +1054,6 @@ function extractOutputText(response: OpenAiResponse) {
     .map((content) => content.text ?? '')
     .join('')
     .trim()
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
 }
 
 type OpenAiResponse = {

@@ -44,8 +44,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const clientKey = getRequestClientKey(req)
-  if (!await consumeApiRateLimit(`geocode:${clientKey}`, 20, 60_000)) {
-    res.status(429).json({ error: '地點查詢過於頻繁，請稍後再試。' })
+  const ipLimit = await consumeApiRateLimit(`geocode:${clientKey}`, 20, 60_000)
+  if (ipLimit !== 'allowed') {
+    res.status(ipLimit === 'limited' ? 429 : 503).json({ error: ipLimit === 'limited' ? '地點查詢過於頻繁，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
     return
   }
 

@@ -65,7 +65,7 @@ export default function WeatherCard({ location, city: requestedCity, latitude, l
 
     void loadWeather()
     return () => { cancelled = true }
-  }, [latitude, location, longitude])
+  }, [latitude, location, longitude, requestedCity])
 
   if (!location.trim()) return null
 

@@ -1,10 +1,12 @@
 import { supabase } from '../auth/supabaseClient'
 import type { TripInput, TripPlan } from '../../types/trip'
-import { deduplicateAndValidateSharedTrips, sanitizeSharedPlan } from './communityData'
-export { deduplicateAndValidateSharedTrips, sanitizeSharedPlan } from './communityData'
+import { deduplicateAndValidateSharedTrips, getSharedPlanSignature, sanitizeSharedPlan } from './communityData'
+export { deduplicateAndValidateSharedTrips, getSharedPlanSignature, sanitizeSharedPlan } from './communityData'
 
 export const COMMUNITY_TAG_LIMIT = 2
 export const COMMUNITY_COMMENT_LIMIT = 500
+export const COMMUNITY_PAGE_SIZE = 30
+export const COMMUNITY_COMMENT_PAGE_SIZE = 50
 
 let ownSharedPlanSignaturesRequest: Promise<Set<string>> | null = null
 
@@ -23,39 +25,35 @@ export type SharedTrip = {
   is_owner: boolean
 }
 
-export async function loadSharedTrips(tripId?: string, ownerOnly = false): Promise<SharedTrip[]> {
+export async function loadSharedTrips(
+  tripId?: string,
+  ownerOnly = false,
+  page: { limit?: number; offset?: number; sort?: 'newest' | 'likes' | 'discussion' } = {},
+): Promise<SharedTrip[]> {
   if (!supabase) throw new Error('分享平台尚未連接 Supabase。')
   const { data, error } = await supabase.rpc('shared_trip_feed', {
     p_trip_id: tripId ?? null,
     p_owner_only: ownerOnly,
+    p_limit: Math.min(100, Math.max(1, page.limit ?? COMMUNITY_PAGE_SIZE)),
+    p_offset: Math.max(0, page.offset ?? 0),
+    p_sort: page.sort ?? 'newest',
   })
   if (error) throw error
   if (!Array.isArray(data)) throw new Error('分享平台回傳格式不正確。')
   return deduplicateAndValidateSharedTrips(data)
 }
 
-export function getSharedPlanSignature(plan: TripPlan): string {
-  const normalize = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(normalize)
-    if (value && typeof value === 'object') {
-      return Object.fromEntries(
-        Object.entries(value)
-          .filter(([, item]) => item !== undefined)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, item]) => [key, normalize(item)]),
-      )
-    }
-    return value
-  }
-  return JSON.stringify(normalize(plan))
-}
-
 export async function hasSharedPlan(planSignature: string): Promise<boolean> {
   if (!ownSharedPlanSignaturesRequest) {
-    ownSharedPlanSignaturesRequest = loadSharedTrips(undefined, true)
-      .then((trips) => {
-        return new Set(trips.map((trip) => getSharedPlanSignature(trip.plan)))
-      })
+    ownSharedPlanSignaturesRequest = (async () => {
+      const signatures = new Set<string>()
+      for (let offset = 0; ; offset += COMMUNITY_PAGE_SIZE) {
+        const trips = await loadSharedTrips(undefined, true, { offset })
+        for (const trip of trips) signatures.add(getSharedPlanSignature(trip.plan))
+        if (trips.length < COMMUNITY_PAGE_SIZE) break
+      }
+      return signatures
+    })()
       .catch((error: unknown) => {
         ownSharedPlanSignaturesRequest = null
         throw error
@@ -95,13 +93,22 @@ export type SharedTripComment = {
   is_mine: boolean
 }
 
-export async function loadSharedTripComments(tripId: string) {
+export async function loadSharedTripComments(tripId: string, offset = 0) {
   if (!supabase) throw new Error('分享平台尚未連接 Supabase。')
   const { data, error } = await supabase.rpc('shared_trip_comments_feed', {
     p_trip_id: tripId,
+    p_limit: COMMUNITY_COMMENT_PAGE_SIZE + 1,
+    p_offset: Math.max(0, offset),
   })
   if (error) throw error
-  return (data ?? []) as SharedTripComment[]
+  const rows = Array.isArray(data) ? data as SharedTripComment[] : []
+  return { comments: rows.slice(0, COMMUNITY_COMMENT_PAGE_SIZE), hasMore: rows.length > COMMUNITY_COMMENT_PAGE_SIZE }
+}
+
+export async function reportSharedTripComment(commentId: string, reason: 'spam' | 'harassment' | 'private_info' | 'other') {
+  if (!supabase) throw new Error('分享平台尚未連接 Supabase。')
+  const { error } = await supabase.rpc('report_shared_trip_comment', { p_comment_id: commentId, p_reason: reason })
+  if (error) throw error
 }
 
 export async function addSharedTripComment(tripId: string, body: string) {

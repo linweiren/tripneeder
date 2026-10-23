@@ -61,6 +61,9 @@ function CommunityFeed({ ownerOnly }: { ownerOnly: boolean }) {
   const dialog = useDialog()
   const [trips, setTrips] = useState<SharedTrip[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
+  const [feedOffset, setFeedOffset] = useState(30)
   const [errorMessage, setErrorMessage] = useState('')
   const [pendingLikeId, setPendingLikeId] = useState('')
   const [sortMode, setSortMode] = useState<'newest' | 'likes' | 'discussion'>('newest')
@@ -73,16 +76,41 @@ function CommunityFeed({ ownerOnly }: { ownerOnly: boolean }) {
     setIsLoading(true)
     setErrorMessage('')
     try {
-      const result = await loadSharedTrips(undefined, ownerOnly)
+      const result = await loadSharedTrips(undefined, ownerOnly, { limit: 30, offset: 0, sort: ownerOnly ? 'newest' : sortMode })
       setTrips(ownerOnly ? result : result.filter((trip) => !trip.is_owner))
+      setHasMore(result.length === 30)
+      setFeedOffset(result.length)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '分享行程載入失敗。')
     } finally {
       setIsLoading(false)
     }
-  }, [ownerOnly])
+  }, [ownerOnly, sortMode])
 
   useEffect(() => { void refresh() }, [refresh])
+
+  async function loadMore() {
+    if (isLoadingMore || !hasMore) return
+    setIsLoadingMore(true)
+    try {
+      const result = await loadSharedTrips(undefined, ownerOnly, {
+        limit: 30,
+        offset: feedOffset,
+        sort: ownerOnly ? 'newest' : sortMode,
+      })
+      setTrips((current) => {
+        const ids = new Set(current.map((item) => item.id))
+        const next = [...current, ...result.filter((item) => !ids.has(item.id) && (ownerOnly || !item.is_owner))]
+        return next
+      })
+      setHasMore(result.length === 30)
+      setFeedOffset((offset) => offset + result.length)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '載入更多分享失敗。')
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }
 
   useEffect(() => {
     if (isAuthLoading || !ownerOnly || user) return
@@ -173,6 +201,7 @@ function CommunityFeed({ ownerOnly }: { ownerOnly: boolean }) {
           ? <MySharedTripCard key={trip.id} trip={trip} onOpen={() => openTrip(trip)} onUnshare={() => void handleUnshare(trip)} />
           : <SharedTripCard key={trip.id} trip={trip} pending={pendingLikeId === trip.id} onLike={() => void handleLike(trip)} onOpen={() => openTrip(trip)} />)}
       </div> : null}
+      {!isLoading && hasMore ? <div className="community-load-more"><button className="community-detail-button" type="button" onClick={() => void loadMore()} disabled={isLoadingMore}>{isLoadingMore ? '載入中…' : '載入更多分享'}</button></div> : null}
     </section>
   )
 }

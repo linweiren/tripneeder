@@ -35,8 +35,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const clientKey = getRequestClientKey(req)
-  if (!await consumeApiRateLimit(`candidate:${clientKey}`, 12, 60_000)) {
-    res.status(429).json({ error: '請求過於頻繁，請稍後再試。' })
+  const ipLimit = await consumeApiRateLimit(`candidate:${clientKey}`, 12, 60_000)
+  if (ipLimit !== 'allowed') {
+    res.status(ipLimit === 'limited' ? 429 : 503).json({ error: ipLimit === 'limited' ? '請求過於頻繁，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
     return
   }
 
@@ -45,8 +46,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(401).json({ error: '請登入後再取得候選地點。' })
     return
   }
-  if (!await consumeApiRateLimit(`candidate:user:${user.id}`, 20, 60_000)) {
-    res.status(429).json({ error: '候選地點請求已達使用上限，請稍後再試。' })
+  const userLimit = await consumeApiRateLimit(`candidate:user:${user.id}`, 20, 60_000)
+  if (userLimit !== 'allowed') {
+    res.status(userLimit === 'limited' ? 429 : 503).json({ error: userLimit === 'limited' ? '候選地點請求已達使用上限，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
     return
   }
 

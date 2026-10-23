@@ -35,8 +35,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const clientKey = getRequestClientKey(req)
-  if (!await consumeApiRateLimit(`routes:${clientKey}`, 20, 60_000)) {
-    res.status(429).json({ error: '路線重算請求過於頻繁，請稍後再試。' })
+  const ipLimit = await consumeApiRateLimit(`routes:${clientKey}`, 20, 60_000)
+  if (ipLimit !== 'allowed') {
+    res.status(ipLimit === 'limited' ? 429 : 503).json({ error: ipLimit === 'limited' ? '路線重算請求過於頻繁，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
     return
   }
   const user = await verifySupabaseAccessToken(req.headers?.authorization)
@@ -44,8 +45,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(401).json({ error: '請登入後再重算交通路線。' })
     return
   }
-  if (!await consumeApiRateLimit(`routes:user:${user.id}`, 30, 60_000)) {
-    res.status(429).json({ error: '路線重算已達使用上限，請稍後再試。' })
+  const userLimit = await consumeApiRateLimit(`routes:user:${user.id}`, 30, 60_000)
+  if (userLimit !== 'allowed') {
+    res.status(userLimit === 'limited' ? 429 : 503).json({ error: userLimit === 'limited' ? '路線重算已達使用上限，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
     return
   }
 
