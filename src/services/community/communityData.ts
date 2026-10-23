@@ -31,10 +31,15 @@ export function deduplicateAndValidateSharedTrips(value: unknown): SharedTripFee
       !trip.tags.every((tag) => typeof tag === 'string' && tag.length <= 20)) continue
     seen.add(trip.id)
     safeRows.push({
-      ...(trip as SharedTripFeedRow),
+      id: trip.id,
       plan: sanitizeSharedPlan(plan as TripPlan),
       input: null,
       tags: trip.tags,
+      author_display_name: trip.author_display_name,
+      created_at: trip.created_at,
+      like_count: trip.like_count,
+      comment_count: trip.comment_count,
+      view_count: trip.view_count,
       liked_by_me: trip.liked_by_me === true,
       reward_awarded: false,
       is_owner: trip.is_owner === true,
