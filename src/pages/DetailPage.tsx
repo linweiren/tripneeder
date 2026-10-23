@@ -1124,12 +1124,14 @@ export function DetailPage() {
                   )}
 
                   <dl className="stop-details">
-                    <div>
-                      <dt aria-label="地址">
-                        <MapPin aria-hidden="true" />
-                      </dt>
-                      <dd>{stop.address}</dd>
-                    </div>
+                    {stop.address ? (
+                      <div>
+                        <dt aria-label="地址">
+                          <MapPin aria-hidden="true" />
+                        </dt>
+                        <dd>{stop.address}</dd>
+                      </div>
+                    ) : null}
                   </dl>
 
                   <div className="stop-actions">

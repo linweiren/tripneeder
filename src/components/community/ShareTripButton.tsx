@@ -5,13 +5,13 @@ import { useAuth } from '../../contexts/auth'
 import { useDialog } from '../../contexts/dialog'
 import type { TripInput, TripPlan } from '../../types/trip'
 import { COMMUNITY_TAG_LIMIT, getSharedPlanSignature, hasSharedPlan, shareTrip } from '../../services/community/communityService'
+import { sanitizeSharedPlan } from '../../services/community/communityData'
 import { savePlanForDetail } from '../../utils/tripPlanStorage'
 
 const suggestedTags = ['美食', '小資', '親子', '約會', '戶外', '雨天備案']
 
 export function ShareTripButton({
   plan,
-  input,
   className = 'community-share-trigger',
   label = '分享行程',
 }: {
@@ -79,7 +79,7 @@ export function ShareTripButton({
     try {
       const sharedId = await shareTrip(plan, tags)
       setIsOpen(false)
-      savePlanForDetail(plan, input)
+      savePlanForDetail(sanitizeSharedPlan(plan), null)
       navigate(`/plans/${encodeURIComponent(plan.id)}?source=community&shareId=${encodeURIComponent(sharedId)}&from=mine`)
     } catch (error) {
       await dialog.alert({

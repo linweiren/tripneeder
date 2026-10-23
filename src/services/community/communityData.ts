@@ -36,15 +36,21 @@ export function deduplicateAndValidateSharedTrips(value: unknown): SharedTripFee
 }
 
 export function sanitizeSharedPlan(plan: TripPlan): TripPlan {
-  const stripCoordinates = <T extends { lat?: number; lng?: number }>(item: T) => {
-    const safe = { ...item }
-    delete safe.lat
-    delete safe.lng
-    return safe
-  }
-  return {
+  const sanitizeStop = (stop: TripPlan['stops'][number]) => ({
+    ...stop,
+    address: '',
+    googleMapsUrl: undefined,
+    placeId: undefined,
+    lat: undefined,
+    lng: undefined,
+  })
+  const safePlan = {
     ...plan,
-    stops: plan.stops.map(stripCoordinates),
-    rainBackup: plan.rainBackup.map(stripCoordinates),
+    input: undefined,
+    origin: undefined,
+    startLocation: undefined,
+    stops: plan.stops.map(sanitizeStop),
+    rainBackup: plan.rainBackup.map(sanitizeStop),
   }
+  return safePlan
 }

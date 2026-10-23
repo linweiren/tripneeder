@@ -1,10 +1,13 @@
 /// <reference types="node" />
+import { consumeApiRateLimit, getRequestClientKey, isFiniteCoordinate, isJsonWithinLimit, isRecord } from './_lib/request-guards.js'
 
 type VercelRequest = {
   method?: string
   body?: unknown
   headers?: {
     authorization?: string
+    'x-real-ip'?: string
+    'x-forwarded-for'?: string
   }
 }
 
@@ -21,11 +24,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  const { lat, lng, address } = (req.body as {
-    lat?: number
-    lng?: number
-    address?: string
-  }) || {}
+  const body = req.body
+  if (!isRecord(body) || !isJsonWithinLimit(body, 4_000)) {
+    res.status(400).json({ error: '請求格式不正確或資料過大' })
+    return
+  }
+  const lat = body.lat
+  const lng = body.lng
+  const address = body.address
+  if (address !== undefined && (typeof address !== 'string' || address.trim().length > 200)) {
+    res.status(400).json({ error: '地點名稱不可超過 200 個字元' })
+    return
+  }
+  if ((lat !== undefined && !isFiniteCoordinate(lat, -90, 90)) ||
+    (lng !== undefined && !isFiniteCoordinate(lng, -180, 180)) ||
+    ((lat === undefined) !== (lng === undefined))) {
+    res.status(400).json({ error: '請提供有效的經緯度' })
+    return
+  }
+
+  const clientKey = getRequestClientKey(req)
+  if (!await consumeApiRateLimit(`geocode:${clientKey}`, 20, 60_000)) {
+    res.status(429).json({ error: '地點查詢過於頻繁，請稍後再試。' })
+    return
+  }
 
   const apiKey = process.env.GOOGLE_PLACES_API_KEY
 
@@ -36,7 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const isAddressSearch = Boolean(address?.trim())
-    if (!isAddressSearch && (typeof lat !== 'number' || typeof lng !== 'number')) {
+    if (!isAddressSearch && (!isFiniteCoordinate(lat, -90, 90) || !isFiniteCoordinate(lng, -180, 180))) {
       res.status(400).json({ error: '請提供座標或地點名稱' })
       return
     }
@@ -45,7 +67,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? `address=${encodeURIComponent(address!.trim())}&components=country:TW`
       : `latlng=${lat},${lng}`
     const response = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?${query}&key=${apiKey}&language=zh-TW&region=tw`
+      `https://maps.googleapis.com/maps/api/geocode/json?${query}&key=${apiKey}&language=zh-TW&region=tw`,
+      { signal: AbortSignal.timeout(10_000) },
     )
     const data = (await response.json()) as {
       status: string

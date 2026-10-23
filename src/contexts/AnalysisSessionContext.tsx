@@ -308,9 +308,15 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     const input = requestInput ?? loadLastTripInput()
     if (!input) throw new Error('Missing trip input')
 
+    const { data: authData } = supabase
+      ? await supabase.auth.getSession()
+      : { data: { session: null } }
+    const authSession = authData.session
+    if (!authSession?.access_token) throw new Error('請先登入再取得候選地點。')
+
     const response = await fetch('/api/get-candidates', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authSession.access_token}` },
       body: JSON.stringify({ input }),
     })
 
@@ -327,9 +333,14 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       transportMode: TripPlan['transportMode'],
       transportSegments?: TransportSegment[],
     ) => {
+      const { data: authData } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } }
+      const authSession = authData.session
+      if (!authSession?.access_token) throw new Error('請先登入再重算交通路線。')
       const response = await fetch('/api/recompute-routes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authSession.access_token}` },
         body: JSON.stringify({ stops, transportMode, transportSegments }),
       })
 
