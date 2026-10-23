@@ -1,7 +1,7 @@
 import { supabase } from '../auth/supabaseClient'
 import type { TripInput, TripPlan } from '../../types/trip'
-import { deduplicateAndValidateSharedTrips, getSharedPlanSignature, sanitizeSharedPlan } from './communityData'
-export { deduplicateAndValidateSharedTrips, getSharedPlanSignature, sanitizeSharedPlan } from './communityData'
+import { deduplicateAndValidateSharedTrips, getSharedPlanSignature, isShareablePlan, sanitizeSharedPlan } from './communityData'
+export { deduplicateAndValidateSharedTrips, getSharedPlanSignature, isShareablePlan, sanitizeSharedPlan } from './communityData'
 
 export const COMMUNITY_TAG_LIMIT = 2
 export const COMMUNITY_COMMENT_LIMIT = 500
@@ -65,6 +65,7 @@ export async function hasSharedPlan(planSignature: string): Promise<boolean> {
 
 export async function shareTrip(plan: TripPlan, tags: string[] = []) {
   if (!supabase) throw new Error('分享平台尚未連接 Supabase。')
+  if (!isShareablePlan(plan)) throw new Error('行程詳情尚未完成或資料格式不完整，請完成行程後再分享。')
   const publicPlan = sanitizeSharedPlan(plan)
   const serialized = JSON.stringify(publicPlan)
   if (serialized.length > 200_000) throw new Error('行程資料過大，請精簡行程後再分享。')

@@ -46,31 +46,45 @@ export function loadLastTripInput(): TripInput | null {
 export function clearGeneratedTripFlow() {
   [TRIP_PLANS_STORAGE_KEY, TRIP_INPUT_STORAGE_KEY, DETAIL_PLAN_STORAGE_KEY, DETAIL_INPUT_STORAGE_KEY]
     .forEach(key => sessionStorage.removeItem(key))
-}
-
-export function savePlanForDetail(plan: TripPlan, input: TripInput | null) {
-  sessionStorage.setItem(DETAIL_PLAN_STORAGE_KEY, JSON.stringify(plan))
-  if (input) {
-    sessionStorage.setItem(DETAIL_INPUT_STORAGE_KEY, JSON.stringify(input))
-  } else {
-    sessionStorage.removeItem(DETAIL_INPUT_STORAGE_KEY)
+  for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+    const key = sessionStorage.key(index)
+    if (key?.startsWith(`${DETAIL_PLAN_STORAGE_KEY}.shared.`) || key?.startsWith(`${DETAIL_INPUT_STORAGE_KEY}.shared.`)) {
+      sessionStorage.removeItem(key)
+    }
   }
 }
 
-export function updateDetailPlan(nextPlan: TripPlan) {
-  sessionStorage.setItem(DETAIL_PLAN_STORAGE_KEY, JSON.stringify(nextPlan))
+function detailPlanStorageKey(shareId?: string) {
+  return shareId ? `${DETAIL_PLAN_STORAGE_KEY}.shared.${encodeURIComponent(shareId)}` : DETAIL_PLAN_STORAGE_KEY
 }
 
-export function loadPlanForDetail(planId?: string): TripPlan | null {
-  const raw = sessionStorage.getItem(DETAIL_PLAN_STORAGE_KEY)
+function detailInputStorageKey(shareId?: string) {
+  return shareId ? `${DETAIL_INPUT_STORAGE_KEY}.shared.${encodeURIComponent(shareId)}` : DETAIL_INPUT_STORAGE_KEY
+}
+
+export function savePlanForDetail(plan: TripPlan, input: TripInput | null, shareId?: string) {
+  sessionStorage.setItem(detailPlanStorageKey(shareId), JSON.stringify(plan))
+  if (input) {
+    sessionStorage.setItem(detailInputStorageKey(shareId), JSON.stringify(input))
+  } else {
+    sessionStorage.removeItem(detailInputStorageKey(shareId))
+  }
+}
+
+export function updateDetailPlan(nextPlan: TripPlan, shareId?: string) {
+  sessionStorage.setItem(detailPlanStorageKey(shareId), JSON.stringify(nextPlan))
+}
+
+export function loadPlanForDetail(planId?: string, shareId?: string): TripPlan | null {
+  const raw = sessionStorage.getItem(detailPlanStorageKey(shareId))
   try {
     const plan = raw ? JSON.parse(raw) as TripPlan : null
     return !planId || plan?.id === planId ? plan : null
   } catch { return null }
 }
 
-export function loadInputForDetail(): TripInput | null {
-  const raw = sessionStorage.getItem(DETAIL_INPUT_STORAGE_KEY)
+export function loadInputForDetail(shareId?: string): TripInput | null {
+  const raw = sessionStorage.getItem(detailInputStorageKey(shareId))
   try { return raw ? JSON.parse(raw) : null } catch { return null }
 }
 

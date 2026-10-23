@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/auth'
 import { useDialog } from '../../contexts/dialog'
 import type { TripInput, TripPlan } from '../../types/trip'
 import { COMMUNITY_TAG_LIMIT, getSharedPlanSignature, hasSharedPlan, shareTrip } from '../../services/community/communityService'
-import { sanitizeSharedPlan } from '../../services/community/communityData'
+import { isShareablePlan, sanitizeSharedPlan } from '../../services/community/communityData'
 import { savePlanForDetail } from '../../utils/tripPlanStorage'
 
 const suggestedTags = ['美食', '小資', '親子', '約會', '戶外', '雨天備案']
@@ -25,6 +25,7 @@ export function ShareTripButton({
   const { user, isAuthLoading } = useAuth()
   const dialog = useDialog()
   const planSignature = getSharedPlanSignature(plan)
+  const canShare = isShareablePlan(plan)
   const [isOpen, setIsOpen] = useState(false)
   const [tagDraft, setTagDraft] = useState('')
   const [tags, setTags] = useState<string[]>([])
@@ -75,11 +76,12 @@ export function ShareTripButton({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!canShare) return
     setIsSharing(true)
     try {
       const sharedId = await shareTrip(plan, tags)
       setIsOpen(false)
-      savePlanForDetail(sanitizeSharedPlan(plan), null)
+      savePlanForDetail(sanitizeSharedPlan(plan), null, sharedId)
       navigate(`/plans/${encodeURIComponent(plan.id)}?source=community&shareId=${encodeURIComponent(sharedId)}&from=mine`)
     } catch (error) {
       await dialog.alert({
@@ -95,8 +97,8 @@ export function ShareTripButton({
 
   return (
     <>
-      <button className={className} type="button" onClick={(event) => { stopCardEvent(event); openDialog() }} onKeyDown={stopCardEvent}>
-        <Share2 size={16} aria-hidden="true" /> {label}
+      <button className={className} type="button" onClick={(event) => { stopCardEvent(event); if (canShare) openDialog() }} onKeyDown={stopCardEvent} disabled={!canShare} title={!canShare ? '行程詳情完成後才能分享' : undefined}>
+        <Share2 size={16} aria-hidden="true" /> {canShare ? label : '完成詳情後可分享'}
       </button>
       {isOpen ? (
         <div className="community-modal-backdrop" role="presentation" onClick={() => setIsOpen(false)}>

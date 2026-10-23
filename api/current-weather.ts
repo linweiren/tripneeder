@@ -206,6 +206,7 @@ async function getForecast(apiKey: string, lat: number, lng: number, city: strin
   const countyLocations = normalizedCity
     ? locations.filter((location) => normalizeCwaCounty(location.CountyName ?? '') === normalizedCity)
     : locations
+  if (normalizedCity && countyLocations.length === 0) return []
   const nearest = (countyLocations.length ? countyLocations : locations)
     .map((location) => ({
       location,

@@ -5,11 +5,15 @@ export type TimedValue = {
 }
 
 export function normalizeCwaCounty(value: string) {
-  const normalized = value.trim().replace(/台/g, '臺').replace(/[\s縣市]+$/g, '')
-  const aliases: Record<string, string> = {
-    臺北: '臺北', 新北: '新北', 桃園: '桃園', 臺中: '臺中', 臺南: '臺南', 臺東: '臺東',
-  }
-  return aliases[normalized] ?? normalized
+  const normalized = value.trim().replace(/台/g, '臺').replace(/\s+/g, '')
+  const legacyAliases: Record<string, string> = { 臺北縣: '新北市' }
+  const countyCities = [
+    '基隆市', '臺北市', '新北市', '桃園市', '新竹市', '新竹縣', '苗栗縣', '臺中市',
+    '彰化縣', '南投縣', '雲林縣', '嘉義市', '嘉義縣', '臺南市', '高雄市', '屏東縣',
+    '宜蘭縣', '花蓮縣', '臺東縣', '澎湖縣', '金門縣', '連江縣',
+  ]
+  if (legacyAliases[normalized]) return legacyAliases[normalized]
+  return countyCities.find((countyCity) => normalized === countyCity || normalized.startsWith(countyCity)) ?? normalized
 }
 
 export function matchForecastPeriod<T extends TimedValue>(periods: T[], timestamp: number): T | undefined {

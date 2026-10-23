@@ -36,7 +36,7 @@ export function CommunitySharedTripRedirectPage() {
         setError('')
         const trip = trips[0]
         if (!trip) throw new Error('找不到這份分享，可能已經移除。')
-        savePlanForDetail(trip.plan, trip.input)
+        savePlanForDetail(trip.plan, trip.input, trip.id)
         if (user && !trip.is_owner) void recordSharedTripView(trip.id).catch(() => undefined)
         const from = trip.is_owner ? 'mine' : 'community'
         navigate(`/plans/${encodeURIComponent(trip.plan.id)}?source=community&shareId=${encodeURIComponent(trip.id)}&from=${from}`, { replace: true })
@@ -166,7 +166,7 @@ function CommunityFeed({ ownerOnly }: { ownerOnly: boolean }) {
   }
 
   function openTrip(trip: SharedTrip) {
-    savePlanForDetail(trip.plan, trip.input)
+    savePlanForDetail(trip.plan, trip.input, trip.id)
     navigate(`/plans/${encodeURIComponent(trip.plan.id)}?source=community&shareId=${encodeURIComponent(trip.id)}&from=${ownerOnly ? 'mine' : 'community'}`)
   }
 

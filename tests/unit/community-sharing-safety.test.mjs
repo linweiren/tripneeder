@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { deduplicateAndValidateSharedTrips, getSharedPlanSignature, sanitizeSharedPlan } from '../../src/services/community/communityData.js'
+import { deduplicateAndValidateSharedTrips, getSharedPlanSignature, isShareablePlan, sanitizeSharedPlan } from '../../src/services/community/communityData.js'
+import { loadPlanForDetail, savePlanForDetail } from '../../src/utils/tripPlanStorage.js'
 
 const plan = {
   id: 'plan-1', type: 'balanced', title: 'Trip', subtitle: '', summary: '', totalTime: 60,
@@ -28,7 +29,7 @@ test('public plan uses an explicit allowlist and removes private coordinates, te
 })
 
 test('feed validation drops malformed records and duplicate ids', () => {
-  const valid = { id: 'share-1', plan: { ...plan, rainBackup: [{ id: 'r1', name: 'Rainy Cafe', type: 'food', duration: 30 }] }, author_display_name: 'Traveler', created_at: '2026-10-21', like_count: 0, comment_count: 0, view_count: 0, liked_by_me: false, reward_awarded: false, is_owner: false, tags: [], input: null }
+  const valid = { id: 'share-1', plan: { ...plan, isDetailComplete: true, rainBackup: [{ id: 'r1', name: 'Rainy Cafe', type: 'food', duration: 30 }] }, author_display_name: 'Traveler', created_at: '2026-10-21', like_count: 0, comment_count: 0, view_count: 0, liked_by_me: false, reward_awarded: false, is_owner: false, tags: [], input: null }
   const result = deduplicateAndValidateSharedTrips([valid, valid, { id: 'broken', plan: {} }])
   assert.equal(result.length, 1)
   assert.equal(result[0].id, 'share-1')
@@ -52,4 +53,35 @@ test('share signatures ignore private details and sanitization is idempotent', (
   const publicVariant = { ...plan, stops: [{ ...plan.stops[0], lat: 25, lng: 121, address: 'Other address', description: 'Other note' }] }
   assert.equal(getSharedPlanSignature(privateVariant), getSharedPlanSignature(publicVariant))
   assert.deepEqual(sanitizeSharedPlan(sanitizeSharedPlan(privateVariant)), sanitizeSharedPlan(privateVariant))
+})
+
+test('only completed plans with required bounded fields can be shared', () => {
+  const completed = { ...plan, isDetailComplete: true, rainBackup: [{ id: 'rain-1', name: 'Rainy Cafe', type: 'food', duration: 45 }] }
+  assert.equal(isShareablePlan(completed), true)
+  assert.equal(isShareablePlan({ ...completed, isDetailComplete: false }), false)
+  assert.equal(isShareablePlan({ ...completed, title: ' ' }), false)
+  assert.equal(isShareablePlan({ ...completed, stops: [] }), false)
+  assert.equal(isShareablePlan({ ...completed, stops: [{ ...plan.stops[0], duration: Number.NaN }] }), false)
+})
+
+test('shared detail cache is keyed by both share id and plan id', () => {
+  const originalStorage = globalThis.sessionStorage
+  const values = new Map()
+  globalThis.sessionStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+    get length() { return values.size },
+    key: (index) => [...values.keys()][index] ?? null,
+  }
+  try {
+    savePlanForDetail({ ...plan, title: 'Share A' }, null, 'share-a')
+    savePlanForDetail({ ...plan, title: 'Share B' }, null, 'share-b')
+    assert.equal(loadPlanForDetail('plan-1', 'share-a')?.title, 'Share A')
+    assert.equal(loadPlanForDetail('plan-1', 'share-b')?.title, 'Share B')
+    assert.equal(loadPlanForDetail('different-plan-id', 'share-a'), null)
+  } finally {
+    if (originalStorage === undefined) delete globalThis.sessionStorage
+    else globalThis.sessionStorage = originalStorage
+  }
 })

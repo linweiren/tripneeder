@@ -32,6 +32,8 @@ import {
 } from './_lib/trip-candidate-debug.js'
 import { loadServerPreferenceProfile } from './_lib/server-personalization-profile.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
+import { verifySupabaseAccessToken } from './_lib/auth.js'
+import { consumeApiRateLimit, getRequestClientKey, isFiniteCoordinate, isJsonWithinLimit, isRecord } from './_lib/request-guards.js'
 import {
   PLAN_IDS,
   TIMELINE_START_GRANULARITY_MINUTES,
@@ -88,6 +90,8 @@ type VercelRequest = {
   body?: unknown
   headers?: {
     authorization?: string
+    'x-real-ip'?: string
+    'x-forwarded-for'?: string
   }
   signal?: AbortSignal
 }
@@ -193,6 +197,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
+  const ipLimit = await consumeApiRateLimit(`trip-generation:ip:${getRequestClientKey(req)}`, 3, 60_000)
+  if (ipLimit !== 'allowed') {
+    res.status(ipLimit === 'limited' ? 429 : 503).json({ error: ipLimit === 'limited' ? '行程分析請求過於頻繁，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
+    return
+  }
+  const user = await verifySupabaseAccessToken(req.headers?.authorization)
+  if (!user) {
+    res.status(401).json({ error: '登入狀態已失效，請重新登入。' })
+    return
+  }
+  const userLimit = await consumeApiRateLimit(`trip-generation:user:${user.id}`, 6, 60_000)
+  if (userLimit !== 'allowed') {
+    res.status(userLimit === 'limited' ? 429 : 503).json({ error: userLimit === 'limited' ? '行程分析已達使用上限，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
+    return
+  }
+
   const apiKey = process.env.OPENAI_API_KEY
 
   if (!apiKey) {
@@ -206,7 +226,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let userId: string | undefined
   try {
     supabase = createUserScopedSupabaseClient(accessToken)
-    userId = getUserIdFromToken(accessToken)
+    userId = user.id
     const balance = await getAvailablePoints(supabase)
 
     if (balance < ANALYSIS_COST) {
@@ -3731,9 +3751,19 @@ function getBearerToken(value?: string) {
 }
 
 function parseRequestBody(body: unknown): GenerateTripPlansRequest | null {
-  if (!isRecord(body) || !isRecord(body.input)) {
+  if (!isRecord(body) || !isJsonWithinLimit(body, 16_000) || !isRecord(body.input)) {
     return null
   }
+
+  const input = body.input
+  const location = input.location
+  if (!isRecord(location) || typeof location.name !== 'string' || location.name.trim().length === 0 || location.name.length > 200 ||
+    typeof input.startTime !== 'string' || input.startTime.length > 10 ||
+    typeof input.endTime !== 'string' || input.endTime.length > 10 ||
+    !Array.isArray(input.tags) || input.tags.length > 10 || !input.tags.every((tag) => typeof tag === 'string' && tag.length <= 40) ||
+    (location.lat !== undefined && !isFiniteCoordinate(location.lat, -90, 90)) ||
+    (location.lng !== undefined && !isFiniteCoordinate(location.lng, -180, 180)) ||
+    ((location.lat === undefined) !== (location.lng === undefined))) return null
 
   return body as GenerateTripPlansRequest
 }
@@ -3763,17 +3793,6 @@ async function readOpenAiErrorDetail(response: Response) {
     return data.error?.message ?? ''
   } catch {
     return ''
-  }
-}
-
-function getUserIdFromToken(accessToken: string): string | undefined {
-  try {
-    const payload = JSON.parse(
-      Buffer.from(accessToken.split('.')[1], 'base64').toString(),
-    )
-    return payload.sub
-  } catch {
-    return undefined
   }
 }
 
@@ -3831,10 +3850,6 @@ async function getMergedPersona(
     transportMode: input.transportMode || dbPersona.persona_transport_mode || undefined,
     people: input.people || dbPersona.persona_people || 2,
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
 }
 
 type OpenAiErrorResponse = {

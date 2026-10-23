@@ -170,17 +170,17 @@ export function DetailPage() {
   const isStoredSource = sourcePage === 'favorites' || sourcePage === 'recent'
   const hasLocalDetailPlan = isStoredSource || isCommunityShared
   const detailSource: PlanDetailSource = isCommunityShared ? 'shared' : sourcePage ?? 'generated'
-  const detailRecordId = isStoredSource ? getDetailRecordId(location.state, location.search) : null
-  const storedDetailPlan = loadPlanForDetail(planId)
+  const detailRecordId = isCommunityShared ? communityShareId : isStoredSource ? getDetailRecordId(location.state, location.search) : null
+  const storedDetailPlan = loadPlanForDetail(planId, communityShareId ?? undefined)
   const generatedPlan = plans.find((plan) => plan.id === planId)
   const initialSelectedPlan = hasLocalDetailPlan ? storedDetailPlan : generatedPlan
   // Memoize with stable deps to prevent a new object reference on every render.
   // A new reference would cause the detail-completion useEffect to abort its own fetch
   // each time setDetailCompletionStatus triggers a re-render.
   const lastInput = useMemo(() => {
-    return hasLocalDetailPlan ? loadInputForDetail() : loadLastTripInput()
+    return hasLocalDetailPlan ? loadInputForDetail(communityShareId ?? undefined) : loadLastTripInput()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailRecordId, hasLocalDetailPlan, planId])
+  }, [communityShareId, detailRecordId, hasLocalDetailPlan, planId])
   const [selectedPlan, setSelectedPlan] = useState(initialSelectedPlan)
   const weatherLocation = getWeatherCity(
     lastInput?.location.name,
@@ -376,7 +376,7 @@ export function DetailPage() {
 
   function persistSelectedPlanLocally(updatedPlan: TripPlan) {
     if (hasLocalDetailPlan) {
-      updateDetailPlan(updatedPlan)
+      updateDetailPlan(updatedPlan, communityShareId ?? undefined)
     } else {
       updateGeneratedPlan(updatedPlan)
     }
@@ -518,7 +518,7 @@ export function DetailPage() {
   }, [hasValidRainBackup, isRainMode])
 
   useEffect(() => {
-    const nextStoredDetailPlan = loadPlanForDetail(planId)
+    const nextStoredDetailPlan = loadPlanForDetail(planId, communityShareId ?? undefined)
     const nextGeneratedPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
     const nextSelectedPlan = hasLocalDetailPlan ? nextStoredDetailPlan : nextGeneratedPlan
 
@@ -536,7 +536,7 @@ export function DetailPage() {
       }
       return nextSelectedPlan
     })
-  }, [hasLocalDetailPlan, planId])
+  }, [communityShareId, hasLocalDetailPlan, planId])
 
   // Ensure a detail-completion fetch is running for this plan. The fetch is
   // owned by the AnalysisSession context so it keeps running even if the user
@@ -554,13 +554,13 @@ export function DetailPage() {
     if (selectedPlan?.isDetailComplete) return
 
     const upgradedGenerated = loadGeneratedPlans().find((plan) => plan.id === planId)
-    const upgradedStored = loadPlanForDetail(planId)
+    const upgradedStored = loadPlanForDetail(planId, communityShareId ?? undefined)
     const upgraded = hasLocalDetailPlan ? upgradedStored : upgradedGenerated
 
     if (upgraded?.isDetailComplete) {
       setSelectedPlan(upgraded)
     }
-  }, [detailState?.status, hasLocalDetailPlan, planId, selectedPlan])
+  }, [communityShareId, detailState?.status, hasLocalDetailPlan, planId, selectedPlan])
 
   useEffect(() => {
     function refreshFavoriteStatus() {

@@ -24,11 +24,7 @@ export function deduplicateAndValidateSharedTrips(value: unknown): SharedTripFee
     const trip = item as Partial<SharedTripFeedRow>
     const plan = trip.plan as Partial<TripPlan> | undefined
     if (typeof trip.id !== 'string' || !trip.id || trip.id.length > 100 || seen.has(trip.id) || !plan ||
-      typeof plan.id !== 'string' || plan.id.length > 100 || typeof plan.title !== 'string' || plan.title.length > 120 ||
-      typeof plan.budget !== 'number' || !Number.isFinite(plan.budget) || plan.budget < 0 ||
-      !Array.isArray(plan.stops) || plan.stops.length > 30 || !plan.stops.every(isSafeFeedStop) ||
-      !Array.isArray(plan.rainBackup) || plan.rainBackup.length > 20 || !plan.rainBackup.every(isSafeFeedStop) ||
-      !Array.isArray(plan.transportSegments) || !Array.isArray(plan.rainTransportSegments) ||
+      !isShareablePlan(plan) ||
       typeof trip.author_display_name !== 'string' || trip.author_display_name.length > 80 || typeof trip.created_at !== 'string' || Number.isNaN(Date.parse(trip.created_at)) ||
       !isSafeCount(trip.like_count) || !isSafeCount(trip.comment_count) ||
       !isSafeCount(trip.view_count) || !Array.isArray(trip.tags) || trip.tags.length > 2 ||
@@ -54,7 +50,8 @@ function isSafeCount(value: unknown): value is number {
 function isSafeFeedStop(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
   const stop = value as Record<string, unknown>
-  return typeof stop.id === 'string' && stop.id.length <= 100 && typeof stop.name === 'string' && stop.name.length <= 200 &&
+  return typeof stop.id === 'string' && stop.id.length <= 100 && typeof stop.name === 'string' && stop.name.trim().length > 0 && stop.name.length <= 200 &&
+    ['main_activity', 'food', 'ending_or_transition'].includes(typeof stop.type === 'string' ? stop.type : '') &&
     typeof stop.duration === 'number' && Number.isFinite(stop.duration) && stop.duration >= 0 && stop.duration <= 1440
 }
 
@@ -118,4 +115,19 @@ export function getSharedPlanSignature(plan: TripPlan): string {
     return value
   }
   return JSON.stringify(normalize(sanitizeSharedPlan(plan)))
+}
+
+export function isShareablePlan(value: unknown): value is TripPlan {
+  if (!value || typeof value !== 'object') return false
+  const plan = value as Partial<TripPlan>
+  return plan.isDetailComplete === true && typeof plan.id === 'string' && plan.id.length > 0 && plan.id.length <= 80 &&
+    typeof plan.title === 'string' && plan.title.trim().length > 0 && plan.title.length <= 120 &&
+    ['safe', 'balanced', 'explore'].includes(plan.type ?? '') &&
+    ['scooter', 'car', 'public_transit'].includes(plan.transportMode ?? '') &&
+    typeof plan.totalTime === 'number' && Number.isFinite(plan.totalTime) && plan.totalTime >= 0 && plan.totalTime <= 10080 &&
+    typeof plan.budget === 'number' && Number.isFinite(plan.budget) && plan.budget >= 0 && plan.budget <= 100_000_000 &&
+    Array.isArray(plan.stops) && plan.stops.length >= 1 && plan.stops.length <= 30 && plan.stops.every(isSafeFeedStop) &&
+    Array.isArray(plan.rainBackup) && plan.rainBackup.length <= 20 && plan.rainBackup.every(isSafeFeedStop) &&
+    Array.isArray(plan.transportSegments) && plan.transportSegments.length <= 30 &&
+    Array.isArray(plan.rainTransportSegments) && plan.rainTransportSegments.length <= 30
 }

@@ -35,12 +35,12 @@ export default defineConfig(({ mode }) => {
       env.GOOGLE_PLACES_API_KEY || env.VITE_GOOGLE_PLACES_API_KEY
   }
 
-  if (env.SUPABASE_URL) {
-    process.env.SUPABASE_URL = env.SUPABASE_URL
+  if (env.SUPABASE_URL || env.VITE_SUPABASE_URL) {
+    process.env.SUPABASE_URL = env.SUPABASE_URL || env.VITE_SUPABASE_URL
   }
 
-  if (env.SUPABASE_ANON_KEY) {
-    process.env.SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY
+  if (env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY) {
+    process.env.SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY
   }
 
   if (env.CWA_API_KEY) {
