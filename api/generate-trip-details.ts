@@ -24,6 +24,7 @@ import {
   type VerifiedPlaceCandidate,
 } from './_lib/google-places.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
+import { isForbiddenStop, isForbiddenVisit } from './_lib/trip-demand-compliance.js'
 import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
 
 type VercelRequest = {
@@ -366,9 +367,11 @@ export function repairRainBackupStops(
   input: TripInput,
   planId = 'plan',
 ) {
-  const indoorCandidates = candidates.filter(isRainBackupCandidate)
+  const indoorCandidates = candidates.filter(candidate => isRainBackupCandidate(candidate) && !isForbiddenVisit(candidate, input))
   const scheduleStartMinutes = parseTimeToMinutes(input.startTime)
-  let repairedStops = dedupeRainBackupStops(stops)
+  let repairedStops = dedupeRainBackupStops(stops.filter(stop => !isForbiddenStop(stop, input, {
+    allCandidates: candidates, firstStopCandidates: [], otherCandidates: [],
+  })))
 
   if (scheduleStartMinutes === null) {
     return repairedStops.length >= MIN_RAIN_BACKUP_STOPS ? repairedStops : []

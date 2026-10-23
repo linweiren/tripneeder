@@ -9,6 +9,7 @@ import { applyCandidateGroundingToPlan } from '../../api/generate-trip.ts'
 import { getRequiredMealCoverageIssues } from '../../api/_lib/trip-quality-rules.ts'
 import { intentCases, intentGroundingFixture, readIntentLinks, stripIntentLinks, tokenEstimate } from './fixtures/intent-candidate-grounding.mjs'
 import { capturedCultureProjectionPool, capturedLinks, capturedPromptLengths } from './fixtures/culture-evidence-projection.mjs'
+import { assertWorkingTreeHandler } from './fixtures/demand-delivery-contract.mjs'
 
 const file = new URL('../../api/_lib/trip-intent-candidate-grounding.ts', import.meta.url)
 const oldSource = execFileSync('git', ['show', '342847c:api/_lib/trip-intent-candidate-grounding.ts'], { encoding: 'utf8' })
@@ -144,7 +145,7 @@ test('bounded clues never displace baseline culture/coffee/mixed IDs, including 
   }
 })
 
-test('342847c full handler comparison: only the projection changes; all fixed plans/events/calls remain equal', t => {
+test('current handler with 342847c projection control: all fixed plans/events/calls remain equal', t => {
   const replay = mode => JSON.parse(execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning',
     '--import', './tests/unit/register-ts-js-extension-loader.mjs', './tests/unit/fixtures/intent-candidate-grounding-replay.mjs', mode],
   { encoding: 'utf8', maxBuffer: 30 * 1024 * 1024 }))
@@ -152,6 +153,7 @@ test('342847c full handler comparison: only the projection changes; all fixed pl
   assert.equal(after.length, intentCases.length)
   for (const [i, row] of after.entries()) {
     const old = before[i]
+    assertWorkingTreeHandler(row); assertWorkingTreeHandler(old)
     assert.deepEqual(row.result, old.result, row.kind)
     assert.equal(row.calls.length, old.calls.length)
     let aiCalls = 0

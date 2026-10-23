@@ -5,6 +5,7 @@ import { stripTypeScriptTypes } from 'node:module'
 import { capturedCultureProjectionPool } from './fixtures/culture-evidence-projection.mjs'
 import { tokenEstimate, intentCases } from './fixtures/intent-candidate-grounding.mjs'
 import { durationQualityFixture, mockDurationQuality } from './fixtures/stop-duration-quality.mjs'
+import { assertWorkingTreeHandler } from './fixtures/demand-delivery-contract.mjs'
 
 process.env.NODE_ENV = 'production'
 process.env.GOOGLE_PLACES_API_KEY = 'unit-test-only'
@@ -143,7 +144,7 @@ for (const kind of ['two-stop', 'meal']) test(`${kind}: required coverage and me
   } else assert.deepEqual(result.plan.stops.map(s => s.duration), [55, 60, 70, 45])
 })
 
-test('8f47c776 fixed full-handler comparison preserves candidates, plans, events and every call outside one prompt block', t => {
+test('current handler with 8f47c776 prompt control preserves every call outside one prompt block', t => {
   const replay = mode => JSON.parse(execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning',
     '--import', './tests/unit/register-ts-js-extension-loader.mjs', './tests/unit/fixtures/intent-candidate-grounding-replay.mjs', mode],
   { encoding: 'utf8', maxBuffer: 40 * 1024 * 1024 }))
@@ -151,6 +152,7 @@ test('8f47c776 fixed full-handler comparison preserves candidates, plans, events
   assert.equal(after.length, intentCases.length + 3)
   for (const [i, row] of after.entries()) {
     const old = before[i]
+    assertWorkingTreeHandler(row); assertWorkingTreeHandler(old)
     assert.equal(row.kind, old.kind)
     assert.deepEqual(row.result, old.result, row.kind)
     assert.equal(row.calls.length, old.calls.length, row.kind)

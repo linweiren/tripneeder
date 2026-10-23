@@ -8,6 +8,8 @@ import { getMealSuitabilityRank, MEAL_SUITABILITY_PROMPT_RULE } from '../src/ser
 import { compareOriginalActivities, getActivityPurpose } from './_lib/trip-activity-purpose.js'
 import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
 import { buildIntentCandidateGrounding } from './_lib/trip-intent-candidate-grounding.js'
+import { assessVisitRequirements, filterDemandCandidates, getForbiddenVisitIssues,
+  getVisitRequirementWarnings, isForbiddenStop, visitRequirementEvidence } from './_lib/trip-demand-compliance.js'
 import { withAcceptanceEvidence, evidenceAiFetch, observeEvidenceCall, recordAiModelText,
   recordRawAiPlan, recordAiUsage, recordAiStreamUsage, bindEvidencePlan, recordEvidenceDecision,
   recordEvidencePoints, recordEvidenceProfile, recordEvidencePlanDecision, bindLocalEvidencePlan,
@@ -465,7 +467,10 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
           }
 
           upsertValidatedPlan(validatedPlans, validatedPlan)
-          writeEvent({ event: 'plan', plan: finalizePlanText(validatedPlan) })
+          if (!getForbiddenVisitIssues(validatedPlan, request.input, nearbyPlaceCandidates).length) {
+            writeEvent({ event: 'plan', plan: finalizePlanText(withVisitRequirementText(validatedPlan,
+              getVisitRequirementWarnings(validatedPlan, request.input, nearbyPlaceCandidates))) })
+          }
         }
       }
     }
@@ -515,7 +520,10 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
           }
 
           upsertValidatedPlan(validatedPlans, validatedPlan)
-          writeEvent({ event: 'plan', plan: finalizePlanText(validatedPlan) })
+          if (!getForbiddenVisitIssues(validatedPlan, request.input, nearbyPlaceCandidates).length) {
+            writeEvent({ event: 'plan', plan: finalizePlanText(withVisitRequirementText(validatedPlan,
+              getVisitRequirementWarnings(validatedPlan, request.input, nearbyPlaceCandidates))) })
+          }
         }
       }
     }
@@ -720,6 +728,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
           'final-repair',
           crossPlanUsedPlaceIds,
           candidateDebugSession ?? undefined,
+          persona.stamina,
         )
 
         finalRepairResults.push({
@@ -826,6 +835,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
                   'refill-final-repair',
                   new Set(finalResponse.plans.flatMap(getPlanPlaceIds)),
                   candidateDebugSession ?? undefined,
+                  persona.stamina,
                 )
                 candidateDebugSession?.recordRepair(
                   validatedPlan,
@@ -895,6 +905,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
               'local-refill-final-repair',
               new Set(finalResponse.plans.flatMap(getPlanPlaceIds)),
               candidateDebugSession ?? undefined,
+              persona.stamina,
             )
             candidateDebugSession?.recordRepair(
               localPlan,
@@ -958,6 +969,22 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
       }
 
       if (!finalResponse.warnings) finalResponse.warnings = []
+      const responseWarnings = finalResponse.warnings
+      const demandWarningGroups = new Map<string, string[]>()
+      finalResponse.plans = finalResponse.plans.map(plan => {
+        const demandWarnings = getVisitRequirementWarnings(plan, request.input, nearbyPlaceCandidates)
+        for (const warning of demandWarnings) {
+          const styles = demandWarningGroups.get(warning) ?? []
+          styles.push(getTripPlanStyleLabel(plan.type) ?? plan.type)
+          demandWarningGroups.set(warning, styles)
+        }
+        return withVisitRequirementText(plan, demandWarnings)
+      })
+      for (const [warning, styles] of demandWarningGroups) {
+        const scope = styles.length === finalResponse.plans.length && styles.length > 1 ? '所有方案' : styles.join('、')
+        const message = `${scope}：${warning}`
+        if (!responseWarnings.includes(message)) responseWarnings.push(message)
+      }
       if (!placesValidationPerformed) {
         finalResponse.warnings.push('Google Places 驗證未啟用，部分地點資訊可能不夠準確。')
       }
@@ -1053,6 +1080,14 @@ function carryOriginalActivities(source: TripPlan, target: TripPlan) {
   const durationEvidence = durationRepairEvidence.get(source)
   if (durationEvidence) durationRepairEvidence.set(target, durationEvidence)
   return rememberPlanTextTransition(source, target)
+}
+
+// Neither provisional nor final text may claim an unconfirmed visit was achieved.
+function withVisitRequirementText(plan: TripPlan, warnings: string[]) {
+  return warnings.length ? carryOriginalActivities(plan, { ...plan,
+    title: getTripPlanStyleLabel(plan.type) ?? plan.title,
+    subtitle: '已依可用地點調整活動安排', summary: warnings.join(' '),
+  }) : plan
 }
 
 export function getOriginalActivityImpact(source: TripPlan, finalStops: Stop[]) {
@@ -1412,6 +1447,10 @@ export async function repairPlanForDelivery(
     routeContext?: SupplementRouteContext; skipActivitySupplement?: boolean;
     debugSession?: TripCandidateDebugSession; debugPhase?: string } = {},
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
+  // Filter at every entry, including recursive alternatives and fallbacks. An optional
+  // diversity fallback can relax its own exclusions, never the user's prohibition.
+  const sourceCandidates = candidates
+  candidates = filterDemandCandidates(candidates, input)
   const debug = options.debugSession
   const attemptId = debug?.beginRepairAttempt(plan, options.debugPhase ?? 'repair')
   const diagnosticContext = debug ? { session: debug, stage: { attemptId } } : undefined
@@ -1441,8 +1480,14 @@ export async function repairPlanForDelivery(
   const repairedStops = plan.stops.map((stop, index) => {
     const arrival = getEstimatedArrivalMinutesForStop(plan.stops, index,
       stop.type === 'food' ? foodTimelineInput : input, plan.transportSegments)
+    const replacementHint = isForbiddenStop(stop, input, sourceCandidates) ? { ...stop,
+      // A formerly verified, now forbidden venue must not take the missing-pool
+      // preservation path in ensureStopHasVerifiedPlace.
+      googleMapsUrl: undefined,
+      type: stop.type === 'food' && !candidates.allCandidates.some(isFoodCandidate) ? 'main_activity' as const : stop.type,
+    } : stop
     return ensureStopHasVerifiedPlace(
-      stop,
+      replacementHint,
       index,
       candidates,
       usedPlaceIds,
@@ -1827,16 +1872,21 @@ export async function repairAndValidatePlanForDelivery(
   phase: string,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
   debugSession?: TripCandidateDebugSession,
+  demandStamina?: string,
 ): Promise<{ plan: TripPlan | null; routesFailed: boolean; issues: string[] }> {
+  const routeContext = createSupplementRouteContext()
   // The existing safety/diversity pipeline chooses its result first. Nothing below
   // re-enters repair or fallback, so there is at most one allocation comparison.
   const result = await repairAndValidatePlanForDeliveryCore(plan, input, candidates, avoidedPlaceIds,
-    phase, crossPlanUsedPlaceIds, debugSession)
+    phase, crossPlanUsedPlaceIds, debugSession, routeContext)
   if (!result.plan || result.routesFailed) return result
+  const finish = async (value: typeof result) => ({ ...value, plan: value.plan
+    ? await repairPlanVisitRequirements(value.plan, input, candidates,
+      durationRepairEvidence.get(value.plan)?.routeContext ?? routeContext, debugSession, demandStamina) : null })
   const evidence = durationRepairEvidence.get(result.plan)
-  if (!evidence?.losses.size) return result
+  if (!evidence?.losses.size) return finish(result)
   const comparison = proposeStopDurationRedistribution(result.plan, input, candidates, evidence.losses)
-  if (!comparison) return result
+  if (!comparison) return finish(result)
   const issues = await hasReusableStaticRouteTimings(evidence.routeContext, result.plan)
     ? getDurationRedistributionIssues(result.plan, comparison.plan, input, candidates)
     : ['route_timing_not_reusable_without_new_queries']
@@ -1845,12 +1895,85 @@ export async function repairAndValidatePlanForDelivery(
     debugSession?.recordPlanTransition(result.plan, comparison.plan, 'duration-redistribution:rejected', {
       disposition: 'rejected', reason: issues.join(','),
     })
-    return result
+    return finish(result)
   }
   debugSession?.recordPlanTransition(result.plan, comparison.plan, 'duration-redistribution:accepted', {
     disposition: 'selected', reason: 'restore_capacity_compressed_explicit_theme_activity;excess_activity_support_unknown',
   })
-  return { ...result, plan: carryOriginalActivities(result.plan, comparison.plan) }
+  return finish({ ...result, plan: carryOriginalActivities(result.plan, comparison.plan) })
+}
+
+// At most three candidates and two existing positions per missing theme. All new
+// edges share the repair's comparison budget/memo; no recursive repair or AI retry.
+async function repairPlanVisitRequirements(plan: TripPlan, input: GenerateTripPlansRequest['input'],
+  candidates: NearbyPlaceCandidates, context: SupplementRouteContext,
+  debug?: TripCandidateDebugSession, stamina?: string): Promise<TripPlan> {
+  candidates = filterDemandCandidates(candidates, input)
+  let selected = plan
+  for (const requirement of assessVisitRequirements(plan, input, candidates)) {
+    const before = assessVisitRequirements(selected, input, candidates)
+    if (before.find(item => item.label === requirement.label)?.status === 'satisfied') continue
+    const used = new Set(selected.stops.map(stop => stop.placeId))
+    const available = candidates.allCandidates.filter(candidate => !used.has(candidate.placeId) &&
+      candidate.openingHours?.isKnown && !candidate.openingHours.isNeverOpen)
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.placeId.localeCompare(b.placeId))
+    const primary = available.filter(candidate => visitRequirementEvidence(requirement, candidate) === 'satisfied')
+    const alternatives = before.find(item => item.label === requirement.label)?.status === 'alternative' ? []
+      : available.filter(candidate => visitRequirementEvidence(requirement, candidate) === 'alternative')
+    // Primary visits get the bounded opportunity first; related visits use remaining slots.
+    const shortlist = [...primary.slice(0, 2), ...alternatives.slice(0, 1), ...primary.slice(2, 3)].slice(0, 3)
+    const roundStart = context.calls
+    const arrivals = selected.stops.map((_stop, index) => getEstimatedArrivalMinutesForStop(
+      selected.stops, index, { ...input, scheduleStartTime: selected.scheduleStartTime }, selected.transportSegments))
+    const meals = getRequiredMealWindows({ ...input, scheduleStartTime: selected.scheduleStartTime })
+    const positions = selected.stops.map((_stop, index) => index).filter(index =>
+      !(selected.stops[index].type === 'food' && meals.some(window =>
+        isStopAlignedWithMealWindow(arrivals[index], selected.stops[index].duration, window))))
+      .sort((a, b) => Number(a === 0) - Number(b === 0) || b - a).slice(0, 2)
+    let accepted = false
+    for (const candidate of shortlist) {
+      for (const index of positions) {
+        const stops = selected.stops.map(stop => ({ ...stop }))
+        const original = stops[index]
+        const replacement = applyCandidateToStop({ ...original, description: '' }, candidate)
+        replacement.duration = clamp(original.duration, getMinimumStopDuration(replacement), getMaximumStopDuration(replacement))
+        stops[index] = replacement
+        const trial = { ...selected, stops }
+        if (getFirstStopDistanceIssue(trial, input, candidates)) continue
+        const after = assessVisitRequirements(trial, input, candidates)
+        if (before.some(item => item.label !== requirement.label &&
+          (item.status === 'satisfied' && after.find(next => next.label === item.label)?.status !== 'satisfied' ||
+            item.status === 'alternative' && !['satisfied', 'alternative'].includes(after.find(next => next.label === item.label)?.status ?? '')))) continue
+        const routing = await resolveMealComparisonRoutes(context, stops, selected.transportMode, roundStart)
+        if (!routing || routing.routesFailed) continue
+        trial.transportSegments = routing.segments
+        trial.totalTime = getPlanActualDuration(trial)
+        const travel = (value: TripPlan) => value.transportSegments.reduce((sum, leg) => sum + leg.duration, 0)
+        if ((stamina === '弱' || input.tags.some(tag => ['not_too_tired', 'short_distance'].includes(tag))) &&
+          travel(trial) > travel(selected)) continue
+        if (getPlanRhythmIssues(trial, input).some(issue => !getPlanRhythmIssues(selected, input).includes(issue))) continue
+        const trialArrivals = stops.map((_stop, i) => getEstimatedArrivalMinutesForStop(stops, i,
+          { ...input, scheduleStartTime: selected.scheduleStartTime }, routing.segments))
+        const start = parseTimeToMinutes(input.startTime), rawEnd = parseTimeToMinutes(input.endTime)
+        if (start === null || rawEnd === null) continue
+        const end = rawEnd < start ? rawEnd + 1440 : rawEnd
+        if (trialArrivals[0] < start || trialArrivals.at(-1)! + stops.at(-1)!.duration > end ||
+          !stops.every((stop, i) => {
+            const known = candidates.allCandidates.find(place => place.placeId === stop.placeId)
+            return known && isCandidateOpenForVisit(known, trialArrivals[i], stop.duration)
+          })) continue
+        if ((await getDeliveryPlanIssues(trial, input, 'visit-requirement-comparison', { candidates })).length) continue
+        debug?.recordPlanTransition(selected, trial, 'visit-requirement:selected', {
+          disposition: 'selected', reason: `${requirement.theme}:${visitRequirementEvidence(requirement, candidate)}`,
+        })
+        selected = carryOriginalActivities(selected, trial)
+        accepted = true
+        break
+      }
+      if (accepted) break
+    }
+  }
+  return selected
 }
 
 async function repairAndValidatePlanForDeliveryCore(
@@ -1861,8 +1984,8 @@ async function repairAndValidatePlanForDeliveryCore(
   phase: string,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
   debugSession?: TripCandidateDebugSession,
+  routeContext: SupplementRouteContext = createSupplementRouteContext(),
 ): Promise<{ plan: TripPlan | null; routesFailed: boolean; issues: string[] }> {
-  const routeContext = createSupplementRouteContext()
   let firstAttempt = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
     allowCoverageRepair: false,
     crossPlanUsedPlaceIds,
@@ -2124,6 +2247,7 @@ export async function getDeliveryPlanIssues(
   const firstStopDistanceIssue = getFirstStopDistanceIssue(plan, input, options.candidates)
   const placesIssues = firstStopDistanceIssue ? [firstStopDistanceIssue] : []
   const hardIssues = getHardPlanQualityIssues(plan, input, placesIssues, { ...options, skipMealCoverage: true })
+  hardIssues.push(...getForbiddenVisitIssues(plan, input, options.candidates))
   if (hardIssues.length > 0) {
     return hardIssues
   }

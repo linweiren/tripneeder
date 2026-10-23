@@ -1,6 +1,6 @@
 import type { TripInput } from '../../src/types/trip.js'
 
-type RankingTheme = 'culture' | 'coffee' | 'outdoor'
+export type RankingTheme = 'culture' | 'coffee' | 'outdoor'
 
 export type CandidateRankingContext = {
   themes: RankingTheme[]
@@ -15,7 +15,7 @@ const VISIT = '(?:(?:這次)?(?:想要?|希望|打算)(?:去|到|找|參觀|逛|
 const cultureVisit = new RegExp(`^${VISIT}${CULTURE}$`)
 const coffeeVisit = new RegExp(`^${VISIT}${COFFEE_VENUE}$`)
 const outdoorVisit = new RegExp(`^${VISIT}${OUTDOOR}(?:走走)?$`)
-const coffeeAvoidance = new RegExp(`^(?:完全)?(?:(?:這次)?(?:不想|不願|不要|不希望)(?:再)?(?:去|到|找|逛)|(?:這次)?(?:避開|不去|別去))${COFFEE_VENUE}$`)
+const coffeeAvoidance = new RegExp(`^(?:完全)?(?:(?:這次)?(?:不想|不願|不要|不希望)(?:再)?(?:去|到|找|逛)|(?:這次)?(?:避開|不去|別去|不要))${COFFEE_VENUE}$`)
 const coffeeDrink = /^(?:(?:這次)?(?:想要?|希望|打算)喝|(?:途中|順便)?喝)(?:一杯)?咖啡$/
 const noCoffeeDrink = /^(?:不喝|不想喝|不要喝)咖啡$/
 const cultureNoun = new RegExp(`^${CULTURE}$`)
@@ -62,4 +62,24 @@ export function resolveCandidateRankingContext(input: TripInput): CandidateRanki
   if (avoidCoffee && themes.has('coffee')) return unknown
   if (!themes.size && !avoidCoffee) return unknown
   return { themes: [...themes], avoidCoffee, customStatus: 'recognized' }
+}
+
+export type VisitRequirement = { theme: RankingTheme; label: string; cultureTypes?: string[] }
+
+// Refine only an already recognised visit; this does not introduce a second grammar.
+// Broad preset categories remain ranking preferences, not mandatory venue requests.
+export function resolveVisitRequirements(input: TripInput): VisitRequirement[] {
+  const context = resolveCandidateRankingContext(input)
+  if (context.customStatus !== 'recognized') return []
+  const text = (input.customCategory ?? '').normalize('NFKC')
+  return context.themes.flatMap<VisitRequirement>(theme => {
+    if (theme === 'coffee') return [{ theme, label: '咖啡廳' }]
+    if (theme === 'outdoor') return [{ theme, label: '戶外景點' }]
+    const cultureTypes: string[] = []
+    if (/博物館/.test(text)) cultureTypes.push('museum')
+    if (/美術館|美術展覽/.test(text)) cultureTypes.push('art_gallery')
+    return cultureTypes.length ? cultureTypes.map(type => ({ theme,
+      label: type === 'museum' ? '博物館' : '美術展覽', cultureTypes: [type],
+    })) : [{ theme, label: '文化活動', cultureTypes: [] }]
+  })
 }

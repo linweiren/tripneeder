@@ -6,6 +6,7 @@ import { buildIntentCandidateGrounding } from '../../api/_lib/trip-intent-candid
 import { formatNearbyRecommendations, getPromptCandidateSelection, hasConfirmedCulturalPrimaryPurpose } from '../../api/_lib/google-places.ts'
 import { buildTripPrompt, buildRetryTripSkeletonPrompt } from '../../src/services/ai/tripPlanPrompt.ts'
 import { intentCases, intentGroundingFixture, stripIntentLinks, readIntentLinks, tokenEstimate } from './fixtures/intent-candidate-grounding.mjs'
+import { assertWorkingTreeHandler } from './fixtures/demand-delivery-contract.mjs'
 
 const active = kind => !['coffee-only', 'culture-only', 'explore', 'negative', 'conditional', 'unknown', 'three-themes'].includes(kind)
 for (const kind of intentCases) test(`intent-to-candidate projection: ${kind}`, () => {
@@ -68,13 +69,14 @@ test('bounded intact IDs, empty pool, ambiguous cultural types and ancillary cof
   assert.equal(buildIntentCandidateGrounding(f.input, { allCandidates: [], firstStopCandidates: [], otherCandidates: [] }), '')
 })
 
-test('complete fedd41fc comparison: only intended prompt block differs; final plans/events and every other request stay identical', t => {
+test('current handler with pre-fedd41fc grounding control: only intended prompt block differs', t => {
   const replay = mode => JSON.parse(execFileSync(process.execPath, ['--disable-warning=ExperimentalWarning', '--import', './tests/unit/register-ts-js-extension-loader.mjs',
     './tests/unit/fixtures/intent-candidate-grounding-replay.mjs', mode], { encoding: 'utf8', maxBuffer: 30 * 1024 * 1024 }))
   const before = replay('before'), after = replay('after'), report = []
   assert.equal(after.length, intentCases.length)
   for (const [i, row] of after.entries()) {
     const old = before[i]
+    assertWorkingTreeHandler(row); assertWorkingTreeHandler(old)
     assert.equal(row.kind, old.kind)
     assert.deepEqual(row.result, old.result, row.kind)
     assert.equal(row.calls.length, old.calls.length, row.kind)

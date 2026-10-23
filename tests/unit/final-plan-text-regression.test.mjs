@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { stripIntentLinks } from './fixtures/intent-candidate-grounding.mjs'
+import { assertWorkingTreeHandler } from './fixtures/demand-delivery-contract.mjs'
 const textless = ({ title, subtitle, summary, ...rest }) => rest
 // The later intent projection intentionally adds one prompt-only block. Its full
 // request delta is checked against fedd41fc in intent-candidate-grounding.test.mjs.
@@ -17,6 +18,7 @@ test('HEAD comparison: only proven stale text changes; itinerary data and non-in
   const replay = mode => JSON.parse(execFileSync(process.execPath, ['--import', './tests/unit/register-ts-js-extension-loader.mjs',
     './tests/unit/fixtures/final-plan-text-replay.mjs', mode], { encoding: 'utf8', maxBuffer: 15 * 1024 * 1024 }))
   const before = replay('before'), after = replay('after')
+  assertWorkingTreeHandler(after)
   assert.equal(after.rows.length, 27)
   for (const [i, old] of before.rows.entries()) {
     const row = after.rows[i]
@@ -43,9 +45,24 @@ test('HEAD comparison: only proven stale text changes; itinerary data and non-in
   const oldPlans = before.generation.response.plans, newPlans = after.generation.response.plans
   assert.deepEqual(newPlans.map(textless), oldPlans.map(textless))
   assert.notEqual(newPlans[0].summary, oldPlans[0].summary)
-  assert.deepEqual(newPlans[1], oldPlans[1])
   assert.notEqual(newPlans[2].subtitle, oldPlans[2].subtitle)
-  assert.equal(newPlans[2].summary, oldPlans[2].summary)
+  assert.equal(after.input.customCategory, '文化景點＋咖啡廳')
+  assert.equal(after.generation.response.warnings.length, 1)
+  assert.match(after.generation.response.warnings[0], /^所有方案：未安排可確認符合「文化活動」/)
+  for (const plan of newPlans) {
+    assert.ok(plan.stops.some(stop => stop.googleTypes.includes('cafe')), 'the requested cafe remains an actual visit')
+    assert.match(plan.summary, /未安排可確認符合「文化活動」/)
+    assert.doesNotMatch(plan.title + plan.subtitle + plan.summary, /眷鳥/)
+  }
+  // Keep every original exact-text/no-extra-request assertion for the general
+  // control; explicit demand disclosure is the only allowed mixed-case text delta.
+  const oldGeneral = before.general.generation.response.plans, newGeneral = after.general.generation.response.plans
+  assert.deepEqual(withoutIntentPrompt(after.general.generationCalls), withoutIntentPrompt(before.general.generationCalls))
+  assert.deepEqual(newGeneral.map(textless), oldGeneral.map(textless))
+  assert.notEqual(newGeneral[0].summary, oldGeneral[0].summary)
+  assert.deepEqual(newGeneral[1], oldGeneral[1])
+  assert.notEqual(newGeneral[2].subtitle, oldGeneral[2].subtitle)
+  assert.equal(newGeneral[2].summary, oldGeneral[2].summary)
   for (const event of after.generation.events.filter(e => e.event === 'plan')) {
     assert.doesNotMatch(event.plan.title + event.plan.subtitle + event.plan.summary, /眷鳥/)
   }

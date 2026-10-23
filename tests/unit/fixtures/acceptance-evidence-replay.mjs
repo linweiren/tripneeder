@@ -2,7 +2,6 @@ import { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +14,7 @@ import { syncBuiltinESMExports, stripTypeScriptTypes } from 'node:module'
 import { intentGroundingFixture } from './intent-candidate-grounding.mjs'
 import { mealReliabilityGenerationFixture } from './meal-reliability.mjs'
 import { mockGeneration, runHandler } from './plan-identity.mjs'
+import { assertDemandDelivery } from './demand-delivery-contract.mjs'
 
 const [mode, kind = 'normal'] = process.argv.slice(2)
 assert.ok(['baseline', 'off', 'on', 'production', 'writefail', 'partial-writefail', 'directoryfail'].includes(mode))
@@ -105,14 +105,25 @@ mock.method(globalThis, 'fetch', async (url, init) => {
   return response
 })
 let handler
+const file = new URL('../../../api/generate-trip.ts', import.meta.url)
+const source = readFileSync(file, 'utf8')
+const handlerSourceSha256 = createHash('sha256').update(source).digest('hex')
 if (mode === 'baseline') {
-  const file = new URL('../../../api/generate-trip.ts', import.meta.url)
-  const source = execFileSync('git', ['show', 'b7498cf:api/generate-trip.ts'], { encoding: 'utf8' })
-  const js = stripTypeScriptTypes(source).replace(/from (['"])([^'"]+)\1/g, (_m, q, s) =>
+  // Direct current implementation vs current wrapper off/on: observation alone
+  // may not alter delivery. No historical recommendation code is substituted.
+  const wrapper = 'return withAcceptanceEvidence(req.body, res, sink => generateTrip(req, sink))'
+  assert.equal(source.split(wrapper).length, 2)
+  const js = stripTypeScriptTypes(source.replace(wrapper, 'return generateTrip(req, res)')).replace(/from (['"])([^'"]+)\1/g, (_m, q, s) =>
     `from ${q}${s.startsWith('.') ? new URL(s.replace(/\.js$/, '.ts'), file).href : import.meta.resolve(s)}${q}`)
   handler = (await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)).default
 } else handler = (await import('../../../api/generate-trip.ts')).default
 const result = await runHandler(handler, f)
+if (result.response) {
+  const states = await assertDemandDelivery(result, f)
+  if (['normal', 'history-coffee', 'related-history', 'related-retry', 'related-refill'].includes(kind)) {
+    assert.ok(states.every(state => Object.values(state).every(value => value === 'satisfied')))
+  }
+}
 const folders = mode !== 'directoryfail' && existsSync(root) ? readdirSync(root) : []
 if (mode === 'directoryfail') assert.equal(readFileSync(root, 'utf8'), 'UNCHANGED')
 const bundles = folders.map(folder => {
@@ -127,5 +138,5 @@ const bundles = folders.map(folder => {
   }
   return { directory, files, data }
 })
-process.stdout.write(JSON.stringify({ mode, kind, result, calls, logs, bundles }))
+process.stdout.write(JSON.stringify({ mode, kind, result, calls, logs, bundles, handlerSourceSha256 }))
 mock.restoreAll(); mock.timers.reset()

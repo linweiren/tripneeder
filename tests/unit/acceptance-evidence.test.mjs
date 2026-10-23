@@ -10,6 +10,7 @@ import { withAcceptanceEvidence, evidenceAiFetch, recordAiModelText, bindEvidenc
   recordEvidenceDelivery, captureAcceptanceDiagnostics, observeEvidenceCall } from '../../api/_lib/trip-acceptance-evidence.ts'
 import { createSupplementRouteContext, createRepairRouteResolver } from '../../api/_lib/trip-supplement-quality.ts'
 import { capturedLinks } from './fixtures/culture-evidence-projection.mjs'
+import { assertWorkingTreeHandler } from './fixtures/demand-delivery-contract.mjs'
 
 const checkoutRevision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
 const replay = (mode, kind = 'normal') => JSON.parse(execFileSync(process.execPath,
@@ -27,6 +28,7 @@ for (const kind of ['normal', 'history-coffee', 'raw-identity', 'retry', 'retry-
   'related-history', 'related-retry', 'related-refill']) {
   test(`actual handler and disk: ${kind}, evidence off/on preserve every event and external request`, () => {
     const baseline = replay('baseline', kind), off = replay('off', kind), on = replay('on', kind)
+    for (const row of [baseline, off, on]) assertWorkingTreeHandler(row)
     assert.deepEqual(off.result, baseline.result)
     assert.deepEqual(off.calls, baseline.calls)
     assert.deepEqual(on.result, off.result)

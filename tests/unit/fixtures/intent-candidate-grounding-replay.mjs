@@ -1,6 +1,8 @@
 import { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { stripTypeScriptTypes } from 'node:module'
 import https from 'node:https'
 import http from 'node:http'
@@ -9,6 +11,7 @@ import tls from 'node:tls'
 import { intentCases, intentGroundingFixture } from './intent-candidate-grounding.mjs'
 import { styleGenerationFixture } from './style-generation.mjs'
 import { mockGeneration, runHandler } from './plan-identity.mjs'
+import { assertIntentDelivery } from './demand-delivery-contract.mjs'
 
 const mode = process.argv[2]
 assert.ok(['before', 'after', 'projection-before', 'duration-before', 'duration-after'].includes(mode))
@@ -16,12 +19,16 @@ Object.assign(process.env, { GOOGLE_PLACES_API_KEY: 'unit-test-only', OPENAI_API
   SUPABASE_URL: 'https://unit-test.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'unit-test-only',
   NODE_ENV: 'production', ENABLE_LOCAL_FALLBACK_REFILL: 'false' })
 let handler
-if (mode === 'before' || mode === 'projection-before' || mode === 'duration-before') {
-  const file = new URL('../../../api/generate-trip.ts', import.meta.url)
-  const ref = mode === 'duration-before' ? '8f47c776' : mode === 'before' ? 'fedd41fc' : '342847c'
-  const source = execFileSync('git', ['show', `${ref}:api/generate-trip.ts`], { encoding: 'utf8' })
+const file = new URL('../../../api/generate-trip.ts', import.meta.url)
+const source = readFileSync(file, 'utf8')
+const handlerSourceSha256 = createHash('sha256').update(source).digest('hex')
+// Both sides execute the current delivery code. Only the historical Prompt or
+// projection under test is substituted; fixed AI bodies keep that variable isolated.
+if (['before', 'projection-before', 'duration-before'].includes(mode)) {
+  const ref = mode === 'duration-before' ? '8f47c776' : '342847c'
   let projectionUrl
   let promptUrl
+  if (mode === 'before') projectionUrl = `data:text/javascript;base64,${Buffer.from("export function buildIntentCandidateGrounding(){return ''}").toString('base64')}`
   if (mode === 'duration-before') {
     const promptFile = new URL('../../../src/services/ai/tripPlanPrompt.ts', import.meta.url)
     const original = execFileSync('git', ['show', `${ref}:src/services/ai/tripPlanPrompt.ts`], { encoding: 'utf8' })
@@ -82,7 +89,8 @@ for (const kind of cases) {
   const result = await runHandler(handler, f)
   assert.equal(result.statusCode, 200, kind)
   assert.ok(result.response?.plans.length, `${kind}: complete final response`)
-  rows.push({ kind, result, calls })
+  await assertIntentDelivery(result, f, kind)
+  rows.push({ kind, result, calls, handlerSourceSha256 })
   mock.restoreAll(); mock.timers.reset()
 }
 process.stdout.write(JSON.stringify(rows))

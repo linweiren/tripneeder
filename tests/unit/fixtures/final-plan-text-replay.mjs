@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { stripTypeScriptTypes } from 'node:module'
+import { createHash } from 'node:crypto'
 import https from 'node:https'
 import http from 'node:http'
 import net from 'node:net'
@@ -11,15 +12,18 @@ import { foodPurposeFixture } from './food-purpose-protection.mjs'
 import { FIXED_NOW, mockMatrix } from './supplement-quality.mjs'
 import { mealReliabilityGenerationFixture } from './meal-reliability.mjs'
 import { mockGeneration, runHandler } from './plan-identity.mjs'
+import { assertDemandDelivery } from './demand-delivery-contract.mjs'
 
 const mode = process.argv[2]
 assert.ok(['before', 'after'].includes(mode))
 Object.assign(process.env, { NODE_ENV: 'production', GOOGLE_PLACES_API_KEY: 'unit-test-only', OPENAI_API_KEY: 'unit-test-only',
   SUPABASE_URL: 'https://unit-test.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'unit-test-only', ENABLE_LOCAL_FALLBACK_REFILL: 'false' })
 const { finalizePlanText } = await import('../../../api/_lib/trip-plan-text-consistency.ts')
+let handlerSourceSha256
 async function implementation(file) {
   const sourceUrl = new URL(`../../../api/${file}`, import.meta.url)
   const source = mode === 'before' ? execFileSync('git', ['show', `19a538d:api/${file}`], { encoding: 'utf8' }) : readFileSync(sourceUrl, 'utf8')
+  if (file === 'generate-trip.ts') handlerSourceSha256 = createHash('sha256').update(source).digest('hex')
   const js = stripTypeScriptTypes(source).replace(/from (['"])([^'"]+)\1/g, (_m, quote, specifier) => {
     const url = specifier.startsWith('.') ? new URL(specifier.replace(/\.js$/, '.ts'), sourceUrl).href : import.meta.resolve(specifier)
     return `from ${quote}${url}${quote}`
@@ -89,8 +93,12 @@ for (const style of ['safe', 'balanced', 'explore']) for (const kind of ['ground
   mock.restoreAll(); mock.timers.reset()
 }
 
+async function generationReplay(general = false) {
 guard()
 const f = mealReliabilityGenerationFixture('sketch-safe')
+// Preserve the original culture+coffee scenario, plus the general control whose
+// text should still change only when it references a replaced identity.
+if (general) { f.input.category = 'explore'; f.input.customCategory = '' }
 const cafe = f.candidates.allCandidates.find(c => c.type === 'food')
 cafe.name = '草圖咖啡'
 for (const p of f.plans) {
@@ -105,7 +113,11 @@ mockGeneration({ mock }, f, f.aiPlans)
 const generationCalls = record(), generation = await runHandler(api.default, f)
 assert.equal(generation.statusCode, 200)
 assert.ok(generation.response)
+if (mode === 'after') await assertDemandDelivery(generation, f)
 mock.restoreAll(); mock.timers.reset()
+return { generation, generationCalls, input: f.input }
+}
+const mixed = await generationReplay(), general = await generationReplay(true)
 
 const detailRows = []
 for (const kind of ['merged-main', 'removed-rain']) {
@@ -132,4 +144,4 @@ for (const kind of ['merged-main', 'removed-rain']) {
   detailRows.push({ kind, plan: response.body.plan, calls })
   mock.restoreAll(); mock.timers.reset()
 }
-process.stdout.write(JSON.stringify({ rows, generation, generationCalls, detailRows }))
+process.stdout.write(JSON.stringify({ rows, ...mixed, general, detailRows, handlerSourceSha256 }))
