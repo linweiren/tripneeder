@@ -1,5 +1,5 @@
 
-import { matchForecastPeriod } from './_lib/weather-parsing'
+import { matchForecastPeriod } from './_lib/weather-parsing.js'
 import { consumeApiRateLimit, getRequestClientKey } from './_lib/request-guards.js'
 
 type VercelRequest = {

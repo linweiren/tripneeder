@@ -36,6 +36,7 @@ export type CurrentWeather = {
   windDirection: number | null
   windSpeed: number | null
   forecast: WeatherForecastPeriod[]
+  forecastError?: string | null
   airQuality: AirQualityReading | null
   airQualityError: string | null
 }

@@ -248,7 +248,7 @@ export default function CurrentWeatherDashboard({ userId }: CurrentWeatherDashbo
                 </li>
               ))}
             </ol>
-          ) : <p className="current-weather-message">目前沒有可顯示的短時預報。</p>}
+          ) : <p className="current-weather-message">{weather.forecastError || '目前沒有可顯示的短時預報。'}</p>}
           <p className="current-weather-source">
             天氣觀測：{[weather.countyName, weather.townName].filter(Boolean).join('')}{weather.stationName}測站・距離 {weather.distanceKm} 公里
             {weather.observedAt ? `・觀測 ${formatObservedAt(weather.observedAt)}` : ''}

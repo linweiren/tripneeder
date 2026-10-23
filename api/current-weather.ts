@@ -64,6 +64,8 @@ type CwaForecastLocation = {
 
 type CwaForecastResponse = {
   success?: string
+  result?: { resource_id?: string; fields?: unknown[] }
+  error?: { code?: string; message?: string }
   records?: { Locations?: Array<{ LocationsName?: string; CountyName?: string; Location?: CwaForecastLocation[] }> }
 }
 
@@ -155,9 +157,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const station = nearest.station
     const elements = station.WeatherElement
     const forecastCity = city || station.GeoInfo?.CountyName || ''
+    let forecastError: string | null = null
     const [forecast, airQualityResult] = await Promise.all([
       getForecast(apiKey, lat, lng, forecastCity).catch((error) => {
         console.error('CWA forecast error:', error)
+        forecastError = '中央氣象署短時預報暫時無法取得，請稍後再試。'
         return []
       }),
       getAirQuality(lat, lng).then((airQuality) => ({ airQuality, error: null as string | null })).catch((error) => {
@@ -181,6 +185,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       windDirection: parseNumber(elements?.WindDirection),
       windSpeed: parseNumber(elements?.WindSpeed),
       forecast,
+      forecastError,
       airQuality: airQualityResult.airQuality,
       airQualityError: airQualityResult.error,
     })
@@ -206,7 +211,9 @@ async function getForecast(apiKey: string, lat: number, lng: number, city: strin
   const countyLocations = normalizedCity
     ? locations.filter((location) => normalizeCwaCounty(location.CountyName ?? '') === normalizedCity)
     : locations
-  if (normalizedCity && countyLocations.length === 0) return []
+  // Reverse-geocoded city names can include prefixes or use aliases that do not
+  // exactly match CWA. Fall back to coordinates so a naming mismatch does not
+  // hide an otherwise available nearby township forecast.
   const nearest = (countyLocations.length ? countyLocations : locations)
     .map((location) => ({
       location,
@@ -323,6 +330,10 @@ async function fetchForecastLocations(apiKey: string) {
   )
   if (!response.ok) throw new Error(`CWA forecast HTTP status: ${response.status}`)
   const data = (await response.json()) as CwaForecastResponse
+  if (data.success !== 'true') {
+    const detail = data.error?.message ?? 'CWA rejected the forecast request'
+    throw new Error(`CWA forecast API error (${data.error?.code ?? 'unknown'}): ${detail}`)
+  }
   return data.records?.Locations?.flatMap((group) => (group.Location ?? []).map((location) => ({
     ...location,
     CountyName: group.LocationsName ?? group.CountyName ?? location.CountyName,
