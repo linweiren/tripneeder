@@ -31,6 +31,7 @@ import duration6hIcon from '../assets/mascot/6h.webp'
 import duration10hIcon from '../assets/mascot/10h.webp'
 import calendarIcon from '../assets/mascot/日曆.png'
 import CurrentWeatherDashboard from '../components/CurrentWeatherDashboard'
+import { reverseGeocodeLocationName } from '../services/geocoding'
 
 const categoryOptions: Array<{ value: TripCategory; label: string }> = [
   { value: 'date', label: '約會' },
@@ -423,6 +424,7 @@ export function HomePage() {
         ...current,
         location: {
           ...current.location,
+          name: '',
           lat,
           lng,
         },
@@ -463,16 +465,10 @@ export function HomePage() {
 
     void (async () => {
       try {
-        const response = await fetch('/api/geocode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lng }),
-        })
-        const data = (await response.json()) as { name?: string }
+        if (reverseGeocodeRequestId.current !== requestId) return
+        const resolvedName = await reverseGeocodeLocationName(lat, lng)
 
         if (reverseGeocodeRequestId.current !== requestId) return
-
-        const resolvedName = data.name?.trim()
 
         if (resolvedName) {
           setInput((current) => {

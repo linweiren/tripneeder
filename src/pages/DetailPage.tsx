@@ -182,6 +182,7 @@ export function DetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [communityShareId, detailRecordId, hasLocalDetailPlan, planId])
   const [selectedPlan, setSelectedPlan] = useState(initialSelectedPlan)
+  const selectedPlanIdentityRef = useRef(`${detailSource}:${detailRecordId ?? planId ?? ''}:${planId ?? ''}`)
   const weatherLocation = getWeatherCity(
     lastInput?.location.name,
     selectedPlan?.stops.map((stop) => stop.address),
@@ -521,11 +522,23 @@ export function DetailPage() {
     const nextStoredDetailPlan = loadPlanForDetail(planId, communityShareId ?? undefined)
     const nextGeneratedPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
     const nextSelectedPlan = hasLocalDetailPlan ? nextStoredDetailPlan : nextGeneratedPlan
+    const nextIdentity = `${detailSource}:${detailRecordId ?? planId ?? ''}:${planId ?? ''}`
+    const identityChanged = selectedPlanIdentityRef.current !== nextIdentity
+    if (identityChanged) {
+      selectedPlanIdentityRef.current = nextIdentity
+      setIsRainMode(false)
+      setStopOrders({})
+      setTransportModeOverrides({})
+      setSegmentModeOverrides({})
+      setCandidates([])
+      setReplacingStopId(null)
+    }
 
     // Only replace the selectedPlan reference when the meaningful state changes;
     // otherwise the detail-completion useEffect will see a new selectedPlan ref
     // on mount and abort its own fetch before the response arrives.
     setSelectedPlan((prev) => {
+      if (identityChanged) return nextSelectedPlan
       if (!nextSelectedPlan) return nextSelectedPlan
       if (!prev) return nextSelectedPlan
       if (
@@ -536,7 +549,7 @@ export function DetailPage() {
       }
       return nextSelectedPlan
     })
-  }, [communityShareId, hasLocalDetailPlan, planId])
+  }, [communityShareId, detailRecordId, detailSource, hasLocalDetailPlan, planId])
 
   // Ensure a detail-completion fetch is running for this plan. The fetch is
   // owned by the AnalysisSession context so it keeps running even if the user

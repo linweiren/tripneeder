@@ -33,7 +33,7 @@ import {
 import { loadServerPreferenceProfile } from './_lib/server-personalization-profile.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
 import { verifySupabaseAccessToken } from './_lib/auth.js'
-import { consumeApiRateLimit, getRequestClientKey, isFiniteCoordinate, isJsonWithinLimit, isRecord } from './_lib/request-guards.js'
+import { consumeApiRateLimit, getCoordinateBias, getRequestClientKey, hasValidCoordinatePair, isFiniteCoordinate, isJsonWithinLimit, isRecord, isValidTripLocation } from './_lib/request-guards.js'
 import {
   PLAN_IDS,
   TIMELINE_START_GRANULARITY_MINUTES,
@@ -245,7 +245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
   let locationWarning = ''
   if (
-    (!request.input.location.lat || !request.input.location.lng) &&
+    !hasValidCoordinatePair(request.input.location.lat, request.input.location.lng) &&
     request.input.location.name
   ) {
     console.debug('[trip-location-source]', {
@@ -272,7 +272,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const preferenceProfile = await loadServerPreferenceProfile(supabase, userId)
 
   // 9D-7: 智慧前置搜尋 (Search-Inject)
-  if (!request.input.location.lat || !request.input.location.lng) {
+  if (!hasValidCoordinatePair(request.input.location.lat, request.input.location.lng)) {
     console.debug('[trip-location-source]', {
       at: new Date().toISOString(),
       source: 'fallback blocked',
@@ -315,8 +315,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
   if (
-    request.input.location.lat &&
-    request.input.location.lng &&
+    hasValidCoordinatePair(request.input.location.lat, request.input.location.lng) &&
     nearbyPlaceCandidates.firstStopCandidates.length === 0
   ) {
     const message = '目前起點 2 公里內沒有可驗證且營業時間已知的第一站候選，系統不會改用遠方地點硬湊方案。請調整起點、開始時間或拉長行程後再試。'
@@ -425,9 +424,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const plans = extractor.push(delta)
 
         for (const plan of plans) {
-          const bias = request.input.location.lat && request.input.location.lng
-            ? { lat: request.input.location.lat, lng: request.input.location.lng }
-            : undefined
+          const bias = getCoordinateBias(request.input.location.lat, request.input.location.lng)
 
           const groundedPlan = applyCandidateGroundingToPlan(
             plan as TripPlan,
@@ -468,9 +465,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const plans = extractor.push(delta)
 
         for (const plan of plans) {
-          const bias = request.input.location.lat && request.input.location.lng
-            ? { lat: request.input.location.lat, lng: request.input.location.lng }
-            : undefined
+          const bias = getCoordinateBias(request.input.location.lat, request.input.location.lng)
 
           const groundedPlan = applyCandidateGroundingToPlan(
             plan as TripPlan,
@@ -532,9 +527,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       candidateDebugSession?.recordAiOutput(finalResponse.plans, 'initial-ai-output')
 
       for (const plan of finalResponse.plans) {
-        const bias = request.input.location.lat && request.input.location.lng
-          ? { lat: request.input.location.lat, lng: request.input.location.lng }
-          : undefined
+        const bias = getCoordinateBias(request.input.location.lat, request.input.location.lng)
         const groundedPlan = applyCandidateGroundingToPlan(
           plan as TripPlan,
           nearbyPlaceCandidates,
@@ -609,9 +602,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             for (const plan of retryParsed.plans) {
               if (invalidPlanIds.includes(plan.id)) {
-                const bias = request.input.location.lat && request.input.location.lng
-                  ? { lat: request.input.location.lat, lng: request.input.location.lng }
-                  : undefined
+                const bias = getCoordinateBias(request.input.location.lat, request.input.location.lng)
                 const groundedPlan = applyCandidateGroundingToPlan(
                   plan as TripPlan,
                   nearbyPlaceCandidates,
@@ -753,9 +744,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   missingPlanId,
                 )
 
-                const bias = request.input.location.lat && request.input.location.lng
-                  ? { lat: request.input.location.lat, lng: request.input.location.lng }
-                  : undefined
+                const bias = getCoordinateBias(request.input.location.lat, request.input.location.lng)
                 const groundedPlan = applyCandidateGroundingToPlan(
                   normalizedRetryPlan,
                   nearbyPlaceCandidates,
@@ -3757,13 +3746,12 @@ function parseRequestBody(body: unknown): GenerateTripPlansRequest | null {
 
   const input = body.input
   const location = input.location
-  if (!isRecord(location) || typeof location.name !== 'string' || location.name.trim().length === 0 || location.name.length > 200 ||
+  if (!isValidTripLocation(location) ||
     typeof input.startTime !== 'string' || input.startTime.length > 10 ||
     typeof input.endTime !== 'string' || input.endTime.length > 10 ||
     !Array.isArray(input.tags) || input.tags.length > 10 || !input.tags.every((tag) => typeof tag === 'string' && tag.length <= 40) ||
     (location.lat !== undefined && !isFiniteCoordinate(location.lat, -90, 90)) ||
-    (location.lng !== undefined && !isFiniteCoordinate(location.lng, -180, 180)) ||
-    ((location.lat === undefined) !== (location.lng === undefined))) return null
+    (location.lng !== undefined && !isFiniteCoordinate(location.lng, -180, 180))) return null
 
   return body as GenerateTripPlansRequest
 }

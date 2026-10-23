@@ -25,7 +25,7 @@ import {
 } from './_lib/google-places.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
 import { verifySupabaseAccessToken } from './_lib/auth.js'
-import { consumeApiRateLimit, getRequestClientKey, isFiniteCoordinate, isJsonWithinLimit, isRecord } from './_lib/request-guards.js'
+import { consumeApiRateLimit, getCoordinateBias, getRequestClientKey, hasValidCoordinatePair, isFiniteCoordinate, isJsonWithinLimit, isRecord, isValidTripLocation } from './_lib/request-guards.js'
 
 type VercelRequest = {
   method?: string
@@ -126,7 +126,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
     let locationWarning = ''
     if (
-      (!request.input.location.lat || !request.input.location.lng) &&
+      !hasValidCoordinatePair(request.input.location.lat, request.input.location.lng) &&
       request.input.location.name
     ) {
       const resolved = await resolveLocation(request.input.location.name)
@@ -261,9 +261,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
 
     // 同時對其餘景點（包含雨天備案）進行一次性的 Places 驗證
-    const bias = request.input.location.lat && request.input.location.lng
-      ? { lat: request.input.location.lat, lng: request.input.location.lng }
-      : undefined
+    const bias = getCoordinateBias(request.input.location.lat, request.input.location.lng)
     const stableDetailedPlan = preserveMainStopIdentity(detailedPlan, request.plan)
     const stablePlan = await validateRainBackupWithPlaces(
       stableDetailedPlan,
@@ -984,7 +982,7 @@ function isValidTripDetailsBody(body: unknown): body is { input: TripInput; plan
   const input = body.input
   const location = input.location
   const plan = body.plan
-  if (!isRecord(location) || typeof location.name !== 'string' || location.name.length > 200 ||
+  if (!isValidTripLocation(location) ||
     typeof input.startTime !== 'string' || input.startTime.length > 10 ||
     typeof input.endTime !== 'string' || input.endTime.length > 10 ||
     !Array.isArray(input.tags) || input.tags.length > 10 ||
@@ -994,8 +992,7 @@ function isValidTripDetailsBody(body: unknown): body is { input: TripInput; plan
     (plan.rainBackup !== undefined && (!Array.isArray(plan.rainBackup) || plan.rainBackup.length > 20 || !plan.rainBackup.every(isValidDetailStop))) ||
     typeof plan.id !== 'string' || plan.id.length > 100 || typeof plan.title !== 'string' || plan.title.length > 300) return false
   if ((location.lat !== undefined && !isFiniteCoordinate(location.lat, -90, 90)) ||
-    (location.lng !== undefined && !isFiniteCoordinate(location.lng, -180, 180)) ||
-    ((location.lat === undefined) !== (location.lng === undefined))) return false
+    (location.lng !== undefined && !isFiniteCoordinate(location.lng, -180, 180))) return false
   return true
 }
 

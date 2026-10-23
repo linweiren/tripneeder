@@ -37,6 +37,25 @@ test('feed validation drops malformed records and duplicate ids', () => {
   assert.equal(result[0].input, null)
 })
 
+test('feed rejects malformed optional googleTypes instead of throwing', () => {
+  const baseRow = { id: 'share-types', plan: { ...plan, isDetailComplete: true, rainBackup: [{ id: 'rain', name: 'Rain', type: 'food', duration: 30 }] }, author_display_name: 'Traveler', created_at: '2026-10-21', like_count: 0, comment_count: 0, view_count: 0, tags: [] }
+  assert.deepEqual(deduplicateAndValidateSharedTrips([{ ...baseRow, plan: { ...baseRow.plan, stops: [{ ...baseRow.plan.stops[0], googleTypes: { unexpected: true } }] } }]), [])
+  assert.equal(deduplicateAndValidateSharedTrips([{ ...baseRow, plan: { ...baseRow.plan, stops: [{ ...baseRow.plan.stops[0], googleTypes: ['cafe'] }] } }]).length, 1)
+})
+
+test('public plan keeps validated transit segment timing', () => {
+  const twoStopPlan = {
+    ...plan,
+    stops: [plan.stops[0], { ...plan.stops[0], id: 's2', name: 'Park' }],
+    rainBackup: [{ id: 'rain', name: 'Rain', type: 'food', duration: 30 }],
+    transportSegments: [{ fromStopId: 's1', toStopId: 's2', mode: 'car', duration: 17, label: 'Driving' }],
+  }
+  const safe = sanitizeSharedPlan(twoStopPlan)
+  assert.deepEqual(safe.transportSegments, [{ fromStopId: 'shared-main-1', toStopId: 'shared-main-2', mode: 'car', publicTransitType: undefined, duration: 17, label: '開車' }])
+  assert.equal(isShareablePlan({ ...twoStopPlan, isDetailComplete: true }), true)
+  assert.equal(isShareablePlan({ ...twoStopPlan, isDetailComplete: true, transportSegments: [{ mode: 'car', duration: 17 }] }), false)
+})
+
 test('public plan removes original private trip input and origin fields', () => {
   const safe = sanitizeSharedPlan({ ...plan, input: { tags: ['private'] }, origin: { lat: 25, lng: 121 } })
   assert.equal(JSON.stringify(safe).includes('private'), false)

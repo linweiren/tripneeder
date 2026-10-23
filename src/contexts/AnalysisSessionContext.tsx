@@ -434,7 +434,7 @@ function getPlanDetailStateKey(
 ) {
   return source === 'generated'
     ? `generated:${planId}`
-    : `${source}:${recordId ?? planId}`
+    : `${source}:${recordId ?? planId}:${planId}`
 }
 
 async function getSessionAuth() {
