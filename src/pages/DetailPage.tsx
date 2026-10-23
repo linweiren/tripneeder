@@ -2081,15 +2081,14 @@ function getVerifiedMapsUrl(stop: Stop) {
     return `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(stop.placeId)}`
   }
 
-  return null
+  const query = (stop.address || stop.name).trim()
+  return query
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`
+    : null
 }
 
 function getVerifiedDirectionsUrl(stop: Stop, mode: TransportMode) {
-  if (!stop.placeId) {
-    return null
-  }
-
-  return buildDirectionsUrl(stop, mode)
+  return (stop.address || stop.name).trim() ? buildDirectionsUrl(stop, mode) : null
 }
 
 function getStopId(stop: Stop | undefined, index: number) {

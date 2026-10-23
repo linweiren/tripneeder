@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, CalendarDays, Clock3, Heart, MessageCircle, Share2, Wallet } from 'lucide-react'
+import { ArrowLeft, CalendarDays, Clock3, Heart, MapPinned, MessageCircle, Share2, Wallet } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/auth'
 import { useDialog } from '../contexts/dialog'
@@ -261,18 +261,38 @@ function SharedTripCard({ trip, onLike, pending, onOpen }: {
   const { plan } = trip
   const date = new Intl.DateTimeFormat('zh-TW', { month: 'long', day: 'numeric' }).format(new Date(trip.created_at))
   return (
-    <article className="community-trip-card">
-      <div className="community-trip-topline"><span className="community-trip-category">旅人行程</span><time>{date}</time></div>
-      <h2>{plan.title}</h2>
-      <p className="community-trip-subtitle">{plan.subtitle || plan.summary}</p>
-      <div className="community-author-row"><span>分享人 <strong>{trip.author_display_name}</strong></span></div>
-      <div className="community-trip-meta"><span>{plan.stops.length} 個行程地點</span><span>約 NT$ {plan.budget.toLocaleString('zh-TW')}</span><span><MessageCircle size={15} />討論熱度 {getDiscussionHeat(trip)}</span></div>
+    <article
+      className="stored-trip-card history-card community-trip-card"
+      role="link"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onOpen()
+        }
+      }}
+    >
+      <div className="history-card-head">
+        <span className="plan-type history-card-tag">旅人行程</span>
+        <time className="community-trip-date">{date}</time>
+      </div>
+      <div className="stored-trip-main history-card-main">
+        <h2>{plan.title}</h2>
+        {plan.subtitle || plan.summary ? <p className="community-trip-subtitle">{plan.subtitle || plan.summary}</p> : null}
+        <p className="community-author-row">分享人 <strong>{trip.author_display_name}</strong></p>
+      </div>
+      <dl className="stored-trip-metrics history-info-grid community-trip-metrics">
+        <div className="history-info-item"><span className="history-info-icon"><MapPinned aria-hidden="true" /></span><dt>行程地點</dt><dd>{plan.stops.length} 個</dd></div>
+        <div className="history-info-item"><span className="history-info-icon"><Wallet aria-hidden="true" /></span><dt>預算</dt><dd>約 NT$ {plan.budget.toLocaleString('zh-TW')}</dd></div>
+        <div className="history-info-item"><span className="history-info-icon"><MessageCircle aria-hidden="true" /></span><dt>討論</dt><dd>{trip.comment_count} 則</dd></div>
+        <div className="history-info-item"><span className="history-info-icon"><Heart aria-hidden="true" /></span><dt>喜歡</dt><dd>{trip.like_count} 次</dd></div>
+      </dl>
       {(trip.tags ?? []).length > 0 ? <div className="community-trip-tags">{trip.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div> : null}
-      <footer className="community-trip-actions">
+      <footer className="community-trip-actions" onClick={(event) => event.stopPropagation()}>
         <button className={`community-like-button${trip.liked_by_me ? ' community-like-active' : ''}`} type="button" onClick={onLike} disabled={pending || trip.is_owner} aria-pressed={trip.liked_by_me}><Heart size={18} fill={trip.liked_by_me ? 'currentColor' : 'none'} />{pending ? '處理中…' : trip.is_owner ? '自己的分享' : trip.liked_by_me ? '已喜歡' : '喜歡'}・{trip.like_count}</button>
-        <span className="community-stat"><MessageCircle size={16} />{trip.comment_count} 則討論</span>
         <span className="community-stat">{trip.view_count} 次瀏覽</span>
-        <button className="community-detail-button" type="button" onClick={onOpen}>查看行程與討論</button>
       </footer>
     </article>
   )

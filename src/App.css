@@ -6635,26 +6635,24 @@
 .community-empty h2 { color: #3b5548; }
 .community-list { display: grid; gap: 1rem; }
 
-.community-trip-card {
-  padding: clamp(1.2rem, 4vw, 1.8rem);
-  border: 1px solid rgba(82, 112, 92, 0.15);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 14px 35px rgba(48, 69, 54, 0.07);
-}
+.community-trip-card { gap: 7px; padding: 12px 15px; cursor: pointer; }
 
-.community-trip-topline,
 .community-trip-actions { justify-content: space-between; gap: 0.8rem; }
-.community-trip-topline { color: #8a958e; font-size: 0.86rem; }
-.community-trip-category { color: #518064; font-weight: 800; }
-.community-trip-card h2 { margin: 0.9rem 0 0.35rem; color: #2d4c3e; font-size: 1.5rem; }
-.community-trip-subtitle { color: #63736a; line-height: 1.7; }
-.community-author-row { gap: 0.6rem; margin: 1rem 0; color: #66766c; }
+.community-trip-date { color: #718078; font-size: 0.86rem; }
+.community-trip-card .stored-trip-main { gap: 4px; }
+.community-trip-card .stored-trip-main h2 { color: #2f3d2d; font-size: clamp(20px, 5vw, 24px); }
+.community-trip-subtitle { margin: 0; color: #63736a; line-height: 1.45; }
+.community-author-row { margin: 0; color: #66766c; }
+.community-trip-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding-top: 8px; }
+.community-trip-metrics .history-info-item { min-height: 40px; grid-template-columns: 23px minmax(0, 1fr); column-gap: 5px; padding: 5px 7px; }
+.community-trip-metrics .history-info-icon { width: 23px; height: 23px; }
+.community-trip-metrics .history-info-icon svg { width: 15px; height: 15px; }
+.community-trip-metrics dt { font-size: 11px; }
+.community-trip-metrics dd { font-size: 13px; }
+.community-trip-tags { margin: 0; }
 .community-avatar { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: #e4efe3; color: #3f7151; font-weight: 800; }
 .community-author-row strong { color: #3e5948; }
-.community-trip-meta { display: flex; flex-wrap: wrap; gap: 0.7rem 1.1rem; padding: 0.85rem 0; border-top: 1px solid #edf0eb; border-bottom: 1px solid #edf0eb; color: #6b7b71; font-size: 0.9rem; }
-.community-trip-meta span { gap: 0.35rem; }
-.community-trip-actions { justify-content: flex-start; flex-wrap: wrap; margin-top: 1rem; }
+.community-trip-actions { justify-content: flex-start; flex-wrap: wrap; margin-top: 0.25rem; }
 .community-like-button { display: inline-flex; align-items: center; gap: 0.45rem; }
 .community-like-active { border-color: #e5aaa8; background: #fff0ef; color: #b6535b; }
 .community-like-button:disabled { opacity: 0.65; cursor: wait; }
@@ -6663,8 +6661,8 @@
 @media (max-width: 560px) {
   .community-page { width: min(100% - 1.1rem, 860px); }
   .community-reward-note { align-items: flex-start; line-height: 1.45; }
-  .community-trip-meta { display: grid; }
   .history-card-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .community-trip-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .community-hero-actions { display: flex; flex-wrap: wrap; gap: 0.7rem; margin-top: 1.2rem; }
