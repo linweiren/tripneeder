@@ -6,6 +6,7 @@ import type { TripPlan, Stop, TripInput } from '../../src/types/trip.js'
 import type { GenerateTripPlansRequest, Persona } from '../../src/services/ai/types.js'
 import type { PreferenceProfile } from '../../src/services/personalization/preferenceProfile.js'
 import { getMealSuitability } from '../../src/services/ai/mealSuitability.js'
+import { CANDIDATE_TYPES_PROMPT_GUIDANCE, getCandidateTypesPromptEvidence } from './candidate-types-prompt-evidence.js'
 import { resolveCandidateRankingContext, type CandidateRankingContext } from './candidate-ranking-context.js'
 import { getRequiredMealWindows } from './trip-planning-rules.js'
 import {
@@ -897,6 +898,9 @@ export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): 
     sections.push(['MAIN_ACTIVITY_CANDIDATES:', ...fallbackStops].join('\n'))
   }
 
+  if (selection.promptCandidates.some(candidate => getCandidateTypesPromptEvidence(candidate.types).length)) {
+    sections.push(CANDIDATE_TYPES_PROMPT_GUIDANCE)
+  }
   return sections.join('\n\n')
 }
 
@@ -1543,8 +1547,10 @@ function formatCandidateForPrompt(
       ? `, types="${candidate.types.join(',')}"`
       : ''
   const rainyText = options.rainBackup ? ', indoor=true, rainySuitable=true' : ''
+  const evidenceTypes = options.rainBackup ? [] : getCandidateTypesPromptEvidence(candidate.types)
+  const evidenceText = evidenceTypes.length ? `, placeTypes="${evidenceTypes.join(',')}"` : ''
 
-  return `- name="${candidate.name}", address="${candidate.address}", placeId="${candidate.placeId}"${distanceText}${ratingText}${roleText}${foodSubtypeText}${mealSuitabilityText}${scoreText}${hoursText}${slotsText}${typesText}${rainyText}`
+  return `- name="${candidate.name}", address="${candidate.address}", placeId="${candidate.placeId}"${distanceText}${ratingText}${roleText}${foodSubtypeText}${mealSuitabilityText}${scoreText}${hoursText}${slotsText}${typesText}${rainyText}${evidenceText}`
 }
 
 function buildTripWindow(input: TripInput) {

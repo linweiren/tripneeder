@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events'
 import { resolveCandidateRankingContext } from '../../../api/_lib/candidate-ranking-context.ts'
 import { getMealSuitability } from '../../../src/services/ai/mealSuitability.ts'
 import { buildTripPrompt } from '../../../src/services/ai/tripPlanPrompt.ts'
+import { legacyComparableCandidatePrompt } from './candidate-types-prompt-contract.mjs'
 
 export const searchFixture = JSON.parse(readFileSync(new URL('./context-aware-search.json', import.meta.url), 'utf8'))
 
@@ -67,7 +68,9 @@ export function priorSearchExperiment(api, input, persona) {
 
 export function searchSummary(api, pool, input) {
   const selection = api.getPromptCandidateSelection(pool)
-  const block = api.formatNearbyRecommendations(pool)
+  // Frozen Search snapshots compare legacy text/lengths after checking the additions.
+  // Current unnormalized Prompt lengths have a separate persistent regression test.
+  const block = legacyComparableCandidatePrompt(api, pool)
   const uses = candidates => ({
     culture: candidates.filter(c => api.hasConfirmedCulturalPrimaryPurpose(c)).length,
     cafe: candidates.filter(c => c.role === 'food' && c.foodSubtype === 'cafe').length,

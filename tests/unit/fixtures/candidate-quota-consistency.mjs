@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { stripTypeScriptTypes } from 'node:module'
 import { classificationInput, classificationPlace, CLASSIFICATION_NOW } from './candidate-classification.mjs'
 import { buildTripPrompt } from '../../../src/services/ai/tripPlanPrompt.ts'
+import { legacyComparableCandidatePrompt } from './candidate-types-prompt-contract.mjs'
 
 export async function loadQuotaBaseline() {
   const original = execFileSync('git', ['show', '5cf6aaf:api/_lib/google-places.ts'],
@@ -112,7 +113,9 @@ export function quotaSummary(api, pool, input) {
     counts[key]++
     return counts
   }, { confirmedCulture: 0, food: 0, other: 0 })
-  const candidateBlock = api.formatNearbyRecommendations(pool)
+  // Validate new evidence, then retain the original snapshot's text/length contract.
+  // Raw current Prompt growth is covered by candidate-types-prompt-evidence.test.mjs.
+  const candidateBlock = legacyComparableCandidatePrompt(api, pool)
   return { promptCount: ids.size, promptCharacters: candidateBlock.length,
     aiPromptCharacters: buildTripPrompt(input, undefined, candidateBlock).length,
     uses, groups: Object.fromEntries(['nearStops', 'foodStops', 'mainStops', 'fallbackStops'].map(k => [k, selection[k].map(c => c.placeId)])),
