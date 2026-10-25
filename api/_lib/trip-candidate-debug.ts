@@ -1,4 +1,5 @@
 /// <reference types="node" />
+import { getCoverageShadow, getDurationTrace } from './trip-coverage-v2.js'
 
 import { appendFileSync } from 'node:fs'
 import { captureAcceptanceDiagnostics } from './trip-acceptance-evidence.js'
@@ -68,6 +69,7 @@ type DebugStop = {
 }
 
 export class TripCandidateDebugSession implements CandidateSearchDebugSink {
+  private readonly coverageV2: Array<{ planId: string; shadow: ReturnType<typeof getCoverageShadow> }> = []
   private readonly quality: TripQualityDiagnostics
   private readonly createdAt = new Date().toISOString()
   private readonly input: TripInput
@@ -91,6 +93,10 @@ export class TripCandidateDebugSession implements CandidateSearchDebugSink {
   constructor(input: TripInput) {
     this.input = input
     this.quality = new TripQualityDiagnostics(input)
+  }
+
+  recordCoverageV2(plan: TripPlan) {
+    this.coverageV2.push({ planId: plan.id, shadow: getCoverageShadow(plan) })
   }
 
   beginRepairAttempt(plan: TripPlan, phase: string) {
@@ -211,6 +217,8 @@ export class TripCandidateDebugSession implements CandidateSearchDebugSink {
       createdAt: this.createdAt,
       outcome,
       qualityDiagnostics: this.quality.buildReport(finalPlans),
+      coverageV2: { attempts: this.coverageV2, final: finalPlans.map(plan => ({ planId: plan.id,
+        shadow: getCoverageShadow(plan), stops: plan.stops.map(stop => ({ stopId: stop.id, ...getDurationTrace(stop) })) })) },
       input: {
         location: { ...this.input.location },
         startTime: this.input.startTime,

@@ -1,3 +1,4 @@
+import { traceDurationPlan } from './trip-coverage-v2.js'
 import type { Stop, TripPlan } from '../../src/types/trip.js'
 import { carryEvidencePlan } from './trip-acceptance-evidence.js'
 import { getTripPlanStyleLabel } from '../../src/services/ai/tripPlanIdentity.js'
@@ -11,6 +12,7 @@ const places = (plan: TripPlan) => [...(plan.stops ?? []), ...(plan.rainBackup ?
 export function rememberPlanTextTransition<T extends TripPlan>(source: TripPlan, target: T,
   ...selectedStages: readonly (TripPlan | readonly Stop[])[]): T {
   carryEvidencePlan(source, target)
+  traceDurationPlan(source, target)
   const history = new Map<string, NamedPlace>()
   for (const stage of [source, ...selectedStages, target]) {
     const isPlan = 'stops' in stage

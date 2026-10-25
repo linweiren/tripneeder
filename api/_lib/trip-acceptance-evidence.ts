@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { projectCoverageDiagnostics } from './trip-coverage-diagnostics-projection.js'
 
 type Service = 'ai' | 'places_search' | 'places_details' | 'geocoding' | 'routes' | 'supabase'
 type Stage = 'initial' | 'initial_json_repair' | 'retry' | 'refill'
@@ -245,12 +246,15 @@ export function captureAcceptanceDiagnostics(report: unknown) {
     const raw = object(report), queries = object(raw.queryLayer), quality = object(raw.qualityDiagnostics)
     const pick = (value: Record<string, any>, keys: string[]) => Object.fromEntries(keys
       .filter(key => value[key] !== undefined).map(key => [key, value[key]]))
+    const coverageV2 = raw.coverageV2 === undefined ? undefined : projectCoverageDiagnostics(raw.coverageV2)
+    if (coverageV2?.projection.incomplete) c.incomplete.add('coverage_v2_projection_incomplete')
     c.diagnostics = {
       ...pick(raw, ['version', 'createdAt', 'outcome', 'candidatePool', 'aiInput', 'aiOutput', 'resultLayer', 'diversity']),
       input: { ...pick(object(raw.input), ['startTime', 'endTime', 'modes']),
         location: { name: short(object(object(raw.input).location).name),
           lat: number(object(object(raw.input).location).lat), lng: number(object(object(raw.input).location).lng) } },
       qualityDiagnostics: pick(quality, ['version', 'intent', 'candidateThemes', 'stages', 'transitions', 'earliestVisible', 'final', 'limitations']),
+      ...(coverageV2 === undefined ? {} : { coverageV2 }),
       queryLayer: { ...pick(queries, ['rawPlacesReturnedAcrossQueries', 'finalUniqueRawCandidateCount']),
         batches: (Array.isArray(queries.batches) ? queries.batches : []).map((value: unknown) => ({
           ...pick(object(value), ['phase', 'requestedQueryCount', 'queryLimit', 'truncated']),

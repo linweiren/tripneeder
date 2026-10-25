@@ -1,4 +1,5 @@
 /// <reference types="node" />
+import { recordCoverageSearch, type SearchObservation } from './trip-coverage-v2.js'
 
 import https from 'node:https'
 import { observeGoogleEvidenceCall, recordEvidenceCache } from './trip-acceptance-evidence.js'
@@ -328,7 +329,20 @@ export async function getNearbyPlaceCandidates(
   debugSink?: CandidateSearchDebugSink,
   options: CandidatePersonalizationOptions = {},
 ): Promise<NearbyPlaceCandidates> {
+  const observations: SearchObservation[] = []
+  const pool = await getNearbyPlaceCandidatesCore(request, debugSink, options, observations)
+  recordCoverageSearch(pool, observations)
+  return pool
+}
+
+async function getNearbyPlaceCandidatesCore(
+  request: GenerateTripPlansRequest,
+  debugSink: CandidateSearchDebugSink | undefined,
+  options: CandidatePersonalizationOptions,
+  observations: SearchObservation[],
+): Promise<NearbyPlaceCandidates> {
   if (!GOOGLE_PLACES_API_KEY) {
+    observations.push({ stage: 'initial', query: '', radiusMeters: 0, status: 'unavailable', count: 0 })
     return { firstStopCandidates: [], otherCandidates: [], allCandidates: [] }
   }
 
@@ -350,6 +364,7 @@ export async function getNearbyPlaceCandidates(
       maxResultCount: 20,
       radiusMeters: radius,
       cacheResults: stage !== 'supplement',
+      onOutcome: (status, count, placeIds) => observations.push({ stage, query, radiusMeters: radius, status, count, placeIds }),
     })
   }
   debugSink?.recordQueryPlan({ phase: 'initial', ...queryPlan })
@@ -2160,42 +2175,50 @@ async function searchPlaces(
     maxResultCount?: number
     radiusMeters?: number
     cacheResults?: boolean
+    onOutcome?: (status: 'succeeded' | 'failed', count: number, placeIds?: string[]) => void
   } = {},
 ): Promise<GooglePlace[]> {
   if (!GOOGLE_PLACES_API_KEY) return []
 
-  const response = await googleFetch(SEARCH_TEXT_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
-      'X-Goog-FieldMask': `places.${PLACES_FIELD_MASK.replaceAll(',', ',places.')}`,
-    },
-    body: JSON.stringify({
-      textQuery,
-      languageCode: 'zh-TW',
-      regionCode: 'TW',
-      maxResultCount: options.maxResultCount ?? 5,
-      locationBias: options.bias
-        ? {
-            circle: {
-              center: { latitude: options.bias.lat, longitude: options.bias.lng },
-              radius: options.radiusMeters ?? MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000,
-            },
-          }
-        : undefined,
-    }),
-  })
+  let observed = false
+  try {
+    const response = await googleFetch(SEARCH_TEXT_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+        'X-Goog-FieldMask': `places.${PLACES_FIELD_MASK.replaceAll(',', ',places.')}`,
+      },
+      body: JSON.stringify({
+        textQuery,
+        languageCode: 'zh-TW',
+        regionCode: 'TW',
+        maxResultCount: options.maxResultCount ?? 5,
+        locationBias: options.bias
+          ? {
+              circle: {
+                center: { latitude: options.bias.lat, longitude: options.bias.lng },
+                radius: options.radiusMeters ?? MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000,
+              },
+            }
+          : undefined,
+      }),
+    })
 
-  if (!response.ok) return []
+    if (!response.ok) { observed = true; options.onOutcome?.('failed', 0); return [] }
 
-  const data = (await response.json()) as GooglePlacesResponse
-  const places = data.places ?? []
-  if (options.cacheResults !== false) places.forEach((place) => {
-    if (place.id) placeDetailsCache.set(place.id, place)
-  })
+    const data = (await response.json()) as GooglePlacesResponse
+    const places = data.places ?? []
+    if (options.cacheResults !== false) places.forEach((place) => {
+      if (place.id) placeDetailsCache.set(place.id, place)
+    })
 
-  return places
+    observed = true
+    options.onOutcome?.('succeeded', places.length, places.map(place => place.id))
+    return places
+  } finally {
+    if (!observed) options.onOutcome?.('failed', 0)
+  }
 }
 
 async function getPlaceById(placeId: string): Promise<GooglePlace | null> {
