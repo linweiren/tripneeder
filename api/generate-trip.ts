@@ -2000,6 +2000,26 @@ async function repairAndValidatePlanForDeliveryCore(
     if (diversityFallbackTried || crossPlanUsedPlaceIds.size === 0) return null
     const impact = compareOriginalActivities(plan.stops, current.plan.stops)
     const foodImpact = getFoodPurposeImpact(plan, current.plan.stops)
+    const requirements = assessVisitRequirements(plan, input, candidates)
+    // Distinct venues are not interchangeable merely because their coarse purpose
+    // matches. Only protect a verified, feasible original that fulfills an explicit
+    // visit requirement; unknown venue evidence does not acquire a preference here.
+    const optionalChanges = plan.stops.filter((stop, index) => {
+      const replacement = current.plan.stops.find(final => final.id === stop.id)
+      const candidate = findMatchingCandidateForStop(stop, index, candidates)
+      return stop.placeId && crossPlanUsedPlaceIds.has(stop.placeId) && replacement &&
+        replacement.placeId !== stop.placeId && candidate?.placeId === stop.placeId &&
+        !avoidedPlaceIds.has(stop.placeId) && !isForbiddenStop(stop, input, candidates) &&
+        isCandidateAllowedForStopIndex(candidate, index) && isCandidateOpenForVisit(candidate,
+          getEstimatedArrivalMinutesForStop(plan.stops, index,
+            { ...input, startTime: plan.scheduleStartTime ?? input.startTime }, plan.transportSegments),
+          stop.duration)
+    })
+    const fulfilledActivities = optionalChanges.filter(stop => {
+      const candidate = candidates.allCandidates.find(candidate => candidate.placeId === stop.placeId)
+      return stop.type === 'main_activity' && candidate && requirements.some(requirement =>
+        visitRequirementEvidence(requirement, candidate) === 'satisfied')
+    })
     // Only comparable optional food changes need a trusted route comparison. A clearly
     // better final candidate score can still justify extra travel; never re-add its boost.
     const comparableFoodChange = foodImpact.changes.some(change => {
@@ -2009,18 +2029,26 @@ async function repairAndValidatePlanForDeliveryCore(
       return from && to && Math.abs((from.score ?? 0) - (to.score ?? 0)) <= SOFT_DIVERSITY_SCORE_TOLERANCE
     })
     if (issues.length === 0 && impact.retainedStayLoss === 0 && impact.removedStops === 0 &&
-      impact.purposeChanges === 0 && foodImpact.foodPurposeChanges === 0 && !comparableFoodChange) return null
-    const optionalChange = plan.stops.some((stop, index) => {
-      const replacement = current.plan.stops.find(final => final.id === stop.id)
-      const candidate = findMatchingCandidateForStop(stop, index, candidates)
-      return stop.placeId && crossPlanUsedPlaceIds.has(stop.placeId) && replacement &&
-        replacement.placeId !== stop.placeId && candidate && !avoidedPlaceIds.has(stop.placeId) &&
-        isCandidateAllowedForStopIndex(candidate, index) && isCandidateOpenForVisit(candidate,
-          getEstimatedArrivalMinutesForStop(plan.stops, index,
-            { ...input, startTime: plan.scheduleStartTime ?? input.startTime }, plan.transportSegments),
-          stop.duration)
-    })
-    if (!optionalChange) return null
+      impact.purposeChanges === 0 && foodImpact.foodPurposeChanges === 0 && !comparableFoodChange &&
+      fulfilledActivities.length === 0) return null
+    if (optionalChanges.length === 0) return null
+    const currentRequirements = assessVisitRequirements(current.plan, input, candidates)
+    // A lawful replacement already completing every explicit visit request needs
+    // no route comparison when only the protected identities changed and no known
+    // purpose/stay was lost. This confirms demand gain, not venue equivalence.
+    if (issues.length === 0 && !current.routesFailed && fulfilledActivities.length > 0 &&
+      requirements.some(item => item.fulfillment !== 'satisfied') &&
+      currentRequirements.every(item => item.fulfillment === 'satisfied') &&
+      impact.identityChanges === fulfilledActivities.length && impact.retainedStayLoss === 0 &&
+      impact.removedStops === 0 && impact.purposeChanges === 0 && foodImpact.foodPurposeChanges === 0 &&
+      fulfilledActivities.every(original =>
+        (current.plan.stops.find(stop => stop.id === original.id)?.duration ?? 0) >= original.duration)) {
+      debugSession?.recordPlanTransition(plan, current.plan, 'fallback:activity-diversity-retained', {
+        disposition: 'selected',
+        reason: 'confirmed_visit_requirement_gain_with_preserved_purpose_and_stay;comparison_not_needed',
+      })
+      return null
+    }
     diversityFallbackTried = true
     const fallback = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
       allowCoverageRepair: true, routeContext, crossPlanUsedPlaceIds: new Set(),
@@ -2031,6 +2059,32 @@ async function repairAndValidatePlanForDeliveryCore(
     const alternative = compareOriginalActivities(plan.stops, fallback.plan.stops)
     const alternativeFood = getFoodPurposeImpact(plan, fallback.plan.stops)
     const travel = (value: TripPlan) => value.transportSegments.reduce((sum, leg) => sum + leg.duration, 0)
+    const fallbackRequirements = assessVisitRequirements(fallback.plan, input, candidates)
+    const preservesRequirements = (before: typeof currentRequirements, after: typeof currentRequirements) =>
+      before.every((item, index) => item.fulfillment === 'satisfied' ? after[index].fulfillment === 'satisfied'
+        : item.fulfillment !== 'alternative' || after[index].fulfillment !== 'not_confirmed')
+    const fallbackPreservesDemand = preservesRequirements(currentRequirements, fallbackRequirements)
+    // Identity value remains unknown. Routes may justify the change only while
+    // preserving confirmed demands, coarse purposes and the protected visit's stay.
+    const currentImprovesTravel = preservesRequirements(fallbackRequirements, currentRequirements) &&
+      travel(current.plan) < travel(fallback.plan) && impact.retainedStayLoss <= alternative.retainedStayLoss &&
+      impact.removedStops <= alternative.removedStops && impact.purposeLostMinutes <= alternative.purposeLostMinutes &&
+      foodImpact.foodPurposeChanges <= alternativeFood.foodPurposeChanges && fulfilledActivities.every(original =>
+        (current.plan.stops.find(stop => stop.id === original.id)?.duration ?? 0) >=
+        (fallback.plan.stops.find(stop => stop.id === original.id)?.duration ?? original.duration))
+    if (issues.length === 0 && fulfilledActivities.length &&
+      (!fallbackPreservesDemand || currentImprovesTravel)) {
+      debugSession?.recordPlanTransition(fallback.plan, current.plan, 'fallback:activity-diversity-retained', {
+        disposition: 'selected', reason: currentImprovesTravel ? 'verified_travel_improvement_with_preserved_demand_purpose_and_stay'
+          : 'preserve_confirmed_visit_requirement_improvement',
+      })
+      return null
+    }
+    const restoresFulfilledActivity = fallbackPreservesDemand && fulfilledActivities.some(original =>
+      fallback.plan.stops.some(stop => stop.id === original.id && stop.placeId === original.placeId)) &&
+      alternative.retainedStayLoss <= impact.retainedStayLoss && alternative.removedStops <= impact.removedStops &&
+      alternative.purposeLostMinutes <= impact.purposeLostMinutes &&
+      alternativeFood.foodPurposeChanges <= foodImpact.foodPurposeChanges
     if (issues.length === 0 && !(alternative.retainedStayLoss <= impact.retainedStayLoss &&
       alternative.removedStops <= impact.removedStops && alternative.purposeLostMinutes <= impact.purposeLostMinutes &&
       alternativeFood.foodPurposeChanges <= foodImpact.foodPurposeChanges &&
@@ -2038,11 +2092,13 @@ async function repairAndValidatePlanForDeliveryCore(
       (alternative.retainedStayLoss < impact.retainedStayLoss || alternative.removedStops < impact.removedStops ||
         alternative.purposeLostMinutes < impact.purposeLostMinutes ||
         alternativeFood.foodPurposeChanges < foodImpact.foodPurposeChanges ||
-        (comparableFoodChange && travel(fallback.plan) < travel(current.plan))))) return null
+        (comparableFoodChange && travel(fallback.plan) < travel(current.plan)))) && !restoresFulfilledActivity) return null
     console.info('[activity-diversity-fallback]', { planId: plan.id, before: impact, after: alternative,
       routeCalls: routeContext.totalCalls, cacheHits: routeContext.cacheHits })
     debugSession?.recordPlanTransition(current.plan, fallback.plan, 'fallback:activity-diversity-selected', {
-      disposition: 'selected', reason: 'existing_optional_diversity_comparison',
+      disposition: 'selected', reason: restoresFulfilledActivity
+        ? 'activity_equivalence_unknown;retain_feasible_fulfilled_original_without_confirmed_gain'
+        : 'existing_optional_diversity_comparison',
     })
     return fallback
   }
