@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { COVERAGE_DELIVERY_STATUSES, COVERAGE_DELIVERY_REASONS } from './trip-coverage-delivery.js'
 
 // Persistence boundary only. Never feed projected or truncated evidence into Repair.
 const LIMIT = { final: 3, attempts: 12, stops: 40, durationEvents: 16, remedyEvents: 64,
@@ -94,7 +95,18 @@ export function projectCoverageDiagnostics(value: unknown) {
   const shadow = (value: unknown) => {
     if (value === null || value === undefined) return null
     const raw = obj(value), time = obj(raw.time), necessary = obj(raw.necessaryConditions), remedy = obj(raw.remedy)
+    const decision = obj(raw.deliveryDecision), decisionRemedy = obj(decision.remedy)
     return { version: numeric(raw.version), internalOnly: bool(raw.internalOnly),
+      ...(raw.deliveryDecision === undefined ? {} : { deliveryDecision: {
+        version: numeric(decision.version), internalOnly: bool(decision.internalOnly),
+        status: code(decision.status, COVERAGE_DELIVERY_STATUSES), resolved: bool(decision.resolved),
+        originalDemand: code(decision.originalDemand, ['confirmed', 'unconfirmed', 'not_met']),
+        executable: bool(decision.executable), conditionalEligible: bool(decision.conditionalEligible),
+        reasons: codes(decision.reasons, COVERAGE_DELIVERY_REASONS), normalCoverageReached: bool(decision.normalCoverageReached),
+        remedy: Object.fromEntries(['complete', 'timelineMatches', 'poolMatches', 'pending', 'technicalFailure', 'budgetExhausted']
+          .map(key => [key, bool(decisionRemedy[key])])),
+        scope: code(decision.scope, ['existing_supplied_pool_only']),
+        nearbyOptionsAvailability: code(decision.nearbyOptionsAvailability, ['unknown']) } }),
       classification: code(raw.classification, ['A', 'B', 'C', 'D']), coreSatisfied: bool(raw.coreSatisfied),
       fulfillment: code(raw.fulfillment, ['original_requirements_satisfied', 'legal_alternative_original_unmet',
         'executable_original_unconfirmed', 'execution_failed_or_unverified']),
@@ -130,7 +142,9 @@ export function projectCoverageDiagnostics(value: unknown) {
         supplementPasses: list(remedy.supplementPasses, LIMIT.passes).map(item => {
           const pass = obj(item)
           return { scope: code(pass.scope, ['existing_supplied_pool', 'supplied_pool_up_to_three_candidates_two_positions']),
+            ...(pass.poolSignature === undefined ? {} : { poolSignatureSha256: digest(pass.poolSignature) }),
             timelineSignatureSha256: digest(pass.timelineSignature), ...numbers(pass, ['pending', 'eligible', 'compared']),
+            ...(pass.unprocessedPoolCandidates === undefined ? {} : { unprocessedPoolCandidates: numeric(pass.unprocessedPoolCandidates) }),
             stopReason: code(pass.stopReason, STOP_REASONS) }
         }) },
       stops: stops(raw.stops) }

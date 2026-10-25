@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto'
 import type { Stop, TripInput, TripPlan } from '../../src/types/trip.js'
+import { assessCoverageDelivery } from './trip-coverage-delivery.js'
 import { assessVisitRequirements, getForbiddenVisitIssues } from './trip-demand-compliance.js'
 import { resolveCandidateRankingContext } from './candidate-ranking-context.js'
-import { isCandidateOpenForVisit, type NearbyPlaceCandidates } from './google-places.js'
+import { isCandidateOpenForVisit, type NearbyPlaceCandidates, type VerifiedPlaceCandidate } from './google-places.js'
 import { getPlanActualDuration, getMinimumStopDuration } from './trip-plan-metrics.js'
 import { getAllowedTripMinutes, getMinimumRequiredActualMinutes, getMealTimelineStartMinutes,
   getOpeningHoursSearchStartMinutes, parseTimeToMinutes, type TripWindowInput } from './trip-planning-rules.js'
@@ -99,9 +101,20 @@ export type RemedyEvent = { kind: 'supplement' | 'meal' | 'demand' | 'route' | '
   demandGap?: string; details?: string }
 export type RemedyTrace = { events: RemedyEvent[]; budgetExhausted: boolean; technicalFailure: boolean;
   // Completeness is local to a specific bounded pass, never a nearby-world claim.
-  supplementPasses: Array<{ scope: string; timelineSignature: string; pending: number; eligible: number; compared: number; stopReason: string }> }
+  supplementPasses: Array<{ scope: string; timelineSignature: string; poolSignature?: string; unprocessedPoolCandidates?: number;
+    pending: number; eligible: number; compared: number; stopReason: string }> }
 export function createRemedyTrace(): RemedyTrace {
   return { events: [], budgetExhausted: false, technicalFailure: false, supplementPasses: [] }
+}
+
+// Match the existing merged supplemental pool, not just its shortlist. Metadata
+// changes invalidate a completed pass. Only the digest crosses persistence.
+export function getRemedyPoolSignature(...pools: VerifiedPlaceCandidate[][]) {
+  const candidates = new Map<string, VerifiedPlaceCandidate>()
+  for (const pool of pools) for (const candidate of pool)
+    if (candidate.placeId && !candidates.has(candidate.placeId)) candidates.set(candidate.placeId, candidate)
+  return createHash('sha256').update(JSON.stringify([...candidates].sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, c]) => [id, c.name, c.lat, c.lng, c.distanceKm, c.types, c.role, c.foodSubtype, c.score, c.openingHours]))).digest('hex')
 }
 
 export function getRemedyTimelineSignature(plan: Pick<TripPlan, 'stops' | 'transportSegments' | 'scheduleStartTime'>,
@@ -189,7 +202,21 @@ export function assessCoverageV2(plan: TripPlan, input: TripInput, candidates: N
     : time.coverageGapMinutes === 0 ? 'normal_coverage_reached'
     : pending ? 'candidates_remain_unevaluated' : localComplete ? 'bounded_scope_evaluated'
     : remedy.supplementPasses.some(pass => pass.eligible === 0) ? 'bounded_pool_insufficient' : 'remedy_incomplete_or_unobserved'
-  return { version: 1, classification, internalOnly: true, time, requirements, coreSatisfied,
+  const lastPass = remedy.supplementPasses.at(-1)
+  const poolMatches = lastPass?.poolSignature === getRemedyPoolSignature(
+    candidates.otherCandidates, candidates.firstStopCandidates, candidates.allCandidates)
+  const boundedRemedyCompleted = Boolean(lastPass && lastPass.pending === 0 && lastPass.unprocessedPoolCandidates === 0 &&
+    lastPass.scope === 'supplied_pool_up_to_three_candidates_two_positions' &&
+    ((lastPass.stopReason === 'bounded_scope_evaluated' && lastPass.eligible > 0 && lastPass.compared > 0) ||
+      (lastPass.stopReason === 'bounded_pool_insufficient' && lastPass.eligible === 0 && lastPass.compared === 0)))
+  const deliveryDecision = assessCoverageDelivery({ coreSatisfied,
+    coreUnconfirmed: !intentKnown || requirements.some(item => item.status === 'unknown'),
+    necessaryPassed, coverageGapMinutes: time.coverageGapMinutes,
+    timelineMatches, poolMatches, sourceObserved: Boolean(source?.length), sourceFailed,
+    technicalFailure: remedy.technicalFailure || validation.routesFailed,
+    budgetExhausted: remedy.budgetExhausted,
+    pending: pending || (lastPass?.unprocessedPoolCandidates ?? 0) > 0, boundedRemedyCompleted })
+  return { version: 1, classification, internalOnly: true, deliveryDecision, time, requirements, coreSatisfied,
     fulfillment: coreSatisfied ? 'original_requirements_satisfied' : requirements.some(item => item.status === 'alternative') && necessaryPassed
       ? 'legal_alternative_original_unmet' : necessaryPassed ? 'executable_original_unconfirmed' : 'execution_failed_or_unverified',
     necessaryConditions: { passed: necessaryPassed, hoursConfirmed, hardIssues }, blockers,

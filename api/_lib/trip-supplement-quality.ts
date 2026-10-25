@@ -1,4 +1,4 @@
-import { createRemedyTrace, getRemedyTimelineSignature, type RemedyTrace } from './trip-coverage-v2.js'
+import { createRemedyTrace, getRemedyTimelineSignature, getRemedyPoolSignature, type RemedyTrace } from './trip-coverage-v2.js'
 import type { Stop, TransportMode, TransportSegment } from '../../src/types/trip.js'
 import { recordEvidenceCache } from './trip-acceptance-evidence.js'
 import { isCandidateOpenForVisit, type VerifiedPlaceCandidate } from './google-places.js'
@@ -128,6 +128,12 @@ export async function chooseSupplementalInsertion(options: Options) {
   const trace = context.remedy
   const timelineSignature = getRemedyTimelineSignature({ stops, transportSegments: segments,
     scheduleStartTime: input.scheduleStartTime }, input)
+  const poolSignature = getRemedyPoolSignature(options.allCandidates)
+  // Observation only: a completed shortlist cannot hide an unused candidate in
+  // the broader existing pool. A later full-pool pass can discharge this count.
+  const scopedIds = new Set(options.pool.map(candidate => candidate.placeId))
+  const unprocessedPoolCandidates = options.allCandidates.filter(candidate =>
+    !options.used.has(candidate.placeId) && !scopedIds.has(candidate.placeId)).length
   const attempts = new Set<string>()
   const compared = new Set<string>()
   const event = (outcome: string, placeId?: string, position?: number, routeComparisonCompleted = false) => {
@@ -136,7 +142,7 @@ export async function chooseSupplementalInsertion(options: Options) {
   }
   if (stops.length === 0 || !stops.every(hasCoordinates)) {
     event('missing_route_coordinates')
-    trace.supplementPasses.push({ scope: 'existing_supplied_pool', timelineSignature, eligible: 0, pending: options.pool.length,
+    trace.supplementPasses.push({ scope: 'existing_supplied_pool', timelineSignature, poolSignature, unprocessedPoolCandidates, eligible: 0, pending: options.pool.length,
       compared: 0, stopReason: 'missing_route_coordinates' })
     return { choice: undefined, routesFailed: false, calls: 0 }
   }
@@ -281,7 +287,7 @@ export async function chooseSupplementalInsertion(options: Options) {
   const unknownPending = options.pool.filter(candidate => !options.used.has(candidate.placeId) &&
     (!candidate.openingHours?.isKnown || !hasCoordinates(makeStop(candidate)))).length
   const pending = positionsPending + unknownPending
-  trace.supplementPasses.push({ scope: 'supplied_pool_up_to_three_candidates_two_positions', timelineSignature,
+  trace.supplementPasses.push({ scope: 'supplied_pool_up_to_three_candidates_two_positions', timelineSignature, poolSignature, unprocessedPoolCandidates,
     pending, eligible: ranked.length, compared: compared.size,
     stopReason: choice ? 'selected' : trace.budgetExhausted ? 'comparison_budget_exhausted'
       : failed ? 'route_failure' : pending ? 'candidates_or_positions_unprocessed'

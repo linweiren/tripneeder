@@ -1,0 +1,2825 @@
+{
+  "version": 1,
+  "baseline": "82470a9c733fbc61a4119cc1a7b50c0b6f08b578",
+  "provenance": {
+    "kind": "approved_fixed_mock_regression_contract_not_real_model_quality",
+    "phase2a1Sha256": "0f701b5058ff096a06b6b816644eb1c015b46ce2fb9067b39caf1171511d9686",
+    "phase2c1Sha256": "db796926d75ab547895aedba8c7109cf1bf32c678cae31c82dc841ed45162a7c",
+    "purpose": "Freeze all formerly deep-compared fields. Expected results cannot be recomputed from the implementation under test; no old research file is read at runtime."
+  },
+  "repairFields": [
+    "delivered",
+    "issues",
+    "coreSatisfied",
+    "necessaryPassed",
+    "time",
+    "finalStay",
+    "travel",
+    "coverageAdded",
+    "unsupportedCoverageAdded",
+    "activityImpact",
+    "pipelineCalls",
+    "repairCalls",
+    "finalStops"
+  ],
+  "handlerFields": [
+    "response",
+    "events",
+    "delivered",
+    "aiCalls",
+    "aiRequestKinds",
+    "retry",
+    "refill",
+    "routes",
+    "places",
+    "repairCalls",
+    "expansionPasses",
+    "validationCalls"
+  ],
+  "rows": [
+    {
+      "kind": "central-two-stop",
+      "style": "safe",
+      "A": {
+        "formalSha256": "b19d30051dcd5bc45396286c6fdde59e5f7d93e2a95d88c68c6a580cf41ee3c2",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "unconfirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "4c0aa01a913baaa2cb3069084abf8ec77524832b2296520dcef576022ccc2b7e",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "unconfirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "central-two-stop",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "75b16dbf0536830653f550e2c6a05c846a3b1a5e5767d4b08bc1be1a7b221121",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "unconfirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "8b58aa62a231cc4b3cb718bd70acda342c0342b5e3358b7357006ddfb54c6d4f",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "unconfirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "central-two-stop",
+      "style": "explore",
+      "A": {
+        "formalSha256": "12474227146b9d0c27af8c957f751d7d7af4da95d97583e15fe59e92689e3470",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "unconfirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "76b287ff8f2b347bca27a462849998920c8e9ffba29cd1efa60c1146baf84b3b",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "unconfirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "central-culture",
+      "style": "safe",
+      "A": {
+        "formalSha256": "35f9d03bae327a214dea9f564a80ab8cf7cec0b5f864b0b3644dde3949ed552d",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "64c7c6ec7452a21b82a41b9f64a3719822e11f1e2f62ddd24a358a5dc165fc08",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "central-culture",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "35f9d03bae327a214dea9f564a80ab8cf7cec0b5f864b0b3644dde3949ed552d",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "64c7c6ec7452a21b82a41b9f64a3719822e11f1e2f62ddd24a358a5dc165fc08",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "central-culture",
+      "style": "explore",
+      "A": {
+        "formalSha256": "35f9d03bae327a214dea9f564a80ab8cf7cec0b5f864b0b3644dde3949ed552d",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "64c7c6ec7452a21b82a41b9f64a3719822e11f1e2f62ddd24a358a5dc165fc08",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "five-small",
+      "style": "safe",
+      "A": {
+        "formalSha256": "f70ddc17220919154b62195a65ce3e7d47106211791438c09c21216ebc5c5327",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "845fa816e77d3c9c3f31f769a050824f121d19c4676890cbfa1801b995511599",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "five-small",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "f70ddc17220919154b62195a65ce3e7d47106211791438c09c21216ebc5c5327",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "845fa816e77d3c9c3f31f769a050824f121d19c4676890cbfa1801b995511599",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "five-small",
+      "style": "explore",
+      "A": {
+        "formalSha256": "f70ddc17220919154b62195a65ce3e7d47106211791438c09c21216ebc5c5327",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "845fa816e77d3c9c3f31f769a050824f121d19c4676890cbfa1801b995511599",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "five-large",
+      "style": "safe",
+      "A": {
+        "formalSha256": "0c7d9a5e51dc68a9256743e3dfe41b6715821b86e7c87dfd6c7813594da23edd",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "64a1d8ca3a60ccc32665d0e5c2aff4a0605308a60b742179d0635452b985526e",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "five-large",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "0c7d9a5e51dc68a9256743e3dfe41b6715821b86e7c87dfd6c7813594da23edd",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "64a1d8ca3a60ccc32665d0e5c2aff4a0605308a60b742179d0635452b985526e",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "five-large",
+      "style": "explore",
+      "A": {
+        "formalSha256": "0c7d9a5e51dc68a9256743e3dfe41b6715821b86e7c87dfd6c7813594da23edd",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "64a1d8ca3a60ccc32665d0e5c2aff4a0605308a60b742179d0635452b985526e",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "valuable",
+      "style": "safe",
+      "A": {
+        "formalSha256": "72f8b86734b4893f5cdabb6508b61c57963972728cb5e499b77a5b8e1daf7cd7",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "d61223972e848a572fd247f39105f5f8107502f7dc8e23b410e5572250a282ba",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "valuable",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "72f8b86734b4893f5cdabb6508b61c57963972728cb5e499b77a5b8e1daf7cd7",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "d61223972e848a572fd247f39105f5f8107502f7dc8e23b410e5572250a282ba",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "valuable",
+      "style": "explore",
+      "A": {
+        "formalSha256": "72f8b86734b4893f5cdabb6508b61c57963972728cb5e499b77a5b8e1daf7cd7",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "d61223972e848a572fd247f39105f5f8107502f7dc8e23b410e5572250a282ba",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "expensive",
+      "style": "safe",
+      "A": {
+        "formalSha256": "72f8b86734b4893f5cdabb6508b61c57963972728cb5e499b77a5b8e1daf7cd7",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "c350ec45e9f8578330129d8039fa8c4ab1bfed92cafa827a8de58d67c341c3b8",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "expensive",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "72f8b86734b4893f5cdabb6508b61c57963972728cb5e499b77a5b8e1daf7cd7",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "c350ec45e9f8578330129d8039fa8c4ab1bfed92cafa827a8de58d67c341c3b8",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "expensive",
+      "style": "explore",
+      "A": {
+        "formalSha256": "72f8b86734b4893f5cdabb6508b61c57963972728cb5e499b77a5b8e1daf7cd7",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "c350ec45e9f8578330129d8039fa8c4ab1bfed92cafa827a8de58d67c341c3b8",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "ten-hour",
+      "style": "safe",
+      "A": {
+        "formalSha256": "850d909d256b492204db2fec16913031ae707c0e7483054fa52ca4e690eb4cf2",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "850d909d256b492204db2fec16913031ae707c0e7483054fa52ca4e690eb4cf2",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "ten-hour",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "850d909d256b492204db2fec16913031ae707c0e7483054fa52ca4e690eb4cf2",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "850d909d256b492204db2fec16913031ae707c0e7483054fa52ca4e690eb4cf2",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "ten-hour",
+      "style": "explore",
+      "A": {
+        "formalSha256": "850d909d256b492204db2fec16913031ae707c0e7483054fa52ca4e690eb4cf2",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "850d909d256b492204db2fec16913031ae707c0e7483054fa52ca4e690eb4cf2",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "night",
+      "style": "safe",
+      "A": {
+        "formalSha256": "6b9e1bf23cc79531f3c276206b91309803a910f5107652675ecee76a4b25e65f",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "6b9e1bf23cc79531f3c276206b91309803a910f5107652675ecee76a4b25e65f",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "night",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "6b9e1bf23cc79531f3c276206b91309803a910f5107652675ecee76a4b25e65f",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "6b9e1bf23cc79531f3c276206b91309803a910f5107652675ecee76a4b25e65f",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "night",
+      "style": "explore",
+      "A": {
+        "formalSha256": "6b9e1bf23cc79531f3c276206b91309803a910f5107652675ecee76a4b25e65f",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "6b9e1bf23cc79531f3c276206b91309803a910f5107652675ecee76a4b25e65f",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "night-one",
+      "style": "safe",
+      "A": {
+        "formalSha256": "41eefc86e793cf4c1f52873196a9820678dfb69b59a9ba5ed674fb9cb831f021",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "a159f99a08d6b01325d8f31ee2583647a4d905d803b87d0838204446375085e6",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "night-one",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "41eefc86e793cf4c1f52873196a9820678dfb69b59a9ba5ed674fb9cb831f021",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "a159f99a08d6b01325d8f31ee2583647a4d905d803b87d0838204446375085e6",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "night-one",
+      "style": "explore",
+      "A": {
+        "formalSha256": "41eefc86e793cf4c1f52873196a9820678dfb69b59a9ba5ed674fb9cb831f021",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "a159f99a08d6b01325d8f31ee2583647a4d905d803b87d0838204446375085e6",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "booked-long",
+      "style": "safe",
+      "A": {
+        "formalSha256": "db4ec45f0c4aae706780f4845934f1620ed452f26ccd67858ab8c4d466ec707e",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "db4ec45f0c4aae706780f4845934f1620ed452f26ccd67858ab8c4d466ec707e",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "booked-long",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "db4ec45f0c4aae706780f4845934f1620ed452f26ccd67858ab8c4d466ec707e",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "db4ec45f0c4aae706780f4845934f1620ed452f26ccd67858ab8c4d466ec707e",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "booked-long",
+      "style": "explore",
+      "A": {
+        "formalSha256": "db4ec45f0c4aae706780f4845934f1620ed452f26ccd67858ab8c4d466ec707e",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "db4ec45f0c4aae706780f4845934f1620ed452f26ccd67858ab8c4d466ec707e",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "booked-extension",
+      "style": "safe",
+      "A": {
+        "formalSha256": "26ef21b3f8193e7ade671ca9273e2a1b5a94fd3365a9444f3696dd118e6d395a",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "9926cfbe64e2993a5344124699d921abe4e58eb6301be02f6c747dd161bddf2c",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "booked-extension",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "26ef21b3f8193e7ade671ca9273e2a1b5a94fd3365a9444f3696dd118e6d395a",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "9926cfbe64e2993a5344124699d921abe4e58eb6301be02f6c747dd161bddf2c",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "booked-extension",
+      "style": "explore",
+      "A": {
+        "formalSha256": "26ef21b3f8193e7ade671ca9273e2a1b5a94fd3365a9444f3696dd118e6d395a",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "9926cfbe64e2993a5344124699d921abe4e58eb6301be02f6c747dd161bddf2c",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "grounding-minimum",
+      "style": "safe",
+      "A": {
+        "formalSha256": "38648e819465531c9276a82171eb37bd5017a2f7234e356158e697d007f96d30",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "bed1bec353c64d3846e51dbe1e9291aa281e24820547f73013bd113c5529a34c",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "grounding-minimum",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "38648e819465531c9276a82171eb37bd5017a2f7234e356158e697d007f96d30",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "bed1bec353c64d3846e51dbe1e9291aa281e24820547f73013bd113c5529a34c",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "grounding-minimum",
+      "style": "explore",
+      "A": {
+        "formalSha256": "38648e819465531c9276a82171eb37bd5017a2f7234e356158e697d007f96d30",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "bed1bec353c64d3846e51dbe1e9291aa281e24820547f73013bd113c5529a34c",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "conditional_partial",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": true,
+          "reasons": [
+            "bounded_remedy_completed"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": true,
+            "timelineMatches": true,
+            "poolMatches": true,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "optional-fallback",
+      "style": "safe",
+      "A": {
+        "formalSha256": "78643180639cdf3fa01e2be5ba99b91929ae4d04d8aeb3708b3eeb12ec77521b",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "78643180639cdf3fa01e2be5ba99b91929ae4d04d8aeb3708b3eeb12ec77521b",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "optional-fallback",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "78643180639cdf3fa01e2be5ba99b91929ae4d04d8aeb3708b3eeb12ec77521b",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "78643180639cdf3fa01e2be5ba99b91929ae4d04d8aeb3708b3eeb12ec77521b",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "optional-fallback",
+      "style": "explore",
+      "A": {
+        "formalSha256": "78643180639cdf3fa01e2be5ba99b91929ae4d04d8aeb3708b3eeb12ec77521b",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "78643180639cdf3fa01e2be5ba99b91929ae4d04d8aeb3708b3eeb12ec77521b",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "optional-coverage",
+      "style": "safe",
+      "A": {
+        "formalSha256": "8da68aae89f5cb9a0ee575493aa1d10f47f03886c9c825bad2120e151e806d1b",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "88767fc457ba39247c28086498ba3de54ee8053d2fc5213f0f817aed09460db1",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": true,
+            "pending": true,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "optional-coverage",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "8da68aae89f5cb9a0ee575493aa1d10f47f03886c9c825bad2120e151e806d1b",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "88767fc457ba39247c28086498ba3de54ee8053d2fc5213f0f817aed09460db1",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": true,
+            "pending": true,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "optional-coverage",
+      "style": "explore",
+      "A": {
+        "formalSha256": "8da68aae89f5cb9a0ee575493aa1d10f47f03886c9c825bad2120e151e806d1b",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "88767fc457ba39247c28086498ba3de54ee8053d2fc5213f0f817aed09460db1",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "complete",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "normal_coverage_reached"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": true,
+            "pending": true,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "route-failure",
+      "style": "safe",
+      "A": {
+        "formalSha256": "395f7204b8bf7b0619df6bd4a5226a907698a3b70a4059c3219b094ac09b080a",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified",
+            "technical_failure"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": true,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "fea55101a98bc4908b85764ef7bdfc07fbabc876d9ac9fcc585a0fdde9bde947",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified",
+            "technical_failure"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": true,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "route-failure",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "395f7204b8bf7b0619df6bd4a5226a907698a3b70a4059c3219b094ac09b080a",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified",
+            "technical_failure"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": true,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "fea55101a98bc4908b85764ef7bdfc07fbabc876d9ac9fcc585a0fdde9bde947",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified",
+            "technical_failure"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": true,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "route-failure",
+      "style": "explore",
+      "A": {
+        "formalSha256": "395f7204b8bf7b0619df6bd4a5226a907698a3b70a4059c3219b094ac09b080a",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified",
+            "technical_failure"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": true,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "fea55101a98bc4908b85764ef7bdfc07fbabc876d9ac9fcc585a0fdde9bde947",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": "unavailable",
+          "resolved": true,
+          "originalDemand": "confirmed",
+          "executable": false,
+          "conditionalEligible": false,
+          "reasons": [
+            "necessary_condition_failed_or_unverified",
+            "technical_failure"
+          ],
+          "normalCoverageReached": false,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": true,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "meal-alignment",
+      "style": "safe",
+      "A": {
+        "formalSha256": "8fbd1f27b8ca8db8af9cbf85442cc0bd4658c8afa5b69ed2d74fdadc52def7e4",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": null,
+          "resolved": false,
+          "originalDemand": "unconfirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "core_requirement_unconfirmed"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "8fbd1f27b8ca8db8af9cbf85442cc0bd4658c8afa5b69ed2d74fdadc52def7e4",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": null,
+          "resolved": false,
+          "originalDemand": "unconfirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "core_requirement_unconfirmed"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "meal-alignment",
+      "style": "balanced",
+      "A": {
+        "formalSha256": "16676eaf3ca39cc7e030abddce2da33c62e79f75e80fb87bc1cacd35bfbb630a",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": null,
+          "resolved": false,
+          "originalDemand": "unconfirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "core_requirement_unconfirmed"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "16676eaf3ca39cc7e030abddce2da33c62e79f75e80fb87bc1cacd35bfbb630a",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": null,
+          "resolved": false,
+          "originalDemand": "unconfirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "core_requirement_unconfirmed"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    },
+    {
+      "kind": "meal-alignment",
+      "style": "explore",
+      "A": {
+        "formalSha256": "dcb5206b8f61c39f3f401f38adb2a5cb9ee6fc482aa0cf5b9de1442e2c6ef21a",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": null,
+          "resolved": false,
+          "originalDemand": "unconfirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "core_requirement_unconfirmed"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      },
+      "B2": {
+        "formalSha256": "dcb5206b8f61c39f3f401f38adb2a5cb9ee6fc482aa0cf5b9de1442e2c6ef21a",
+        "decision": {
+          "version": 1,
+          "internalOnly": true,
+          "status": null,
+          "resolved": false,
+          "originalDemand": "unconfirmed",
+          "executable": true,
+          "conditionalEligible": false,
+          "reasons": [
+            "core_requirement_unconfirmed"
+          ],
+          "normalCoverageReached": true,
+          "remedy": {
+            "complete": false,
+            "timelineMatches": false,
+            "poolMatches": false,
+            "pending": false,
+            "technicalFailure": false,
+            "budgetExhausted": false
+          },
+          "scope": "existing_supplied_pool_only",
+          "nearbyOptionsAvailability": "unknown"
+        }
+      }
+    }
+  ],
+  "handlers": [
+    {
+      "kind": "five-small",
+      "mode": "A",
+      "formalSha256": "ad778af17bbf33d70f479b6ec8f219cb3b864007dd84310bfa12ba15b8e8bfed"
+    },
+    {
+      "kind": "five-small",
+      "mode": "B2",
+      "formalSha256": "09b04fda1bb7e0c728fdcb6b1a044532ae55aa31962b1c087d727c28efe2bc42"
+    },
+    {
+      "kind": "five-large",
+      "mode": "A",
+      "formalSha256": "28889805b1c5c9b6683ce949a14ede984c8eef7668f4834301c472894998017a"
+    },
+    {
+      "kind": "five-large",
+      "mode": "B2",
+      "formalSha256": "b2b08e4fcc83f88b9440c9b90182b5364a8798e2a43844c1bfb82e2369771be4"
+    },
+    {
+      "kind": "valuable",
+      "mode": "A",
+      "formalSha256": "f88b32259082c19f8409019b143f1ea1908b565150c2dbe1e04882145a40f7aa"
+    },
+    {
+      "kind": "valuable",
+      "mode": "B2",
+      "formalSha256": "a98fe9172b513a832aa7cfe550371a1b80781dbb045f7dd66d54f1f7248bf623"
+    },
+    {
+      "kind": "central-two-stop",
+      "mode": "A",
+      "formalSha256": "51184966d0734b39afaa49a90ecad75da058b3ac33814068feb30ed5712449bd"
+    },
+    {
+      "kind": "central-two-stop",
+      "mode": "B2",
+      "formalSha256": "ec5e5834c1e5a81d7d1e71452aa7a0b1ce28ce823a25a2c26cf2d309a07cec59"
+    },
+    {
+      "kind": "night-one",
+      "mode": "A",
+      "formalSha256": "5f088b926ef8d9d293b5bb309209b2135ed851772d362ecb1f8e382e642b9860"
+    },
+    {
+      "kind": "night-one",
+      "mode": "B2",
+      "formalSha256": "5f088b926ef8d9d293b5bb309209b2135ed851772d362ecb1f8e382e642b9860"
+    },
+    {
+      "kind": "ten-hour",
+      "mode": "A",
+      "formalSha256": "3e59c7457e3886b1774e98d92f1a80d6a6fd69b611d93ea34ca54cb0108a95ec"
+    },
+    {
+      "kind": "ten-hour",
+      "mode": "B2",
+      "formalSha256": "3e59c7457e3886b1774e98d92f1a80d6a6fd69b611d93ea34ca54cb0108a95ec"
+    }
+  ],
+  "totals": {
+    "A": {
+      "formalReturned": 48,
+      "states": {
+        "complete": 39,
+        "conditional_partial": 0,
+        "alternative": 0,
+        "unavailable": 6,
+        "unresolved": 3
+      },
+      "originalStayLoss": 0,
+      "routes": 105,
+      "repairCalls": 90
+    },
+    "B2": {
+      "formalReturned": 24,
+      "states": {
+        "complete": 21,
+        "conditional_partial": 18,
+        "alternative": 0,
+        "unavailable": 6,
+        "unresolved": 3
+      },
+      "originalStayLoss": 0,
+      "routes": 138,
+      "repairCalls": 90
+    }
+  }
+}
