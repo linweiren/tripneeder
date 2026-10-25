@@ -29,7 +29,7 @@ test('public plan uses an explicit allowlist and removes private coordinates, te
 })
 
 test('feed validation drops malformed records and duplicate ids', () => {
-  const valid = { id: 'share-1', plan: { ...plan, isDetailComplete: true, rainBackup: [{ id: 'r1', name: 'Rainy Cafe', type: 'food', duration: 30 }] }, author_display_name: 'Traveler', created_at: '2026-10-21', like_count: 0, comment_count: 0, view_count: 0, liked_by_me: false, reward_awarded: false, is_owner: false, tags: [], input: null, privateExtra: 'must not survive' }
+  const valid = { id: 'share-1', plan: { ...plan, isDetailComplete: true, rainBackup: [{ id: 'r1', name: 'Rainy Cafe', type: 'food', duration: 30 }] }, author_display_name: 'Traveler', created_at: '2026-10-21', like_count: 0, comment_count: 0, view_count: 0, liked_by_me: false, is_owner: false, tags: [], input: null, privateExtra: 'must not survive' }
   const result = deduplicateAndValidateSharedTrips([valid, valid, { id: 'broken', plan: {} }])
   assert.equal(result.length, 1)
   assert.equal(result[0].id, 'share-1')

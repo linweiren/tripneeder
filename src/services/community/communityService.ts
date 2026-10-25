@@ -21,7 +21,6 @@ export type SharedTrip = {
   comment_count: number
   view_count: number
   liked_by_me: boolean
-  reward_awarded: boolean
   is_owner: boolean
 }
 
@@ -149,7 +148,5 @@ export async function toggleSharedTripLike(tripId: string) {
   return result as {
     liked: boolean
     like_count: number
-    reward_awarded: boolean
-    points_awarded: number
   }
 }

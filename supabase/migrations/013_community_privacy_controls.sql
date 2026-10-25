@@ -92,9 +92,9 @@ $$;
 revoke all on function public.unshare_trip(uuid) from public;
 grant execute on function public.unshare_trip(uuid) to authenticated;
 
--- Keep likes, but disable all new point rewards.
+-- Keep like toggling and counts without any point reward state.
 create or replace function public.toggle_shared_trip_like(p_trip_id uuid)
-returns table (liked boolean, like_count integer, reward_awarded boolean, points_awarded integer)
+returns table (liked boolean, like_count integer)
 language plpgsql
 security definer
 set search_path = public
@@ -104,7 +104,6 @@ declare
   trip_owner_id uuid;
   did_like boolean;
   current_like_count integer;
-  has_reward boolean;
 begin
   if current_user_id is null then raise exception 'Not authenticated'; end if;
   perform public.initialize_user_profile();
@@ -118,8 +117,8 @@ begin
     did_like := found;
   end if;
   select count(*)::integer into current_like_count from public.shared_trip_likes where shared_trip_id = p_trip_id;
-  update public.shared_trips st set like_count = current_like_count where st.id = p_trip_id returning st.reward_awarded into has_reward;
-  return query select did_like, current_like_count, coalesce(has_reward, false), 0;
+  update public.shared_trips st set like_count = current_like_count where st.id = p_trip_id;
+  return query select did_like, current_like_count;
 end;
 $$;
 revoke all on function public.toggle_shared_trip_like(uuid) from public;

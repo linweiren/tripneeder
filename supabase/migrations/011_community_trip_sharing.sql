@@ -1,10 +1,3 @@
-alter table public.point_transactions
-  drop constraint if exists point_transactions_type_check;
-
-alter table public.point_transactions
-  add constraint point_transactions_type_check
-  check (type in ('initial', 'consume', 'admin_adjust', 'refund', 'share_reward'));
-
 create table if not exists public.shared_trips (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references public.profiles(id) on delete cascade,
@@ -12,7 +5,6 @@ create table if not exists public.shared_trips (
   plan jsonb not null,
   input jsonb,
   like_count integer not null default 0 check (like_count >= 0),
-  reward_awarded boolean not null default false,
   created_at timestamptz not null default now()
 );
 
@@ -78,7 +70,6 @@ returns table (
   created_at timestamptz,
   like_count integer,
   liked_by_me boolean,
-  reward_awarded boolean,
   is_owner boolean
 )
 language sql
@@ -92,7 +83,6 @@ as $$
            select 1 from public.shared_trip_likes l
            where l.shared_trip_id = st.id and l.user_id = auth.uid()
          ),
-         st.reward_awarded,
          st.owner_id = auth.uid()
   from public.shared_trips st
   where p_trip_id is null or st.id = p_trip_id
@@ -103,7 +93,7 @@ revoke all on function public.shared_trip_feed(uuid) from public;
 grant execute on function public.shared_trip_feed(uuid) to anon, authenticated;
 
 create or replace function public.toggle_shared_trip_like(p_trip_id uuid)
-returns table (liked boolean, like_count integer, reward_awarded boolean, points_awarded integer)
+returns table (liked boolean, like_count integer)
 language plpgsql
 security definer
 set search_path = public
@@ -113,9 +103,6 @@ declare
   trip_owner_id uuid;
   did_like boolean;
   current_like_count integer;
-  has_reward boolean;
-  points_awarded integer := 0;
-  next_balance integer;
 begin
   if current_user_id is null then raise exception 'Not authenticated'; end if;
   perform public.initialize_user_profile();
@@ -138,19 +125,9 @@ begin
   select count(*)::integer into current_like_count
     from public.shared_trip_likes where shared_trip_id = p_trip_id;
   update public.shared_trips st set like_count = current_like_count
-    where st.id = p_trip_id returning st.reward_awarded into has_reward;
+    where st.id = p_trip_id;
 
-  if did_like and current_like_count >= 10 and not has_reward then
-    update public.shared_trips set reward_awarded = true where id = p_trip_id;
-    update public.profiles set points_balance = points_balance + 20, updated_at = now()
-      where id = trip_owner_id returning points_balance into next_balance;
-    insert into public.point_transactions (user_id, type, amount, balance_after, reason, created_by)
-    values (trip_owner_id, 'share_reward', 20, next_balance, '分享行程達 10 個喜歡', null);
-    has_reward := true;
-    points_awarded := 20;
-  end if;
-
-  return query select did_like, current_like_count, has_reward, points_awarded;
+  return query select did_like, current_like_count;
 end;
 $$;
 

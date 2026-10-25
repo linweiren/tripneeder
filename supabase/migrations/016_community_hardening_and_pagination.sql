@@ -111,7 +111,7 @@ create function public.shared_trip_feed(
 returns table (
   id uuid, plan jsonb, input jsonb, tags text[], author_display_name text, created_at timestamptz,
   like_count integer, comment_count integer, view_count integer, liked_by_me boolean,
-  reward_awarded boolean, is_owner boolean
+  is_owner boolean
 )
 language sql stable security definer set search_path = public
 as $$
@@ -120,7 +120,7 @@ as $$
     (select count(*)::integer from public.shared_trip_comments c where c.shared_trip_id = st.id),
     (select count(*)::integer from public.shared_trip_views v where v.shared_trip_id = st.id),
     exists (select 1 from public.shared_trip_likes l where l.shared_trip_id = st.id and l.user_id = auth.uid()),
-    false, st.owner_id = auth.uid()
+    st.owner_id = auth.uid()
   from public.shared_trips st
   where (p_trip_id is null or st.id = p_trip_id) and (not p_owner_only or st.owner_id = auth.uid())
   order by

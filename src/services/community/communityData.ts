@@ -11,7 +11,6 @@ export type SharedTripFeedRow = {
   comment_count: number
   view_count: number
   liked_by_me: boolean
-  reward_awarded: boolean
   is_owner: boolean
 }
 
@@ -41,7 +40,6 @@ export function deduplicateAndValidateSharedTrips(value: unknown): SharedTripFee
       comment_count: trip.comment_count,
       view_count: trip.view_count,
       liked_by_me: trip.liked_by_me === true,
-      reward_awarded: false,
       is_owner: trip.is_owner === true,
     })
   }

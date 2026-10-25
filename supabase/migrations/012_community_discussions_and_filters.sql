@@ -94,7 +94,6 @@ returns table (
   comment_count integer,
   view_count integer,
   liked_by_me boolean,
-  reward_awarded boolean,
   is_owner boolean
 )
 language sql
@@ -110,7 +109,6 @@ as $$
            select 1 from public.shared_trip_likes l
            where l.shared_trip_id = st.id and l.user_id = auth.uid()
          ),
-         st.reward_awarded,
          st.owner_id = auth.uid()
   from public.shared_trips st
   where (p_trip_id is null or st.id = p_trip_id)

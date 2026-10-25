@@ -33,7 +33,6 @@ test('PostgreSQL migration 018 preserves legacy share IDs and interactions while
         input jsonb,
         tags text[] not null default '{}',
         like_count integer not null default 0,
-        reward_awarded boolean not null default false,
         created_at timestamptz not null default now()
       );
       create unique index shared_trips_unique_owner_plan_idx
@@ -134,7 +133,7 @@ test('PostgreSQL migration 018 preserves legacy share IDs and interactions while
     await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [likerId])
     const likeResult = await db.query('select * from public.toggle_shared_trip_like($1)', [firstShareId])
     assert.equal(likeResult.rows[0].liked, true)
-    assert.equal(likeResult.rows[0].points_awarded, 0)
+    assert.equal(likeResult.rows[0].like_count, 2)
     const newCommenterId = '88888888-8888-4888-8888-888888888888'
     await db.query('insert into public.profiles (id) values ($1)', [newCommenterId])
     await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [newCommenterId])

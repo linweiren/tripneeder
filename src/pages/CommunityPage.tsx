@@ -145,7 +145,7 @@ function CommunityFeed({ ownerOnly }: { ownerOnly: boolean }) {
     try {
       const result = await toggleSharedTripLike(trip.id)
       setTrips((current) => current.map((item) => item.id === trip.id
-        ? { ...item, liked_by_me: result.liked, like_count: result.like_count, reward_awarded: result.reward_awarded }
+        ? { ...item, liked_by_me: result.liked, like_count: result.like_count }
         : item))
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '喜歡狀態更新失敗。')
