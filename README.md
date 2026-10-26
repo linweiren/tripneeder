@@ -47,3 +47,5 @@ Vercel 需要設定 `OPENAI_API_KEY`、`GOOGLE_PLACES_API_KEY`、`CWA_API_KEY`�
 ## 📦 部署
 
 專案連接至 Vercel。`git push origin main` 觸發正式站部署。
+
+Pull request 會執行 GitHub Actions：lint、production build 與單元測試。合併前請檢查 [部署清單](DEPLOYMENT_CHECKLIST.md)，尤其是 Supabase migration 與依賴 RPC 的程式部署順序。GitHub 分支保護需另外設定 `Lint, build, and unit tests` 為必要檢查。
