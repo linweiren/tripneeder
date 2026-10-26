@@ -68,7 +68,10 @@ test('HEAD comparison: only proven stale text changes; itinerary data and non-in
   }
   for (const [i, old] of before.detailRows.entries()) {
     const row = after.detailRows[i]
-    assert.deepEqual(row.calls, old.calls)
+    const authCalls = row.calls.filter(call => call.url === 'https://unit-test.supabase.co/auth/v1/user')
+    assert.equal(authCalls.length, 1, 'Details now verify the session once before any paid call')
+    assert.equal(authCalls[0].init.method, 'GET')
+    assert.deepEqual(row.calls.filter(call => call.url !== 'https://unit-test.supabase.co/auth/v1/user'), old.calls)
     assert.deepEqual(textless(row.plan), textless(old.plan))
     if (row.kind === 'merged-main') assert.deepEqual(row.plan, old.plan)
     else {

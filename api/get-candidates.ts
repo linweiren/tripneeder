@@ -1,4 +1,5 @@
 import { getNearbyPlaceCandidates } from './_lib/google-places.js'
+import { handleApiOptions, requireAuthenticatedUser } from './_lib/authenticated-user.js'
 import type { GenerateTripPlansRequest } from '../src/services/ai/types.js'
 
 type VercelRequest = {
@@ -12,15 +13,18 @@ type VercelRequest = {
 type VercelResponse = {
   status: (code: number) => VercelResponse
   json: (body: unknown) => void
+  end: () => void
   setHeader: (name: string, value: string) => void
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (handleApiOptions(req.method, res)) return
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
 
+  if (!await requireAuthenticatedUser(req.headers?.authorization, res)) return
   const request = req.body as GenerateTripPlansRequest
 
   if (!request?.input?.location?.lat || !request?.input?.location?.lng) {

@@ -128,6 +128,9 @@ for (const kind of ['merged-main', 'removed-rain']) {
   const rain = { ...plan.stops.find(s => s.type === 'food'), id: 'rain-old', placeId: 'unavailable-rain', name: '眷鳥咖啡商行' }
   plan.summary = kind === 'removed-rain' ? '雨天到眷鳥咖啡商行休息。' : '沿途看看街景。'
   mock.method(globalThis, 'fetch', async url => {
+    if (mode === 'after' && String(url) === 'https://unit-test.supabase.co/auth/v1/user') {
+      return Response.json({ id: 'fixture-user', role: 'authenticated' })
+    }
     assert.equal(String(url), 'https://api.openai.com/v1/responses')
     return new Response(JSON.stringify({ output_text: JSON.stringify({ plan: {
       stops: plan.stops.map(s => ({ id: s.id, description: '補充細節' })),

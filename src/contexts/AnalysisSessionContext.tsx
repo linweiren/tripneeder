@@ -308,9 +308,10 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     const input = requestInput ?? loadLastTripInput()
     if (!input) throw new Error('Missing trip input')
 
+    const { accessToken } = await getSessionAuth()
     const response = await fetch('/api/get-candidates', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
       body: JSON.stringify({ input }),
     })
 
@@ -327,9 +328,10 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       transportMode: TripPlan['transportMode'],
       transportSegments?: TransportSegment[],
     ) => {
+      const { accessToken } = await getSessionAuth()
       const response = await fetch('/api/recompute-routes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
         body: JSON.stringify({ stops, transportMode, transportSegments }),
       })
 

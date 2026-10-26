@@ -1,23 +1,28 @@
 import { repairTransportSegments } from './_lib/google-routes.js'
+import { handleApiOptions, requireAuthenticatedUser } from './_lib/authenticated-user.js'
 import type { Stop, TransportMode, TransportSegment } from '../src/types/trip.js'
 
 type VercelRequest = {
   method?: string
   body?: unknown
+  headers?: { authorization?: string }
 }
 
 type VercelResponse = {
   status: (code: number) => VercelResponse
   json: (body: unknown) => void
+  end: () => void
   setHeader: (name: string, value: string) => void
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (handleApiOptions(req.method, res)) return
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
 
+  if (!await requireAuthenticatedUser(req.headers?.authorization, res)) return
   const { stops, transportSegments, transportMode } = req.body as {
     stops: Stop[]
     transportSegments: TransportSegment[]

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { CheckCircle, ChevronRight, LoaderCircle, SlidersHorizontal } from 'lucide-react'
 import { useAuth } from '../contexts/auth'
+import { supabase } from '../services/auth/supabaseClient'
+import { reverseGeocodeCoordinates } from '../services/auth/reverseGeocode'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import { useDialog } from '../contexts/dialog'
 import type {
@@ -346,17 +348,14 @@ export function HomePage() {
           setLocationStatus('座標抓取成功，正在背景查詢地名...')
 
           try {
-            const response = await fetch('/api/geocode', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ lat, lng }),
-            })
-            const data = await response.json()
+            const session = await supabase?.auth.getSession()
+            const data = await reverseGeocodeCoordinates(lat, lng, session?.data.session?.access_token)
 
-            if (data.name) {
+            const resolvedName = data?.name
+            if (resolvedName) {
               setInput(prev => ({
                 ...prev,
-                location: { ...prev.location, lat, lng, name: data.name }
+                location: { ...prev.location, lat, lng, name: resolvedName }
               }))
               setLocationStatus('定位成功！')
             } else {
@@ -462,16 +461,12 @@ export function HomePage() {
 
     void (async () => {
       try {
-        const response = await fetch('/api/geocode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lng }),
-        })
-        const data = (await response.json()) as { name?: string }
+        const session = await supabase?.auth.getSession()
+        const data = await reverseGeocodeCoordinates(lat, lng, session?.data.session?.access_token)
 
         if (reverseGeocodeRequestId.current !== requestId) return
 
-        const resolvedName = data.name?.trim()
+        const resolvedName = data?.name?.trim()
 
         if (resolvedName) {
           setInput((current) => {
