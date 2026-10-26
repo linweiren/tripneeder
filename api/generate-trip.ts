@@ -10,7 +10,8 @@ import { compareOriginalActivities, getActivityPurpose } from './_lib/trip-activ
 import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
 import { buildIntentCandidateGrounding } from './_lib/trip-intent-candidate-grounding.js'
 import { assessVisitRequirements, filterDemandCandidates, getForbiddenVisitIssues,
-  getVisitRequirementWarnings, isForbiddenStop, visitRequirementEvidence } from './_lib/trip-demand-compliance.js'
+  getVisitRequirementWarnings, getVisitRequirementContentText, preservesCoreVisitRequirements,
+  isForbiddenStop, visitRequirementEvidence } from './_lib/trip-demand-compliance.js'
 import { withAcceptanceEvidence, evidenceAiFetch, observeEvidenceCall, recordAiModelText,
   recordRawAiPlan, recordAiUsage, recordAiStreamUsage, bindEvidencePlan, recordEvidenceDecision,
   recordEvidencePoints, recordEvidenceProfile, recordEvidencePlanDecision, bindLocalEvidencePlan,
@@ -99,7 +100,7 @@ import {
   getCoverageRepairTargetMinutes,
   pickRotatedItem,
 } from './_lib/trip-repair-strategy.js'
-import type { Stop, TripPlan } from '../src/types/trip.js'
+import type { Stop, TripInput, TripPlan } from '../src/types/trip.js'
 
 type VercelRequest = {
   method?: string
@@ -470,7 +471,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
           upsertValidatedPlan(validatedPlans, validatedPlan)
           if (!getForbiddenVisitIssues(validatedPlan, request.input, nearbyPlaceCandidates).length) {
             writeEvent({ event: 'plan', plan: finalizePlanText(withVisitRequirementText(validatedPlan,
-              getVisitRequirementWarnings(validatedPlan, request.input, nearbyPlaceCandidates))) })
+              getVisitRequirementWarnings(validatedPlan, request.input, nearbyPlaceCandidates), request.input, nearbyPlaceCandidates)) })
           }
         }
       }
@@ -523,7 +524,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
           upsertValidatedPlan(validatedPlans, validatedPlan)
           if (!getForbiddenVisitIssues(validatedPlan, request.input, nearbyPlaceCandidates).length) {
             writeEvent({ event: 'plan', plan: finalizePlanText(withVisitRequirementText(validatedPlan,
-              getVisitRequirementWarnings(validatedPlan, request.input, nearbyPlaceCandidates))) })
+              getVisitRequirementWarnings(validatedPlan, request.input, nearbyPlaceCandidates), request.input, nearbyPlaceCandidates)) })
           }
         }
       }
@@ -979,7 +980,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
           styles.push(getTripPlanStyleLabel(plan.type) ?? plan.type)
           demandWarningGroups.set(warning, styles)
         }
-        return withVisitRequirementText(plan, demandWarnings)
+        return withVisitRequirementText(plan, demandWarnings, request.input, nearbyPlaceCandidates)
       })
       for (const [warning, styles] of demandWarningGroups) {
         const scope = styles.length === finalResponse.plans.length && styles.length > 1 ? '所有方案' : styles.join('、')
@@ -1085,11 +1086,21 @@ function carryOriginalActivities(source: TripPlan, target: TripPlan) {
 }
 
 // Neither provisional nor final text may claim an unconfirmed visit was achieved.
-function withVisitRequirementText(plan: TripPlan, warnings: string[]) {
-  return warnings.length ? carryOriginalActivities(plan, { ...plan,
-    title: getTripPlanStyleLabel(plan.type) ?? plan.title,
-    subtitle: '已依可用地點調整活動安排', summary: warnings.join(' '),
-  }) : plan
+export function withVisitRequirementText(plan: TripPlan, warnings: string[], input?: TripInput,
+  candidates?: NearbyPlaceCandidates) {
+  const content = input ? getVisitRequirementContentText(plan, input, candidates) : ''
+  let summary = input ? plan.summary.replace(/(?:^| )(?:已確認文化內容|文化內容說明)：[\s\S]*$/, '') : plan.summary
+  // A previously emitted machine warning may survive a later successful repair.
+  // Reassess it from this final plan instead of appending a contradictory success.
+  if (input && !warnings.length && /^(?:未安排可確認符合「|已安排文化場館；目前僅有場館用途資料)/.test(summary)) {
+    summary = '依下方地點與順序展開行程。'
+  }
+  if (!warnings.length && !content && summary === plan.summary) return plan
+  return carryOriginalActivities(plan, { ...plan,
+    ...(warnings.length ? { title: getTripPlanStyleLabel(plan.type) ?? plan.title,
+      subtitle: '已依可用地點調整活動安排' } : {}),
+    summary: [warnings.length ? warnings.join(' ') : summary, content].filter(Boolean).join(' '),
+  })
 }
 
 export function getOriginalActivityImpact(source: TripPlan, finalStops: Stop[]) {
@@ -1503,6 +1514,7 @@ export async function repairPlanForDelivery(
       foodTrace,
       stop.type === 'food' && requiredFoodMeals.some(window =>
         isStopAlignedWithMealWindow(arrival, stop.duration, window)),
+      input,
     )
   })
   traceDurationStops(plan.stops, repairedStops, 'replacement')
@@ -2739,6 +2751,7 @@ function ensureStopHasVerifiedPlace(
   arrivalMinutes?: number,
   foodTrace?: FoodPurposeProvenance,
   servesRequiredMeal = false,
+  input?: TripInput,
 ) {
   const existingCandidate = findMatchingCandidateForStop(stop, index, candidates)
   const originalWasUsed = Boolean(stop.placeId && usedPlaceIds.has(stop.placeId))
@@ -2764,6 +2777,7 @@ function ensureStopHasVerifiedPlace(
     existingCandidate,
     arrivalMinutes,
     servesRequiredMeal,
+    input,
   )
   if (!candidate) return stop
 
@@ -2788,6 +2802,7 @@ export function pickCandidateForStop(
   knownExistingCandidate?: VerifiedPlaceCandidate | null,
   arrivalMinutes?: number,
   servesRequiredMeal = false,
+  input?: TripInput,
 ) {
   const existingCandidate = knownExistingCandidate ?? findMatchingCandidateForStop(stop, index, candidates)
 
@@ -2804,6 +2819,8 @@ export function pickCandidateForStop(
     const alternatives = filterCandidatePoolForStopIndex(candidates.allCandidates, index).filter(candidate =>
       candidate.placeId !== existingCandidate.placeId && !usedPlaceIds.has(candidate.placeId) &&
       !avoidedPlaceIds.has(candidate.placeId) && candidateActivityPurpose(candidate) === purpose &&
+      (!input || arrivalMinutes === undefined || !isCandidateOpenForVisit(existingCandidate, arrivalMinutes, stop.duration) ||
+        preservesCoreVisitRequirements(stop, candidate, input, candidates)) &&
       (arrivalMinutes === undefined || isCandidateOpenForVisit(candidate, arrivalMinutes,
         applyCandidateToStop(stop, candidate).duration)))
     // Local optional preference only. Safety replacement below keeps its full fallback pool.

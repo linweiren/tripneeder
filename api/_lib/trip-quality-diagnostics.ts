@@ -4,6 +4,7 @@ import { getMealSuitability } from '../../src/services/ai/mealSuitability.js'
 import { getFoodPurposeHint } from './trip-food-purpose.js'
 import { resolveCandidateRankingContext } from './candidate-ranking-context.js'
 import { hasConfirmedCulturalPrimaryPurpose, isCandidateOpenForVisit } from './google-places.js'
+import { getCulturalContentEvidence } from './trip-cultural-content-evidence.js'
 import type { NearbyPlaceCandidates, PromptCandidateSelection, VerifiedPlaceCandidate } from './google-places.js'
 import { getDefaultStopDuration, getMaximumStopDuration, getMinimumStopDuration } from './trip-plan-metrics.js'
 import { getRequiredMealWindows, isStopAlignedWithMealWindow, parseTimeToMinutes,
@@ -14,7 +15,7 @@ import { getEstimatedPlanArrivalMinutes } from './trip-timeline.js'
 type Theme = ReturnType<typeof resolveCandidateRankingContext>['themes'][number]
 type EvidenceStatus = 'confirmed' | 'not_matched' | 'insufficient_evidence' | 'unknown'
 type Evidence = { status: EvidenceStatus; basis: string }
-type Venue = { name: string; types?: string[]; foodSubtype?: string; role?: string }
+type Venue = { name: string; placeId?: string; lat?: number; lng?: number; types?: string[]; foodSubtype?: string; role?: string }
 type MealHint = ReturnType<typeof getMealSuitability>
 type MealDiagnosticStop = { id: string; placeId: string | null; name: string; type: string;
   duration: number; arrivalMinutes: number; candidateRole: string | null; foodSubtype: string | null;
@@ -95,6 +96,7 @@ export type DiagnosticStageContext = {
 function themeEvidence(theme: Theme, venue: Venue): Evidence {
   const types = venue.types ?? []
   if (theme === 'culture') {
+    if (getCulturalContentEvidence(venue)) return { status: 'confirmed', basis: 'reviewed_cultural_content_source' }
     if (hasConfirmedCulturalPrimaryPurpose(venue)) return { status: 'confirmed', basis: 'existing_cultural_primary_purpose_helper' }
     if (!types.length) return { status: 'unknown', basis: 'no_place_type_evidence' }
     return { status: 'insufficient_evidence', basis: 'taxonomy_does_not_establish_cultural_experience' }
@@ -205,7 +207,10 @@ export class TripQualityDiagnostics {
       const candidate = this.candidates.find(item => stop.placeId && item.placeId === stop.placeId)
       // Never copy AI prose, arbitrary plan fields, prompts, tokens or historical events.
       const types = candidate?.types ?? stop.googleTypes ?? []
-      const venue = { name: candidate?.name ?? stop.name, types, foodSubtype: candidate?.foodSubtype ?? stop.foodSubtype }
+      const venue = { name: candidate?.name ?? stop.name, placeId: candidate?.placeId ?? stop.placeId,
+        lat: candidate?.lat ?? stop.lat, lng: candidate?.lng ?? stop.lng,
+        types, foodSubtype: candidate?.foodSubtype ?? stop.foodSubtype }
+      const content = stop.type !== 'food' ? getCulturalContentEvidence(venue) : undefined
       const themes = Object.fromEntries(this.intent.themes.map(theme => [theme, themeEvidence(theme, venue)])) as Record<Theme, Evidence>
       if (stop.type === 'food' && themes.culture?.status === 'confirmed') {
         themes.culture = { status: 'insufficient_evidence', basis: 'cultural_venue_but_food_activity_purpose' }
@@ -220,7 +225,10 @@ export class TripQualityDiagnostics {
         durationReference: { minimum: getMinimumStopDuration(stop), default: getDefaultStopDuration(stop.type),
           maximum: getMaximumStopDuration(stop), basis: 'existing_type_name_soft_reference', hardLimit: false },
         exceedsReference: stop.duration > getMaximumStopDuration(stop),
-        activityEvidence: { status: 'unknown' as const, basis: 'no_verified_activity_program_or_duration_evidence' },
+        activityEvidence: content ? { status: 'content_confirmed' as const, basis: 'reviewed_cultural_content_source',
+          content: content.content, sourceUrl: content.sourceUrl, checkedAt: content.checkedAt,
+          programme: 'unknown', admission: 'unknown', duration: 'unknown' }
+          : { status: 'unknown' as const, basis: 'no_verified_activity_program_or_duration_evidence' },
         meal: {
           classificationHint: getMealSuitability(venue),
           // Use existing verified-place purpose hints without copying/generated prose.

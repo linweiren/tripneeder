@@ -30,7 +30,13 @@ for (const kind of ['same-purpose', 'ranking-only', 'route-loss', 'route-gain-de
     assert.equal(metrics.requirements[0].fulfillment, 'satisfied')
     assert.equal(metrics.impact.identityChanges, 0)
     assert.equal(result.plan.stops[0].duration, f.plan.stops[0].duration)
-    assert.equal(metrics.decisions[0].reason,
+    if (kind === 'route-gain-demand-loss') {
+      // The explicit core-demand guard now rejects this optional loss before
+      // routing/fallback. Other same-demand comparisons still use the fallback.
+      assert.equal(metrics.decisions.length, 0)
+      assert.equal(metrics.repairAttempts, 1)
+      assert.equal(metrics.routeCalls, 2)
+    } else assert.equal(metrics.decisions[0].reason,
       'activity_equivalence_unknown;retain_feasible_fulfilled_original_without_confirmed_gain')
     if (kind === 'same-purpose' || kind === 'ranking-only') {
       const original = api.applyCandidateGroundingToPlan(f.plan, f.candidates)
