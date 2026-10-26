@@ -541,14 +541,14 @@ function getCandidateSupplementThemes(input: TripInput): SearchSupplementTheme[]
   if (input.category !== 'other' || typeof input.location.lat !== 'number' || typeof input.location.lng !== 'number' ||
     !buildTripWindow(input) || tripOverlapsClockWindow(input, 0, 6 * 60) || tripOverlapsClockWindow(input, 21 * 60, 24 * 60)) return []
   const context = resolveCandidateRankingContext(input)
-  const text = (input.customCategory ?? '').normalize('NFKC').replace(/\s+/g, '')
-  if (context.customStatus !== 'recognized' || context.avoidCoffee || /不|別|避開|文化活動|戶外活動/.test(text)) return []
+  if (context.customStatus !== 'recognized' || context.avoidCoffee) return []
   const mixed = context.themes.length === 2 && context.themes.includes('culture') && context.themes.includes('coffee')
   if (context.themes.length > 1 && !mixed) return []
-  if (context.themes.includes('culture')) {
-    const pair = /^(?:文化\+(?:咖啡|咖啡廳|咖啡館|咖啡店)|(?:咖啡|咖啡廳|咖啡館|咖啡店)\+文化)$/.test(text)
-    return /(博物館|美術館|美術展覽)/.test(text) || mixed && (pair || /文化展覽/.test(text)) ? context.themes : []
-  }
+  // Reuse recognised visit intent; a second cultural keyword gate can disagree
+  // with the shared parser (for example, a cultural-sights and cafe request).
+  if (context.themes.includes('culture')) return context.themes
+  const text = (input.customCategory ?? '').normalize('NFKC').replace(/\s+/g, '')
+  if (/不|別|避開|文化活動|戶外活動/.test(text)) return []
   if (context.themes.includes('coffee')) return /咖啡(?:廳|館|店)/.test(text) ? context.themes : []
   return context.themes.includes('outdoor') && /(公園|步道)/.test(text) && !input.tags.includes('indoor_first') ? context.themes : []
 }
