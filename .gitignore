@@ -34,3 +34,6 @@ tests/data/
 tests/output/
 .vercel
 .env*
+
+# Local production security backups
+/docs/security/backups/
