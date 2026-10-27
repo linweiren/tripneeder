@@ -4,10 +4,11 @@ import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { stripIntentLinks } from './fixtures/intent-candidate-grounding.mjs'
 import { assertWorkingTreeHandler } from './fixtures/demand-delivery-contract.mjs'
+import { withoutPaymentPersistence } from './fixtures/paid-generation-regression-contract.mjs'
 const textless = ({ title, subtitle, summary, ...rest }) => rest
 // The later intent projection intentionally adds one prompt-only block. Its full
 // request delta is checked against fedd41fc in intent-candidate-grounding.test.mjs.
-const withoutIntentPrompt = calls => calls.map(call => {
+const withoutIntentPrompt = calls => withoutPaymentPersistence(calls).map(call => {
   if (call.url !== 'https://api.openai.com/v1/chat/completions') return call
   const body = JSON.parse(call.init.body)
   body.messages = body.messages.map(message => ({ ...message, content: stripIntentLinks(message.content) }))

@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { paidEventsFromLegacy } from './fixtures/paid-generation-regression-contract.mjs'
 import assert from 'node:assert/strict'
 import https from 'node:https'
 import { execFileSync } from 'node:child_process'
@@ -301,7 +302,7 @@ for (const scenario of ['positioning', 'missing-balanced', 'tail']) test(`12d11c
     { cwd: process.cwd(), encoding: 'utf8', timeout: 60000, maxBuffer: 4 * 1024 * 1024 })))
   for (const result of [off, on]) {
     assert.deepEqual(result.response, baseline.response)
-    assert.deepEqual(result.events, baseline.events)
+    assert.deepEqual(result.events, paidEventsFromLegacy(baseline.events))
     assert.deepEqual(result.calls, baseline.calls)
   }
   assert.equal(on.coverageFinal.length, 3)

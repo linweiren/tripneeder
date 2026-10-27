@@ -18,7 +18,7 @@ const { getScheduleCapacityMinutes, getMinimumRequiredActualMinutes } = await im
 const { assessVisitRequirements } = await import('../../../api/_lib/trip-demand-compliance.ts')
 const { validatePlanOpeningHours } = await import('../../../api/_lib/google-places.ts')
 const { compareOriginalActivities } = await import('../../../api/_lib/trip-activity-purpose.ts')
-const api = await loadCoverageExperiment(mode, { trace: instrumentation === 'trace' })
+const api = await loadCoverageExperiment(mode, { trace: instrumentation === 'trace', beforePaidGeneration: layer === 'handler-before-paid' })
 const f = experimentFixture(kind, style)
 if (evidenceMode === 'unverified') f.evidence = []
 if (evidenceMode === 'capacity-pressure') { f.input.endTime = '13:00'; f.plan.scheduleStartTime = f.input.startTime }
@@ -29,7 +29,7 @@ if (evidenceMode === 'opening-pressure') {
 }
 
 let output
-if (layer === 'handler') {
+if (layer === 'handler' || layer === 'handler-before-paid') {
   for (const key of ['info', 'warn', 'debug', 'error']) mock.method(console, key, () => {})
   f.plans = ['safe', 'balanced', 'explore'].map(type => ({ ...structuredClone(f.plan), id: type, type,
     title: `固定${type}草稿`, subtitle: '隔離免費實驗', summary: '相同候選與草稿，重跑既有生成流程' }))

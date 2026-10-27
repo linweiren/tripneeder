@@ -120,7 +120,7 @@ test('three Explore aliases refill only Safe and Balanced with their own regener
   assert.equal(response.plans[2].title, 'old-0')
   assert.equal(calls.ai.length, 3)
   assert.deepEqual(calls.ai.slice(1).map(c => /需重產的方案 ID：([^\n]*)/.exec(c.messages[0].content)[1]), ['safe', 'balanced'])
-  assertStyles(events.filter(e => e.event === 'plan').map(e => e.plan), ['explore'])
+  assertStyles(events.filter(e => e.event === 'plan').map(e => e.plan))
 })
 
 test('missing type uses bounded refill and is never recovered from its ID', async t => {
@@ -231,7 +231,7 @@ test('frontend receives canonical final identities and displays the surviving st
     JSON.stringify({ event: 'done', response: { plans } }) + '\n', {
       headers: { 'content-type': 'application/x-ndjson' },
     }))
-  const response = await new ProxyTripPlanner().generateTripPlans({ input: f.input, onPlan: p => partials.push(p) })
+  const response = await new ProxyTripPlanner().generateTripPlans({ generationId: '11111111-1111-4111-8111-111111111111', input: f.input, onPlan: p => partials.push(p) })
   assertStyles(response.plans, ['balanced', 'explore'])
   assert.deepEqual(partials, JSON.parse(JSON.stringify(plans)))
   assert.deepEqual(response.plans.map(p => getTripPlanStyleLabel(p.type)), ['平衡方案', '探索方案'])

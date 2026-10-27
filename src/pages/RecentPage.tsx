@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TripRecordList } from '../components/TripRecordList'
+import { PaidGenerationRecovery } from '../components/PaidGenerationRecovery'
 import { useAuth } from '../contexts/auth'
 import { useDialog } from '../contexts/dialog'
 import {
@@ -121,6 +122,7 @@ export function RecentPage() {
         />
       </section>
       <div className="history-scroll">
+        <PaidGenerationRecovery />
         {user && !isRecordsLoading ? (
           <div className="history-status-row" aria-label="固定顯示最近紀錄">
             <span className="history-status-chip">固定顯示最近紀錄</span>

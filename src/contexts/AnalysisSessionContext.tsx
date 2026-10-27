@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { tripPlanner } from '../services/ai'
+import { useAuth } from './auth'
+import { getPaidGeneration } from '../services/ai/proxyTripPlanner'
+import { loadAnalysisSession, saveAnalysisSession, clearStoredAnalysisSession, isExpiredSession, getGenerationId } from '../services/ai/generationSessionStorage'
 import { supabase } from '../services/auth/supabaseClient'
 import {
   saveRecentGeneratedRecords,
@@ -27,18 +30,16 @@ import {
   type PlanDetailState,
 } from './analysisSession'
 
-const ANALYSIS_SESSION_STORAGE_KEY = 'tripneeder.analysisSession'
-const ANALYSIS_SESSION_TTL_MS = 10 * 60 * 1000
-
 export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
+  const { user, isAuthLoading } = useAuth()
+  const ownerId = user?.id
   const navigate = useNavigate()
   const location = useLocation()
   const locationRef = useRef(location)
   const requestIdRef = useRef(0)
   const abortControllerRef = useRef<AbortController | null>(null)
-  const [session, setSession] = useState<AnalysisSession | null>(() =>
-    loadAnalysisSession(),
-  )
+  const [session, setSession] = useState<AnalysisSession | null>(null)
+  const restoredOwnerRef = useRef<string | null>(null)
   const [planDetailStates, setPlanDetailStates] = useState<
     Record<string, PlanDetailState>
   >({})
@@ -53,7 +54,7 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     setSession(nextSession)
   }, [])
 
-  const startAnalysis = useCallback(async (input: TripInput) => {
+  const startAnalysis = useCallback(async (input: TripInput, retryId?: string) => {
     const requestId = requestIdRef.current + 1
     const startedAt = getTimestamp()
     requestIdRef.current = requestId
@@ -62,7 +63,7 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     const controller = new AbortController()
     abortControllerRef.current = controller
 
-    const nextSession: AnalysisSession = {
+    let nextSession: AnalysisSession = {
       status: 'analyzing',
       input,
       startedAt,
@@ -72,22 +73,30 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       partialPlans: [],
     }
 
-    setAndStoreSession(nextSession)
+    setSession(nextSession)
 
     try {
       const { accessToken: token, userId } = await getSessionAuth()
+      if (!token || !userId) throw new Error('請登入後繼續。')
+      if (requestId !== requestIdRef.current) return
+      const generationId = getGenerationId(input, userId, retryId)
+      nextSession = { ...nextSession, generationId, userId }
+      // Failure to persist must stop BEFORE the paid request.
+      saveAnalysisSession(nextSession, true)
+      setSession(nextSession)
       const response = await tripPlanner.generateTripPlans({
+        generationId,
         input,
         accessToken: token,
         signal: controller.signal,
-        onPlan: (plan) => {
+        onProgress: (style) => {
           if (requestId !== requestIdRef.current) return
           setSession((current) => {
             if (!current || current.status !== 'analyzing') return current
-            const nextPartial = [...(current.partialPlans ?? []), plan]
+            const progressStyles = Array.from(new Set([...(current.progressStyles ?? []), style]))
             const nextState = {
               ...current,
-              partialPlans: nextPartial,
+              progressStyles,
               updatedAt: getTimestamp(),
             }
             saveAnalysisSession(nextState)
@@ -124,8 +133,11 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       } else {
         saveGeneratedPlans(response.plans, input, userId)
       }
+      if (requestId !== requestIdRef.current) return
 
       const successSession: AnalysisSession = {
+        generationId: nextSession.generationId,
+        userId: nextSession.userId,
         status: 'success',
         input,
         startedAt,
@@ -145,6 +157,8 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       }
 
       const errorSession: AnalysisSession = {
+        generationId: nextSession.generationId,
+        userId: nextSession.userId,
         status: 'error',
         input,
         startedAt,
@@ -158,13 +172,41 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     }
   }, [navigate, setAndStoreSession])
 
+  useEffect(() => {
+    if (isAuthLoading) return
+    if (restoredOwnerRef.current === (ownerId ?? '')) return
+    restoredOwnerRef.current = ownerId ?? ''
+    requestIdRef.current += 1
+    abortControllerRef.current?.abort()
+    setSession(null)
+    if (!ownerId) return
+    const saved = loadAnalysisSession(ownerId)
+    if (!saved) return
+    if (saved.status === 'analyzing' && saved.generationId) void startAnalysis(saved.input, saved.generationId)
+    else setSession(saved)
+  }, [isAuthLoading, ownerId, startAnalysis])
+
   const retryAnalysis = useCallback(async () => {
     if (!session) {
       return
     }
 
-    await startAnalysis(session.input)
+    await startAnalysis(session.input, session.generationId)
   }, [session, startAnalysis])
+
+  const restorePaidGeneration = useCallback(async (id: string) => {
+    const requestId = ++requestIdRef.current
+    abortControllerRef.current?.abort()
+    const { accessToken, userId } = await getSessionAuth()
+    if (!userId || !accessToken) throw new Error('請先登入。')
+    const saved = await getPaidGeneration(id, accessToken)
+    if (requestId !== requestIdRef.current) return
+    if (saved.status !== 'completed' || !saved.response || !saved.input) throw new Error('這筆行程尚未付款完成。')
+    saveGeneratedPlans(saved.response.plans, saved.input, userId)
+    setAndStoreSession({ generationId: id, userId, input: saved.input, status: 'success',
+      startedAt: getTimestamp(), updatedAt: getTimestamp(), lastRoute: '/results', warnings: saved.response.warnings })
+    navigate('/results')
+  }, [navigate, setAndStoreSession])
 
   const cancelAnalysis = useCallback(() => {
     requestIdRef.current += 1
@@ -175,10 +217,10 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     })
     planDetailControllersRef.current = {}
     setPlanDetailStates({})
-    clearStoredAnalysisSession()
+    if (ownerId) clearStoredAnalysisSession(ownerId)
     clearGeneratedTripFlow()
     setSession(null)
-  }, [])
+  }, [ownerId])
 
   const requestPlanDetails = useCallback((planId: string, options?: PlanDetailRequestOptions) => {
     if (!planId) return
@@ -371,22 +413,24 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const isSessionExpired = Boolean(session && isExpiredSession(session))
+  const visibleSession = session?.userId && session.userId !== ownerId ? null : session
+  const isSessionExpired = Boolean(visibleSession && isExpiredSession(visibleSession))
   const plannerPath = useMemo(() => {
-    if (!session || isSessionExpired) {
+    if (!visibleSession || isSessionExpired) {
       return '/'
     }
 
-    return session.lastRoute
-  }, [isSessionExpired, session])
+    return visibleSession.lastRoute
+  }, [isSessionExpired, visibleSession])
 
   const value = useMemo(
     () => ({
-      session: isSessionExpired ? null : session,
+      session: isSessionExpired ? null : visibleSession,
       plannerPath,
       isSessionExpired,
       startAnalysis,
       retryAnalysis,
+      restorePaidGeneration,
       cancelAnalysis,
       resetAnalysisFlow,
       setFlowRoute,
@@ -405,7 +449,8 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       requestPlanDetails,
       resetAnalysisFlow,
       retryAnalysis,
-      session,
+      restorePaidGeneration,
+      visibleSession,
       setFlowRoute,
       startAnalysis,
     ],
@@ -444,69 +489,4 @@ async function getSessionAuth() {
   }
 }
 
-function loadAnalysisSession() {
-  const rawSession = sessionStorage.getItem(ANALYSIS_SESSION_STORAGE_KEY)
-
-  if (!rawSession) {
-    return null
-  }
-
-  try {
-    const session = JSON.parse(rawSession) as AnalysisSession
-
-    if (
-      !isAnalysisSession(session) ||
-      isExpiredSession(session) ||
-      session.status === 'analyzing'
-    ) {
-      clearStoredAnalysisSession()
-      clearGeneratedTripFlow()
-      return null
-    }
-
-    return session
-  } catch {
-    clearStoredAnalysisSession()
-    return null
-  }
-}
-
-function saveAnalysisSession(session: AnalysisSession) {
-  sessionStorage.setItem(ANALYSIS_SESSION_STORAGE_KEY, JSON.stringify(session))
-}
-
-function clearStoredAnalysisSession() {
-  sessionStorage.removeItem(ANALYSIS_SESSION_STORAGE_KEY)
-}
-
-function isExpiredSession(session: AnalysisSession) {
-  return getTimestamp() - session.startedAt > ANALYSIS_SESSION_TTL_MS
-}
-
-function getTimestamp() {
-  return new Date().getTime()
-}
-
-function isAnalysisSession(value: unknown): value is AnalysisSession {
-  if (!isRecord(value)) {
-    return false
-  }
-
-  return (
-    (value.status === 'analyzing' ||
-      value.status === 'success' ||
-      value.status === 'error') &&
-    isRecord(value.input) &&
-    typeof value.startedAt === 'number' &&
-    typeof value.updatedAt === 'number' &&
-    typeof value.lastRoute === 'string' &&
-    (typeof value.error === 'undefined' || typeof value.error === 'string') &&
-    (typeof value.warnings === 'undefined' ||
-      (Array.isArray(value.warnings) &&
-        value.warnings.every((warning) => typeof warning === 'string')))
-  )
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
+function getTimestamp() { return Date.now() }

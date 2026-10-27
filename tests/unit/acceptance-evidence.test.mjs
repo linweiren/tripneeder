@@ -64,7 +64,7 @@ for (const kind of ['normal', 'history-coffee', 'raw-identity', 'retry', 'retry-
     } else {
       assert.equal(manifest.status, 'incomplete')
       assert.ok(manifest.reasons.includes('no_done_response'))
-      assert.equal(ledger.points.outcome, 'not_attempted')
+      assert.equal(ledger.points.outcome, kind === 'points-failure' ? 'rpc_failed' : 'not_attempted')
     }
     const prompts = files['prompt-evidence.json'].data
     if (kind.startsWith('related-')) {

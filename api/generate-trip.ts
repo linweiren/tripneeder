@@ -2,6 +2,8 @@
 import { recordAiDurations, traceDurationPlan, traceDurationStops, recordCoverageShadow } from './_lib/trip-coverage-v2.js'
 
 import https from 'node:https'
+import { requireAuthenticatedUser, handleApiOptions } from './_lib/authenticated-user.js'
+import { claimGeneration, createGenerationStore, generationInput, isGenerationId, readGeneration } from './_lib/trip-generations.js'
 import { appendFileSync } from 'node:fs'
 import { buildTripPrompt, buildRetryTripSkeletonPrompt, parseTripPlanSkeletonResponse } from '../src/services/ai/tripPlanPrompt.js'
 import { getTripPlanStyleLabel, normalizeTripPlanIdentity, normalizeTripPlanIdentities } from '../src/services/ai/tripPlanIdentity.js'
@@ -114,6 +116,8 @@ type VercelRequest = {
 const SUPABASE_FETCH_TIMEOUT_MS = 10000
 
 type VercelResponse = {
+  on?: (event: string, listener: () => void) => void
+  writableEnded?: boolean
   status: (code: number) => VercelResponse
   json: (body: unknown) => void
   setHeader: (name: string, value: string) => void
@@ -193,59 +197,98 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 async function generateTrip(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Cache-Control', 'no-store')
-
+  if (handleApiOptions(req.method, res)) return
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
 
-  const request = parseRequestBody(req.body)
-  const accessToken = getBearerToken(req.headers?.authorization)
-
-  if (!request) {
+  const auth = await observeEvidenceCall('supabase', () => requireAuthenticatedUser(req.headers?.authorization, res))
+  if (!auth) return
+  const body = parseRequestBody(req.body)
+  const input = generationInput(body?.input)
+  if (!body || !input || !isGenerationId(body.generationId)) {
     res.status(400).json({ error: '行程偏好資料不完整，請回到表單重新送出。' })
     return
   }
 
-  if (getAllowedTripMinutes(request.input) === 0) {
+  const generationId = body.generationId
+  if (getAllowedTripMinutes(input) === 0) {
     res.status(400).json({ error: '開始時間與結束時間不可相同。' })
     return
   }
 
-  if (!accessToken) {
-    res.status(401).json({ error: '請登入以繼續使用本服務。' })
-    return
-  }
-
-  const apiKey = process.env.OPENAI_API_KEY
-
-  if (!apiKey) {
-    res.status(500).json({
-      error: '尚未在 Vercel Environment Variables 設定 OPENAI_API_KEY。',
-    })
-    return
-  }
-
-  let supabase: PointsSupabaseClient
-  let userId: string | undefined
+  let store: ReturnType<typeof createGenerationStore>
+  let attemptToken: string
   try {
-    supabase = createUserScopedSupabaseClient(accessToken)
-    userId = getUserIdFromToken(accessToken)
-    const balance = await getAvailablePoints(supabase)
-
-    if (balance < ANALYSIS_COST) {
-      res.status(402).json({
-        error: `點數不足。每次分析需要 ${ANALYSIS_COST} 點，目前剩餘 ${balance} 點。`,
-      })
+    store = createGenerationStore()
+    const claim = await claimGeneration(store, auth.userId, generationId, input)
+    if (claim.outcome === 'completed') { res.status(200).json(claim.response); return }
+    if (claim.outcome === 'missing') { res.status(404).json({ error: '找不到這筆生成。' }); return }
+    if (claim.outcome === 'input_mismatch') { res.status(409).json({ error: '生成編號與原始輸入不符，請開始新一次生成。' }); return }
+    if (claim.outcome === 'running') {
+      res.setHeader('Retry-After', '3')
+      res.status(202).json({ generationId: generationId, status: 'running', leaseExpiresAt: claim.leaseExpiresAt })
       return
     }
-  } catch (error) {
-    res.status(502).json({
-      error: error instanceof Error ? error.message : 'AI 分析失敗，請稍後再試。',
-    })
+    if (claim.outcome !== 'claimed' || !isGenerationId(claim.attemptToken)) throw new Error('Invalid claim')
+    attemptToken = claim.attemptToken
+  } catch {
+    res.status(503).json({ error: '付款狀態暫時無法確認，請稍後查詢原生成編號。' })
     return
   }
 
+  const controller = new AbortController()
+  if (req.signal?.aborted) controller.abort()
+  const abort = () => controller.abort()
+  req.signal?.addEventListener('abort', abort, { once: true })
+  res.on?.('close', () => { if (!res.writableEnded) controller.abort() })
+  let commitStarted = false
+  try {
+    const apiKey = process.env.OPENAI_API_KEY
+    if (!apiKey) { res.status(500).json({ error: '行程生成服務設定不完整。' }); return }
+    const supabase = createUserScopedSupabaseClient(auth.accessToken)
+    const balance = await getAvailablePoints(supabase)
+    if (balance < ANALYSIS_COST) {
+      res.status(402).json({ error: `點數不足。每次分析需要 ${ANALYSIS_COST} 點，目前剩餘 ${balance} 點。` })
+      return
+    }
+    controller.signal.throwIfAborted()
+    await runTripGeneration({ ...req, signal: controller.signal }, res, { input }, supabase, auth.userId, apiKey, async response => {
+      // Serialize the final Validation/Repair/text version before starting the transaction.
+      const snapshot = JSON.parse(JSON.stringify(response)) as GenerateTripPlansResponse
+      controller.signal.throwIfAborted()
+      commitStarted = true
+      recordEvidencePoints('attempted', ANALYSIS_COST)
+      try {
+        const { data, error } = await store.rpc('complete_paid_trip_generation', {
+          p_user_id: auth.userId, p_generation_id: generationId, p_attempt_token: attemptToken, p_response: snapshot,
+        })
+        if (error || !data) throw new Error('Commit unconfirmed')
+        recordEvidencePoints('rpc_confirmed', ANALYSIS_COST)
+        return data as GenerateTripPlansResponse
+      } catch {
+        // A timeout may have happened AFTER commit. Never mark failed or change the ID.
+        const saved = await readGeneration(store, auth.userId, generationId)
+        if (saved?.status === 'completed' && saved.response) return saved.response
+        recordEvidencePoints('rpc_failed', ANALYSIS_COST)
+        throw new Error('付款與保存尚未確認，請使用原生成編號恢復；不會交付未付款行程。')
+      }
+    })
+  } catch {
+    if (!controller.signal.aborted) res.status(503).json({ error: '生成服務暫時無法使用，請使用原生成編號重試。' })
+  } finally {
+    req.signal?.removeEventListener('abort', abort)
+    if (!commitStarted) {
+      // Fenced failure cannot clear a newer worker or a completed payment.
+      try { await store.rpc('fail_trip_generation', { p_user_id: auth.userId, p_generation_id: generationId, p_attempt_token: attemptToken }) } catch { /* Lease permits recovery after a database outage. */ }
+    }
+  }
+}
+
+async function runTripGeneration(req: VercelRequest, res: VercelResponse, request: GenerateTripPlansRequest,
+  supabase: PointsSupabaseClient, userId: string, apiKey: string,
+  complete: (response: GenerateTripPlansResponse) => Promise<GenerateTripPlansResponse>) {
   // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
   let locationWarning = ''
   if (
@@ -352,6 +395,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
   res.setHeader('X-Accel-Buffering', 'no')
 
   const writeEvent = (event: Record<string, unknown>) => {
+    req.signal?.throwIfAborted()
     res.write(`${JSON.stringify(event)}\n`)
     recordEvidenceDelivery(event)
   }
@@ -403,7 +447,6 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
     const extractor = new PlanExtractor()
     const streamedPlanTypes = new Set<string>()
     let fullText = ''
-    let pointsConsumed = false
     const validatedPlans: TripPlan[] = []
     const invalidPlanIds: string[] = []
     const validationSummaries = new Map<string, string[]>()
@@ -470,8 +513,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
 
           upsertValidatedPlan(validatedPlans, validatedPlan)
           if (!getForbiddenVisitIssues(validatedPlan, request.input, nearbyPlaceCandidates).length) {
-            writeEvent({ event: 'plan', plan: finalizePlanText(withVisitRequirementText(validatedPlan,
-              getVisitRequirementWarnings(validatedPlan, request.input, nearbyPlaceCandidates), request.input, nearbyPlaceCandidates)) })
+            writeEvent({ event: 'progress', style: validatedPlan.type, stage: 'validating' })
           }
         }
       }
@@ -523,8 +565,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
 
           upsertValidatedPlan(validatedPlans, validatedPlan)
           if (!getForbiddenVisitIssues(validatedPlan, request.input, nearbyPlaceCandidates).length) {
-            writeEvent({ event: 'plan', plan: finalizePlanText(withVisitRequirementText(validatedPlan,
-              getVisitRequirementWarnings(validatedPlan, request.input, nearbyPlaceCandidates), request.input, nearbyPlaceCandidates)) })
+            writeEvent({ event: 'progress', style: validatedPlan.type, stage: 'validating' })
           }
         }
       }
@@ -1009,20 +1050,6 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
       )
       validationSummaries.clear()
 
-      if (!pointsConsumed) {
-        pointsConsumed = true
-        try {
-          await consumeAnalysisPoints(supabase)
-        } catch (error) {
-          writeEvent({
-            event: 'points_warning',
-            message:
-              error instanceof Error
-                ? error.message
-                : '扣點流程失敗，請稍後再試。',
-          })
-        }
-      }
     } catch (error) {
       writeTripCandidateDebugReport(
         candidateDebugSession,
@@ -1044,11 +1071,19 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
 
     finalResponse.plans = finalResponse.plans.map(plan => finalizePlanText(rememberPlanTextTransition(
       validatedPlans.find(previous => previous.id === plan.id) ?? plan, plan)))
+    const savedResponse = await complete(finalResponse)
+    // Preserve observation provenance across the persisted JSON snapshot boundary.
+    for (const plan of savedResponse.plans) {
+      const previous = finalResponse.plans.find(p => p.id === plan.id)
+      if (previous) carryEvidencePlan(previous, plan)
+    }
+    finalResponse = savedResponse
     writeGenerateDebugLog('generate-trip-done', {
       planIds: finalResponse.plans.map((plan) => plan.id),
       planCount: finalResponse.plans.length,
       warnings: finalResponse.warnings ?? [],
     })
+    for (const plan of finalResponse.plans) writeEvent({ event: 'plan', plan })
     writeEvent({ event: 'done', response: finalResponse })
     res.end()
   } catch (error) {
@@ -4647,32 +4682,6 @@ function createNodeHttpsFetch(): typeof fetch {
   }
 }
 
-async function consumeAnalysisPoints(supabase: PointsSupabaseClient) {
-  recordEvidencePoints('attempted', ANALYSIS_COST)
-  const { error } = await supabase.rpc('consume_points_for_analysis', {
-    cost: ANALYSIS_COST,
-    reason: 'AI 行程分析',
-  })
-
-  if (error) {
-    recordEvidencePoints('rpc_failed', ANALYSIS_COST)
-    if (error.message.includes('Insufficient points')) {
-      throw new Error('點數不足，請先到點數管理確認餘額。')
-    }
-
-    throw new Error('行程已產生，但扣點流程失敗，請稍後再試。')
-  }
-  recordEvidencePoints('rpc_confirmed', ANALYSIS_COST)
-}
-
-function getBearerToken(value?: string) {
-  if (!value?.startsWith('Bearer ')) {
-    return ''
-  }
-
-  return value.slice('Bearer '.length).trim()
-}
-
 function parseRequestBody(body: unknown): GenerateTripPlansRequest | null {
   if (!isRecord(body) || !isRecord(body.input)) {
     return null
@@ -4706,17 +4715,6 @@ async function readOpenAiErrorDetail(response: Response) {
     return data.error?.message ?? ''
   } catch {
     return ''
-  }
-}
-
-function getUserIdFromToken(accessToken: string): string | undefined {
-  try {
-    const payload = JSON.parse(
-      Buffer.from(accessToken.split('.')[1], 'base64').toString(),
-    )
-    return payload.sub
-  } catch {
-    return undefined
   }
 }
 

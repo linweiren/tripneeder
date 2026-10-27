@@ -91,6 +91,8 @@ mock.method(https, 'request', (url, options, callback) => {
 })
 mock.method(globalThis, 'fetch', async (url, init) => {
   calls.push({ url: String(url), init })
+  if (kind === 'points-failure' && String(url).endsWith('/complete_paid_trip_generation')) return Response.json({ code: 'P0001', message: 'mock debit failed' }, { status: 400 })
+  if (new URL(url).hostname !== 'api.openai.com') return fetch(url, init)
   if (kind === 'ai-http-failure') return new Response('{}', { status: 503 })
   if (kind === 'ai-network-failure') throw Error('SECRET_NETWORK_ERROR')
   const response = await fetch(url, init)

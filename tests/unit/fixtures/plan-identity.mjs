@@ -31,7 +31,7 @@ export function identityFixture() {
 // falling through to a live service; the production handler and final gates run.
 export function mockGeneration(t, f, initial, refill = (ids) => f.plans.filter(p => ids.includes(p.type)), options = {}) {
   t.mock.timers.enable({ apis: ['Date'], now: FIXED_NOW })
-  const calls = { ai: [], routes: [], points: 0 }
+  const calls = { ai: [], routes: [], points: 0, places: 0, generations: new Map() }
   const places = f.candidates.allCandidates.map(c => ({
     id: c.placeId, displayName: { text: c.name }, formattedAddress: c.address,
     location: { latitude: c.lat, longitude: c.lng },
@@ -60,6 +60,7 @@ export function mockGeneration(t, f, initial, refill = (ids) => f.plans.filter(p
         else if (target.pathname.endsWith('/personalization_events')) payload = options.preferenceEvents ?? []
         else throw new Error(`Unexpected mock Supabase URL: ${target}`)
       } else if (target.hostname === 'places.googleapis.com') {
+        calls.places++
         if (target.pathname.endsWith(':searchText')) payload = { places }
         else {
           payload = places.find(p => p.id === decodeURIComponent(target.pathname.split('/').at(-1)))
@@ -84,6 +85,39 @@ export function mockGeneration(t, f, initial, refill = (ids) => f.plans.filter(p
     return req
   })
   t.mock.method(globalThis, 'fetch', async (url, init) => {
+    const target = new URL(url)
+    if (target.hostname === 'unit-test.supabase.co') {
+      const value = init?.body ? JSON.parse(init.body) : {}
+      if (target.pathname === '/auth/v1/user') return Response.json({ id: '11111111-1111-4111-8111-111111111111', role: 'authenticated' })
+      const id = value.p_generation_id
+      if (target.pathname.endsWith('/claim_trip_generation')) {
+        let row = calls.generations.get(id)
+        if (row && JSON.stringify(row.input) !== JSON.stringify(value.p_request_input)) return Response.json({ outcome: 'input_mismatch' })
+        if (row?.status === 'completed') return Response.json({ outcome: 'completed', response: row.response })
+        if (row?.status === 'running') return Response.json({ outcome: 'running', leaseExpiresAt: row.lease })
+        row = { status: 'running', input: value.p_request_input, token: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', lease: new Date(Date.now() + 360000).toISOString() }
+        calls.generations.set(id, row)
+        return Response.json({ outcome: 'claimed', attemptToken: row.token, leaseExpiresAt: row.lease })
+      }
+      if (target.pathname.endsWith('/complete_paid_trip_generation')) {
+        const row = calls.generations.get(id)
+        if (row?.status === 'completed') return Response.json(row.response)
+        calls.points++
+        row.status = 'completed'; row.response = value.p_response
+        return Response.json(row.response)
+      }
+      if (target.pathname.endsWith('/fail_trip_generation')) {
+        const row = calls.generations.get(id)
+        if (row?.token === value.p_attempt_token && row.status === 'running') row.status = 'failed'
+        return Response.json(true)
+      }
+      if (target.pathname.endsWith('/trip_generations')) {
+        const key = target.searchParams.get('generation_id')?.slice(3), row = calls.generations.get(key)
+        return Response.json(row ? { generation_id: key, status: row.status, response: row.response,
+          request_input: row.input, lease_expires_at: row.lease } : null)
+      }
+      throw new Error(`Unexpected mock Supabase fetch: ${target}`)
+    }
     assertOpenAi(url)
     const body = JSON.parse(init.body)
     calls.ai.push(body)
@@ -115,7 +149,7 @@ function assertOpenAi(url) {
 export async function runHandler(handler, f) {
   const events = []
   let statusCode = 200
-  const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'fixture-user' })).toString('base64url')}.fixture`
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: '11111111-1111-4111-8111-111111111111' })).toString('base64url')}.fixture`
   const res = {
     status(code) { statusCode = code; return this },
     setHeader() {},
@@ -123,6 +157,6 @@ export async function runHandler(handler, f) {
     write(chunk) { events.push(JSON.parse(chunk)) },
     end() {},
   }
-  await handler({ method: 'POST', body: { input: f.input }, headers: { authorization: `Bearer ${token}` } }, res)
+  await handler({ method: 'POST', body: { generationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', input: f.input }, headers: { authorization: `Bearer ${token}` } }, res)
   return { statusCode, events, response: events.find(e => e.event === 'done')?.response }
 }

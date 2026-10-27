@@ -2,12 +2,15 @@
 import fs from 'node:fs'
 import { createHash } from 'node:crypto'
 import { stripTypeScriptTypes } from 'node:module'
+import { execFileSync } from 'node:child_process'
 
 // Test-only source loading. Production imports never reference this file.
-export async function loadCoverageExperiment(mode = 'A', { trace = false } = {}) {
+export async function loadCoverageExperiment(mode = 'A', { trace = false, beforePaidGeneration = false } = {}) {
   if (!['A', 'B', 'B2', 'working'].includes(mode)) throw Error('Expected A/B/B2/working')
   if (mode === 'working') return import('../../../api/generate-trip.ts')
-  let source = fs.readFileSync(new URL('../../../api/generate-trip.ts', import.meta.url), 'utf8')
+  let source = beforePaidGeneration
+    ? execFileSync('git', ['show', 'b92c3eccd57f7276df84de03a9a837dcc9df8626:api/generate-trip.ts'], { encoding: 'utf8' })
+    : fs.readFileSync(new URL('../../../api/generate-trip.ts', import.meta.url), 'utf8')
   const sha256 = createHash('sha256').update(source).digest('hex')
   source = source.replaceAll('\r\n', '\n')
   const replaceOnce = (needle, replacement) => {

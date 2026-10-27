@@ -6,6 +6,9 @@ import type { NearbyPlaceCandidates } from '../../api/_lib/google-places'
 export type AnalysisSessionStatus = 'analyzing' | 'success' | 'error'
 
 export type AnalysisSession = {
+  generationId?: string
+  userId?: string
+  progressStyles?: TripPlan['type'][]
   status: AnalysisSessionStatus
   input: TripInput
   startedAt: number
@@ -36,6 +39,7 @@ export type AnalysisSessionContextValue = {
   isSessionExpired: boolean
   startAnalysis: (input: TripInput) => Promise<void>
   retryAnalysis: () => Promise<void>
+  restorePaidGeneration: (id: string) => Promise<void>
   cancelAnalysis: () => void
   resetAnalysisFlow: () => void
   setFlowRoute: (route: string) => void

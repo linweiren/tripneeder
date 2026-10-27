@@ -3,6 +3,7 @@ import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
 type LocalApiRequest = {
+  url?: string
   method?: string
   body?: unknown
   headers?: { authorization?: string }
@@ -41,6 +42,7 @@ export default defineConfig(({ mode }) => {
   if (env.SUPABASE_ANON_KEY) {
     process.env.SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY
   }
+  if (env.SUPABASE_SERVICE_ROLE_KEY) process.env.SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY
 
   return {
     plugins: [react(), localApiPlugin()],
@@ -51,6 +53,10 @@ function localApiPlugin(): Plugin {
   return {
     name: 'tripneeder-local-api',
     configureServer(server) {
+      server.middlewares.use('/api/trip-generations', async (req, res) => {
+        const { default: handler } = await import('./api/trip-generations')
+        await handleLocalApiRequest(req, res, handler)
+      })
       server.middlewares.use('/api/generate-trip-details', async (req, res) => {
         const { default: handler } = await import('./api/generate-trip-details')
         await handleLocalApiRequest(req, res, handler)
@@ -87,6 +93,7 @@ async function handleLocalApiRequest(
     write: (chunk: string) => void
     end: (chunk?: string) => void
     writableEnded: boolean
+    on: (event: string, listener: () => void) => void
   },
   handler: (req: LocalApiRequest, res: LocalApiResponse) => Promise<void>,
 ) {
@@ -115,10 +122,12 @@ async function handleLocalApiRequest(
   req.on('aborted', () => {
     abortController.abort()
   })
+  res.on('close', () => { if (!res.writableEnded) abortController.abort() })
 
   await handler(
     {
       method: req.method,
+      url: req.url,
       body,
       headers: {
         authorization: req.headers.authorization,
