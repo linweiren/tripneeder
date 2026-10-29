@@ -1,9 +1,15 @@
 /// <reference types="node" />
+import { recordCoverageSearch, type SearchObservation } from './trip-coverage-v2.js'
 
 import https from 'node:https'
+import { observeGoogleEvidenceCall, recordEvidenceCache } from './trip-acceptance-evidence.js'
 import type { TripPlan, Stop, TripInput } from '../../src/types/trip.js'
 import type { GenerateTripPlansRequest, Persona } from '../../src/services/ai/types.js'
 import type { PreferenceProfile } from '../../src/services/personalization/preferenceProfile.js'
+import { getMealSuitability } from '../../src/services/ai/mealSuitability.js'
+import { CANDIDATE_TYPES_PROMPT_GUIDANCE, getCandidateTypesPromptEvidence } from './candidate-types-prompt-evidence.js'
+import { resolveCandidateRankingContext, type CandidateRankingContext } from './candidate-ranking-context.js'
+import { getRequiredMealWindows } from './trip-planning-rules.js'
 import {
   getPersonalizedCandidateScore,
   type PersonalizationCandidateBoost,
@@ -323,7 +329,20 @@ export async function getNearbyPlaceCandidates(
   debugSink?: CandidateSearchDebugSink,
   options: CandidatePersonalizationOptions = {},
 ): Promise<NearbyPlaceCandidates> {
+  const observations: SearchObservation[] = []
+  const pool = await getNearbyPlaceCandidatesCore(request, debugSink, options, observations)
+  recordCoverageSearch(pool, observations)
+  return pool
+}
+
+async function getNearbyPlaceCandidatesCore(
+  request: GenerateTripPlansRequest,
+  debugSink: CandidateSearchDebugSink | undefined,
+  options: CandidatePersonalizationOptions,
+  observations: SearchObservation[],
+): Promise<NearbyPlaceCandidates> {
   if (!GOOGLE_PLACES_API_KEY) {
+    observations.push({ stage: 'initial', query: '', radiusMeters: 0, status: 'unavailable', count: 0 })
     return { firstStopCandidates: [], otherCandidates: [], allCandidates: [] }
   }
 
@@ -333,16 +352,27 @@ export async function getNearbyPlaceCandidates(
   const lng = input.location.lng
   const queryPlan = buildCandidateSearchQueryPlan(input, request.persona)
   const queries = queryPlan.queries
+  const calls = { initial: 0, gap: 0, firstStop: 0, supplement: 0 }
+  const executedQueries = new Set<string>()
+  let supplementDecision = 'not_considered'
+  const queryKey = (query: string, radius: number) => JSON.stringify([query, lat, lng, radius])
+  const searchCandidates = (query: string, radius: number, stage: keyof typeof calls) => {
+    calls[stage]++
+    executedQueries.add(queryKey(query, radius))
+    return searchPlaces(query, {
+      bias: lat && lng ? { lat, lng } : undefined,
+      maxResultCount: 20,
+      radiusMeters: radius,
+      cacheResults: stage !== 'supplement',
+      onOutcome: (status, count, placeIds) => observations.push({ stage, query, radiusMeters: radius, status, count, placeIds }),
+    })
+  }
   debugSink?.recordQueryPlan({ phase: 'initial', ...queryPlan })
 
   try {
     const results = await Promise.all(
       queries.map(async (textQuery) => {
-        const queryPlaces = await searchPlaces(textQuery, {
-          bias: lat && lng ? { lat, lng } : undefined,
-          maxResultCount: 20,
-          radiusMeters: MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000,
-        })
+        const queryPlaces = await searchCandidates(textQuery, MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000, 'initial')
         debugSink?.recordQueryResult({
           phase: 'initial',
           query: textQuery,
@@ -354,6 +384,7 @@ export async function getNearbyPlaceCandidates(
     let places = dedupePlaces(results.flat())
 
     if (places.length === 0) {
+      supplementDecision = 'empty_baseline'
       return { firstStopCandidates: [], otherCandidates: [], allCandidates: [] }
     }
 
@@ -373,11 +404,7 @@ export async function getNearbyPlaceCandidates(
       const knownPlaceIds = new Set(places.map((place) => place.id).filter(Boolean))
       const gapResults = await Promise.all(
         gapQueries.map(async (textQuery) => {
-          const queryPlaces = await searchPlaces(textQuery, {
-            bias: lat && lng ? { lat, lng } : undefined,
-            maxResultCount: 20,
-            radiusMeters: BACKUP_CANDIDATE_MAX_DISTANCE_KM * 1000,
-          })
+          const queryPlaces = await searchCandidates(textQuery, BACKUP_CANDIDATE_MAX_DISTANCE_KM * 1000, 'gap')
           debugSink?.recordQueryResult({
             phase: 'gap',
             query: textQuery,
@@ -410,11 +437,7 @@ export async function getNearbyPlaceCandidates(
         const knownPlaceIds = new Set(places.map((place) => place.id).filter(Boolean))
         const firstStopGapResults = await Promise.all(
           firstStopGapQueries.map(async (textQuery) => {
-            const queryPlaces = await searchPlaces(textQuery, {
-              bias: lat && lng ? { lat, lng } : undefined,
-              maxResultCount: 20,
-              radiusMeters: FIRST_STOP_MAX_DISTANCE_KM * 1000,
-            })
+            const queryPlaces = await searchCandidates(textQuery, FIRST_STOP_MAX_DISTANCE_KM * 1000, 'firstStop')
             debugSink?.recordQueryResult({
               phase: 'gap',
               query: textQuery,
@@ -436,29 +459,159 @@ export async function getNearbyPlaceCandidates(
 
     logCandidatePoolSummary(input, candidates, candidateGaps, gapQueries.length)
 
-    const firstStopCandidates = getFirstStopCandidates(candidates, input)
-    const mainCandidates = candidates.filter(
-      (candidate) =>
-        typeof candidate.distanceKm !== 'number' ||
-        candidate.distanceKm <= MAIN_CANDIDATE_MAX_DISTANCE_KM,
-    )
-    const backupCandidates = candidates.filter(
-      (candidate) =>
-        typeof candidate.distanceKm !== 'number' ||
-        candidate.distanceKm <= BACKUP_CANDIDATE_MAX_DISTANCE_KM,
-    )
-    const otherCandidates =
-      mainCandidates.length >= MIN_MAIN_CANDIDATES ? mainCandidates : backupCandidates
+    const baseline = buildNearbyCandidatePools(candidates, input)
+    const decision = getCandidateSupplementPlan(baseline, input)
+    supplementDecision = decision.reason
+    if (!decision.plan) return baseline
+    const plan = decision.plan
+    const query = plan.theme === 'culture'
+      ? buildSearchQuery(input, request.persona).replace(`${input.location.name} attractions`.trim(),
+        `${input.location.name} 博物館 美術館 museum art gallery`.trim())
+      : plan.theme === 'coffee' ? '咖啡廳 cafe' : '公園 步道 park trail'
+    const radius = MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000
+    if (executedQueries.has(queryKey(query, radius))) {
+      supplementDecision = 'query_already_executed'
+      return baseline
+    }
 
-    return {
-      firstStopCandidates,
-      otherCandidates,
-      allCandidates: candidates,
+    // The legacy initial/gap/first-stop flow is complete. Only this optional
+    // request may fail independently; it never starts another supplement/repair.
+    try {
+      debugSink?.recordQueryPlan({ phase: 'gap', queries: [query], requestedQueryCount: 1, queryLimit: 1, truncated: false })
+      const raw = await searchCandidates(query, radius, 'supplement')
+      debugSink?.recordQueryResult({ phase: 'gap', query, rawPlaceCount: raw.length })
+      const knownIds = new Set(places.map(place => place.id))
+      const added = dedupePlaces(raw).filter(place => !knownIds.has(place.id))
+      if (!added.length) {
+        supplementDecision = 'no_new_candidates'
+        return baseline
+      }
+      let snapshot: Parameters<CandidateSearchDebugSink['recordCandidatePool']>[0] | undefined
+      const proposed = prepareCandidates([...places, ...added], input, tripWindow, lat, lng, {
+        recordQueryPlan() {}, recordQueryResult() {}, recordCandidatePool(value) { snapshot = value },
+      }, options)
+      const supplemented = buildNearbyCandidatePools(proposed, input)
+      if (!isCandidateSupplementImprovement(baseline, supplemented, plan, input)) {
+        supplementDecision = 'shortlist_not_improved_or_protected_candidates_lost'
+        return baseline
+      }
+      const acceptedIds = new Set(supplemented.allCandidates.map(candidate => candidate.placeId))
+      added.forEach(place => { if (acceptedIds.has(place.id)) placeDetailsCache.set(place.id, place) })
+      if (snapshot) debugSink?.recordCandidatePool(snapshot)
+      supplementDecision = 'accepted'
+      return supplemented
+    } catch (error) {
+      supplementDecision = 'supplement_failed'
+      console.warn('Optional candidate supplement failed:', error)
+      return baseline
     }
   } catch (error) {
+    supplementDecision = 'legacy_search_failed'
     console.error('Failed to get nearby recommendations:', error)
     return { firstStopCandidates: [], otherCandidates: [], allCandidates: [] }
+  } finally {
+    console.info('[candidate-search-cost]', { ...calls,
+      legacyTotal: calls.initial + calls.gap + calls.firstStop,
+      total: calls.initial + calls.gap + calls.firstStop + calls.supplement, supplementDecision })
   }
+}
+
+function buildNearbyCandidatePools(candidates: VerifiedPlaceCandidate[], input: TripInput): NearbyPlaceCandidates {
+  const firstStopCandidates = getFirstStopCandidates(candidates, input)
+  const mainCandidates = candidates.filter(
+    (candidate) =>
+      typeof candidate.distanceKm !== 'number' ||
+      candidate.distanceKm <= MAIN_CANDIDATE_MAX_DISTANCE_KM,
+  )
+  const backupCandidates = candidates.filter(
+    (candidate) =>
+      typeof candidate.distanceKm !== 'number' ||
+      candidate.distanceKm <= BACKUP_CANDIDATE_MAX_DISTANCE_KM,
+  )
+  const otherCandidates =
+    mainCandidates.length >= MIN_MAIN_CANDIDATES ? mainCandidates : backupCandidates
+
+  return { firstStopCandidates, otherCandidates, allCandidates: candidates }
+}
+
+type SearchSupplementTheme = CandidateRankingContext['themes'][number]
+type CandidateSupplementPlan = { themes: SearchSupplementTheme[]; theme: SearchSupplementTheme; scoreFloor: number }
+
+function getCandidateSupplementThemes(input: TripInput): SearchSupplementTheme[] {
+  if (input.category !== 'other' || typeof input.location.lat !== 'number' || typeof input.location.lng !== 'number' ||
+    !buildTripWindow(input) || tripOverlapsClockWindow(input, 0, 6 * 60) || tripOverlapsClockWindow(input, 21 * 60, 24 * 60)) return []
+  const context = resolveCandidateRankingContext(input)
+  if (context.customStatus !== 'recognized' || context.avoidCoffee) return []
+  const mixed = context.themes.length === 2 && context.themes.includes('culture') && context.themes.includes('coffee')
+  if (context.themes.length > 1 && !mixed) return []
+  // Reuse recognised visit intent; a second cultural keyword gate can disagree
+  // with the shared parser (for example, a cultural-sights and cafe request).
+  if (context.themes.includes('culture')) return context.themes
+  const text = (input.customCategory ?? '').normalize('NFKC').replace(/\s+/g, '')
+  if (/不|別|避開|文化活動|戶外活動/.test(text)) return []
+  if (context.themes.includes('coffee')) return /咖啡(?:廳|館|店)/.test(text) ? context.themes : []
+  return context.themes.includes('outdoor') && /(公園|步道)/.test(text) && !input.tags.includes('indoor_first') ? context.themes : []
+}
+
+function matchesSearchSupplementTheme(candidate: VerifiedPlaceCandidate, theme: SearchSupplementTheme) {
+  return theme === 'culture' ? hasConfirmedCulturalPrimaryPurpose(candidate)
+    : theme === 'coffee' ? candidate.role === 'food' && candidate.foodSubtype === 'cafe' : isOutdoorPromptCandidate(candidate)
+}
+
+function isSearchActivity(candidate: VerifiedPlaceCandidate) {
+  return ['main_activity', 'open_space', 'shopping'].includes(candidate.role ?? '')
+}
+
+function hasSupplementMealEvidence(candidates: VerifiedPlaceCandidate[], input: TripInput) {
+  const window = buildTripWindow(input)
+  if (!window) return false
+  return getRequiredMealWindows(input).every(meal => candidates.some(candidate => candidate.role === 'food' &&
+    getMealSuitability(candidate) === 'meal_likely' && candidate.openingHours &&
+    isOpeningHoursUsableForArrivalRange(candidate.openingHours, Math.max(window.startMinutes, meal.start),
+      Math.min(window.endMinutes, meal.end), MIN_FOOD_CANDIDATE_VISIT_MINUTES, Math.min(window.endMinutes, meal.end))))
+}
+
+function getCandidateSupplementPlan(pool: NearbyPlaceCandidates, input: TripInput): { reason: string; plan: CandidateSupplementPlan | null } {
+  const skip = (reason: string) => ({ reason, plan: null })
+  const themes = getCandidateSupplementThemes(input)
+  if (!themes.length) return skip('unsupported_intent_or_time')
+  const selection = getPromptCandidateSelection(pool)
+  const activities = selection.promptCandidates.filter(isSearchActivity)
+  const otherActivities = activities.filter(candidate => !themes.some(theme => matchesSearchSupplementTheme(candidate, theme)))
+  const reference = otherActivities.length ? otherActivities : activities
+  if (!reference.length) return skip('no_activity_quality_reference')
+  // The grammar identifies a visit, not a desired venue count. One visible
+  // option per theme, comparable to this shortlist's activities, is sufficient.
+  const scoreFloor = Math.min(...reference.map(candidate => candidate.score ?? -Infinity))
+  if (!Number.isFinite(scoreFloor)) return skip('no_activity_quality_reference')
+  const theme = themes.find(value => !selection.promptCandidates.some(candidate =>
+    matchesSearchSupplementTheme(candidate, value) && (candidate.score ?? -Infinity) >= scoreFloor))
+  if (!theme) return skip('already_covered')
+  if (Object.values(getCandidateGaps(pool.allCandidates, input)).some(Boolean) || !pool.firstStopCandidates.length ||
+    !hasSupplementMealEvidence(selection.promptCandidates, input)) return skip('legacy_safety_gaps_remain')
+  return { reason: 'needed', plan: { themes, theme, scoreFloor } }
+}
+
+function isCandidateSupplementImprovement(before: NearbyPlaceCandidates, after: NearbyPlaceCandidates,
+  plan: CandidateSupplementPlan, input: TripInput) {
+  const oldPrompt = getPromptCandidateSelection(before).promptCandidates
+  const nextPrompt = getPromptCandidateSelection(after).promptCandidates
+  const nextIds = new Set(nextPrompt.map(candidate => candidate.placeId))
+  const nextFirst = new Set(after.firstStopCandidates.map(candidate => candidate.placeId))
+  if (!before.firstStopCandidates.every(candidate => nextFirst.has(candidate.placeId))) return false
+  const matched = (candidates: VerifiedPlaceCandidate[], theme: SearchSupplementTheme) => candidates.filter(candidate =>
+    matchesSearchSupplementTheme(candidate, theme) && (candidate.score ?? -Infinity) >= plan.scoreFloor).length
+  if (matched(nextPrompt, plan.theme) <= matched(oldPrompt, plan.theme) ||
+    plan.themes.some(theme => matched(nextPrompt, theme) < matched(oldPrompt, theme))) return false
+  const mealsRequired = getRequiredMealWindows(input).length > 0
+  const protectedCandidates = oldPrompt.filter(candidate =>
+    isSearchActivity(candidate) && !matchesSearchSupplementTheme(candidate, plan.theme) ||
+    mealsRequired && candidate.role === 'food' && getMealSuitability(candidate) === 'meal_likely' ||
+    input.tags.includes('food_first') && candidate.role === 'food')
+  if (!protectedCandidates.every(candidate => nextIds.has(candidate.placeId))) return false
+  const buckets = [isLocalLifestylePromptCandidate, isOutdoorPromptCandidate, isShoppingPromptCandidate,
+    isIndoorCulturePromptCandidate, isNonCafeFoodCandidate, isCafeDessertCandidate]
+  return hasSupplementMealEvidence(nextPrompt, input) && buckets.every(matches => !oldPrompt.some(matches) || nextPrompt.some(matches))
 }
 
 function prepareCandidates(
@@ -470,6 +623,7 @@ function prepareCandidates(
   debugSink?: CandidateSearchDebugSink,
   options: CandidatePersonalizationOptions = {},
 ) {
+  const rankingContext = resolveCandidateRankingContext(input)
   const debugCandidates: CandidateDebugPlace[] = []
   const candidates = places.flatMap((place) => {
     const candidate = toVerifiedPlaceCandidate(place, lat, lng)
@@ -488,6 +642,7 @@ function prepareCandidates(
       addAvailabilitySlots(candidate, tripWindow),
       input,
       options.preferenceProfile,
+      rankingContext,
     )
     debugCandidates.push(
       toCandidateDebugPlace(
@@ -758,6 +913,9 @@ export function formatNearbyRecommendations(candidates: NearbyPlaceCandidates): 
     sections.push(['MAIN_ACTIVITY_CANDIDATES:', ...fallbackStops].join('\n'))
   }
 
+  if (selection.promptCandidates.some(candidate => getCandidateTypesPromptEvidence(candidate.types).length)) {
+    sections.push(CANDIDATE_TYPES_PROMPT_GUIDANCE)
+  }
   return sections.join('\n\n')
 }
 
@@ -946,6 +1104,9 @@ function getRemainingBucketMinimum(
 }
 
 function isCafeDessertCandidate(candidate: VerifiedPlaceCandidate) {
+  // Quotas describe the primary experience, not a cultural venue's ancillary
+  // dining metadata. Keep uncertain/default roles on the existing fallback.
+  if (hasConfirmedCulturalPrimaryPurpose(candidate)) return false
   const types = candidate.types ?? []
   const text = `${candidate.name} ${candidate.address}`
   return (
@@ -1389,6 +1550,8 @@ function formatCandidateForPrompt(
   const ratingText = candidate.rating ? `, rating=${candidate.rating}` : ''
   const roleText = candidate.role ? `, role=${candidate.role}` : ''
   const foodSubtypeText = candidate.foodSubtype ? `, foodSubtype=${candidate.foodSubtype}` : ''
+  const mealSuitabilityText = candidate.role === 'food' || candidate.foodSubtype
+    ? `, mealSuitability=${getMealSuitability(candidate)}` : ''
   const scoreText = typeof candidate.score === 'number' ? `, score=${candidate.score.toFixed(1)}` : ''
   const hoursText = candidate.openingHoursSummary ? `, hours="${candidate.openingHoursSummary}"` : ''
   const slotsText = candidate.availabilitySlots?.length
@@ -1399,8 +1562,10 @@ function formatCandidateForPrompt(
       ? `, types="${candidate.types.join(',')}"`
       : ''
   const rainyText = options.rainBackup ? ', indoor=true, rainySuitable=true' : ''
+  const evidenceTypes = options.rainBackup ? [] : getCandidateTypesPromptEvidence(candidate.types)
+  const evidenceText = evidenceTypes.length ? `, placeTypes="${evidenceTypes.join(',')}"` : ''
 
-  return `- name="${candidate.name}", address="${candidate.address}", placeId="${candidate.placeId}"${distanceText}${ratingText}${roleText}${foodSubtypeText}${scoreText}${hoursText}${slotsText}${typesText}${rainyText}`
+  return `- name="${candidate.name}", address="${candidate.address}", placeId="${candidate.placeId}"${distanceText}${ratingText}${roleText}${foodSubtypeText}${mealSuitabilityText}${scoreText}${hoursText}${slotsText}${typesText}${rainyText}${evidenceText}`
 }
 
 function buildTripWindow(input: TripInput) {
@@ -1510,11 +1675,12 @@ function getCandidateAvailabilitySlots(
   return slotStarts
     .map((startMinutes, index) => ({
       slot: slotNames[index],
-      usable: isOpeningHoursUsableWithinRange(
+      usable: isOpeningHoursUsableForArrivalRange(
         openingHours,
         startMinutes,
         slotEnds[index],
         getMinimumCandidateVisitMinutes(candidate),
+        tripWindow.endMinutes,
       ),
     }))
     .filter((item) => item.usable)
@@ -1536,9 +1702,10 @@ export function isCandidateOpenForVisit(
 function scoreCandidate(
   candidate: VerifiedPlaceCandidate,
   input: TripInput,
-  preferenceProfile?: PreferenceProfile | null,
+  preferenceProfile: PreferenceProfile | null | undefined,
+  rankingContext: CandidateRankingContext,
 ): { candidate: VerifiedPlaceCandidate; personalization: CandidatePersonalizationDebug | null } {
-  const baseScore = calculateBaseCandidateScore(candidate, input)
+  const baseScore = calculateBaseCandidateScore(candidate, input, rankingContext)
   const personalized = getPersonalizedCandidateScore(baseScore, candidate, preferenceProfile)
   const personalization = preferenceProfile?.sampleCount
     ? buildCandidatePersonalizationDebug(baseScore, personalized.boost, personalized.finalScore)
@@ -1556,13 +1723,22 @@ function scoreCandidate(
 function calculateBaseCandidateScore(
   candidate: VerifiedPlaceCandidate,
   input: TripInput,
+  rankingContext: CandidateRankingContext,
 ) {
   const distanceKm = candidate.distanceKm ?? MAIN_CANDIDATE_MAX_DISTANCE_KM
   const rating = candidate.rating ?? 4
   const role = candidate.role ?? 'main_activity'
-  const wantsFoodFirst = input.tags.includes('food_first')
-  const wantsIndoor = input.tags.includes('indoor_first')
+  const wantsFoodFirst = input.category === 'food' || input.tags.includes('food_first')
+  const wantsIndoor = input.category === 'indoor' || input.tags.includes('indoor_first')
   const wantsPhoto = input.tags.includes('photo_first')
+  const wantsCulture = rankingContext.themes.includes('culture')
+  const wantsOutdoor = rankingContext.themes.includes('outdoor')
+  const prefersThisType =
+    (!wantsCulture && !wantsOutdoor) ||
+    (wantsCulture && hasConfirmedCulturalPrimaryPurpose(candidate)) ||
+    (wantsOutdoor && isOutdoorPromptCandidate(candidate)) ||
+    (rankingContext.themes.includes('coffee') && role === 'food' && candidate.foodSubtype === 'cafe') ||
+    (wantsFoodFirst && role === 'food')
 
   let score = 50
   score += Math.max(0, 25 - distanceKm * 4)
@@ -1572,13 +1748,17 @@ function calculateBaseCandidateScore(
 
   if (role === 'short_visit') score -= 35
   if (role === 'food') {
-    score += wantsFoodFirst ? 18 : 4
-    score += getFoodSubtypeScore(candidate, wantsFoodFirst)
+    if (prefersThisType) score += wantsFoodFirst ? 18 : 4
+    const subtypeScore = getFoodSubtypeScore(candidate, wantsFoodFirst)
+    // Keep all candidates and existing penalties. A visit preference only
+    // conditions the existing positive type bonuses; it adds no new bonus.
+    score += prefersThisType && !(rankingContext.avoidCoffee && candidate.foodSubtype === 'cafe')
+      ? subtypeScore : Math.min(0, subtypeScore)
   }
-  if (role === 'open_space') score += wantsPhoto ? 8 : 2
-  if (role === 'shopping') score += wantsIndoor ? 4 : 3
-  if (role === 'main_activity') score += 10
-  if (wantsIndoor && isIndoorCandidate(candidate)) {
+  if (prefersThisType && role === 'open_space') score += wantsPhoto || wantsOutdoor ? 8 : 2
+  if (prefersThisType && role === 'shopping') score += wantsIndoor ? 4 : 3
+  if (prefersThisType && role === 'main_activity') score += 10
+  if (prefersThisType && wantsIndoor && isIndoorCandidate(candidate)) {
     score += getIndoorTypeScore(candidate.types ?? [])
   }
   if (isShortVisitCandidatePlace(candidate.name, candidate.address)) score -= 30
@@ -1673,13 +1853,36 @@ function inferFoodSubtype(
   return undefined
 }
 
+// Shared by candidate classification and delivery consumers. A default activity
+// role or ancillary dining types alone cannot establish the venue's purpose.
+export function hasConfirmedCulturalPrimaryPurpose(
+  candidate: Pick<VerifiedPlaceCandidate, 'types' | 'name'>,
+) {
+  const types = candidate.types ?? []
+  const nameText = candidate.name.toLocaleLowerCase('zh-TW')
+  return (
+    types.some((type) => ['museum', 'art_gallery'].includes(type)) &&
+    !types.some((type) => ['park', 'natural_feature'].includes(type)) &&
+    !/(公園|步道|\bpark\b|\btrail\b)/i.test(nameText) &&
+    /(博物館|美術館|文物館|藝術館|展覽館|展示館|故事館|\bmuseum\b|\bart (?:centre|center|gallery)\b)/i.test(nameText) &&
+    !/(咖啡|珈琲|餐廳|食堂|料理|早午餐|甜點|蛋糕|烘焙|麵包|小吃|caf[eé]|coffee|restaurant|bistro|bakery|dessert|brunch|\bbar\b)/i.test(nameText)
+  )
+}
+
 function inferCandidateRole(
   types: string[],
   name: string,
   address: string,
 ): VerifiedPlaceCandidate['role'] {
   const text = `${name} ${address}`.toLocaleLowerCase('zh-TW')
-  if (types.some((type) => ['restaurant', 'cafe', 'bakery', 'meal_takeaway', 'food'].includes(type))) {
+  const nameText = name.toLocaleLowerCase('zh-TW')
+  const hasCultureType = types.some((type) => ['museum', 'art_gallery'].includes(type))
+  const hasExplicitOutdoorType = types.some((type) => ['park', 'natural_feature'].includes(type))
+  const hasOutdoorVenueName = /(公園|步道|\bpark\b|\btrail\b)/i.test(nameText)
+  if (hasConfirmedCulturalPrimaryPurpose({ types, name })) {
+    return 'main_activity'
+  }
+  if (types.some((type) => ['restaurant', 'cafe', 'bakery', 'meal_takeaway', 'food', 'bar'].includes(type))) {
     return 'food'
   }
   if (/(局|署|所|處|公所|辦公|服務中心|銀行|郵局|醫院|診所|公司|分局)/.test(text)) {
@@ -1688,8 +1891,11 @@ function inferCandidateRole(
   if (types.some((type) => ['shopping_mall', 'department_store', 'market'].includes(type))) {
     return 'shopping'
   }
+  if (hasExplicitOutdoorType) return 'open_space'
+  if (hasCultureType && !hasOutdoorVenueName) return 'main_activity'
   if (types.some((type) => ['park', 'tourist_attraction', 'natural_feature'].includes(type))) {
-    return /(公園|步道|海邊|湖|山|森林|河濱|草地|park)/i.test(text)
+    // Administrative districts and street names are not evidence of an outdoor visit.
+    return /(公園|步道|海邊|湖|山|森林|河濱|草地|park)/i.test(nameText)
       ? 'open_space'
       : 'main_activity'
   }
@@ -1968,48 +2174,58 @@ async function searchPlaces(
     bias?: { lat: number; lng: number }
     maxResultCount?: number
     radiusMeters?: number
+    cacheResults?: boolean
+    onOutcome?: (status: 'succeeded' | 'failed', count: number, placeIds?: string[]) => void
   } = {},
 ): Promise<GooglePlace[]> {
   if (!GOOGLE_PLACES_API_KEY) return []
 
-  const response = await googleFetch(SEARCH_TEXT_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
-      'X-Goog-FieldMask': `places.${PLACES_FIELD_MASK.replaceAll(',', ',places.')}`,
-    },
-    body: JSON.stringify({
-      textQuery,
-      languageCode: 'zh-TW',
-      regionCode: 'TW',
-      maxResultCount: options.maxResultCount ?? 5,
-      locationBias: options.bias
-        ? {
-            circle: {
-              center: { latitude: options.bias.lat, longitude: options.bias.lng },
-              radius: options.radiusMeters ?? MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000,
-            },
-          }
-        : undefined,
-    }),
-  })
+  let observed = false
+  try {
+    const response = await googleFetch(SEARCH_TEXT_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+        'X-Goog-FieldMask': `places.${PLACES_FIELD_MASK.replaceAll(',', ',places.')}`,
+      },
+      body: JSON.stringify({
+        textQuery,
+        languageCode: 'zh-TW',
+        regionCode: 'TW',
+        maxResultCount: options.maxResultCount ?? 5,
+        locationBias: options.bias
+          ? {
+              circle: {
+                center: { latitude: options.bias.lat, longitude: options.bias.lng },
+                radius: options.radiusMeters ?? MAIN_CANDIDATE_MAX_DISTANCE_KM * 1000,
+              },
+            }
+          : undefined,
+      }),
+    })
 
-  if (!response.ok) return []
+    if (!response.ok) { observed = true; options.onOutcome?.('failed', 0); return [] }
 
-  const data = (await response.json()) as GooglePlacesResponse
-  const places = data.places ?? []
-  places.forEach((place) => {
-    if (place.id) placeDetailsCache.set(place.id, place)
-  })
+    const data = (await response.json()) as GooglePlacesResponse
+    const places = data.places ?? []
+    if (options.cacheResults !== false) places.forEach((place) => {
+      if (place.id) placeDetailsCache.set(place.id, place)
+    })
 
-  return places
+    observed = true
+    options.onOutcome?.('succeeded', places.length, places.map(place => place.id))
+    return places
+  } finally {
+    if (!observed) options.onOutcome?.('failed', 0)
+  }
 }
 
 async function getPlaceById(placeId: string): Promise<GooglePlace | null> {
   if (!GOOGLE_PLACES_API_KEY || !placeId.trim()) return null
 
   if (placeDetailsCache.has(placeId)) {
+    recordEvidenceCache('places_details')
     return placeDetailsCache.get(placeId) ?? null
   }
 
@@ -2031,7 +2247,7 @@ async function getPlaceById(placeId: string): Promise<GooglePlace | null> {
 }
 
 function googleFetch(url: string, init?: RequestInit) {
-  return new Promise<Response>((resolve, reject) => {
+  return observeGoogleEvidenceCall(url, () => new Promise<Response>((resolve, reject) => {
     const headers = new Headers(init?.headers)
     const body = init?.body
     const req = https.request(
@@ -2075,7 +2291,7 @@ function googleFetch(url: string, init?: RequestInit) {
     }
 
     req.end()
-  })
+  }))
 }
 
 async function searchPlace(
@@ -2161,24 +2377,28 @@ function isOpeningHoursUsableForVisit(
   })
 }
 
-function isOpeningHoursUsableWithinRange(
+function isOpeningHoursUsableForArrivalRange(
   openingHours: OpeningHoursMetadata,
   rangeStartMinutes: number,
   rangeEndMinutes: number,
   durationMinutes: number,
+  tripEndMinutes: number,
 ) {
   const rangeStartAt = buildTripDateAtMinutes(rangeStartMinutes, openingHours.utcOffsetMinutes)
   const rangeEndAt = buildTripDateAtMinutes(rangeEndMinutes, openingHours.utcOffsetMinutes)
+  const tripEndAt = buildTripDateAtMinutes(tripEndMinutes, openingHours.utcOffsetMinutes)
   const durationMs = Math.max(0, durationMinutes) * 60 * 1000
 
+  // Slots constrain arrival, not the full visit. Complete the visit within one
+  // opening window, its closing buffer and the trip end, even across slot edges.
   return openingHours.windows.some((window) => {
     const comfortableLeaveAt = new Date(window.closeAt.getTime() - CLOSING_BUFFER_MINUTES * 60 * 1000)
     const earliestArrivalAt = new Date(Math.max(window.openAt.getTime(), rangeStartAt.getTime()))
     const latestArrivalAt = new Date(
-      Math.min(comfortableLeaveAt.getTime() - durationMs, rangeEndAt.getTime() - durationMs),
+      Math.min(comfortableLeaveAt.getTime(), tripEndAt.getTime()) - durationMs,
     )
 
-    return latestArrivalAt >= earliestArrivalAt
+    return earliestArrivalAt < rangeEndAt && latestArrivalAt >= earliestArrivalAt
   })
 }
 
@@ -2514,6 +2734,12 @@ export async function validateStopsWithPlaces(
     validationPerformed: true,
     issues,
   }
+}
+
+// Read-only evidence for local duration comparisons. Never fills the cache or fetches.
+export function getCachedOpeningHoursForDurationComparison(placeId: string) {
+  const place = placeDetailsCache.get(placeId)
+  return place ? buildOpeningHoursMetadata(place) : null
 }
 
 export async function validatePlanOpeningHours(

@@ -1,4 +1,5 @@
 /// <reference types="node" />
+import { handleApiOptions, requireAuthenticatedUser } from './_lib/authenticated-user.js'
 
 type VercelRequest = {
   method?: string
@@ -16,11 +17,13 @@ type VercelResponse = {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (handleApiOptions(req.method, res)) return
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
 
+  if (!await requireAuthenticatedUser(req.headers?.authorization, res)) return
   const { lat, lng } = (req.body as { lat?: number; lng?: number }) || {}
 
   if (typeof lat !== 'number' || typeof lng !== 'number') {

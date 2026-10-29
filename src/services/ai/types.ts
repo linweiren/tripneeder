@@ -17,12 +17,14 @@ export type Persona = {
 }
 
 export type GenerateTripPlansRequest = {
+  generationId?: string
   input: TripInput
   persona?: Persona
   accessToken?: string
   signal?: AbortSignal
   onPlan?: (plan: PartialTripPlan) => void
   onWarning?: (message: string) => void
+  onProgress?: (style: TripPlan['type']) => void
 }
 
 export type GenerateTripPlansResponse = {

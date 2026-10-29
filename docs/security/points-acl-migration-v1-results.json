@@ -1,0 +1,452 @@
+{
+  "date": "2026-10-27",
+  "engine": "PostgreSQL 17.5 on aarch64-unknown-linux-gnu, compiled by emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 3.1.74 (1092ec30a3fb1d46b1782ff1b4db5094d3d06ae5), 32-bit",
+  "migration": "20261027103330_points_column_write_acl.sql",
+  "migrationSha256": "cd6c1a2873326a56789458dcd7b25aafd17128f73c72dd26950a5dea0fa93839",
+  "proposalExecutableSqlIdentical": true,
+  "baseline": [
+    {
+      "name": "001_points_schema.sql",
+      "sha256": "cf2d1f7cfe725b9a7d2d3e120d18a384cfc31e14a781ce94e4eaad79705566f2"
+    },
+    {
+      "name": "002_points_consumption.sql",
+      "sha256": "16b4203f0459da4bab751c331e8c949962cc4a468dc64a8753bbe1f35e764974"
+    },
+    {
+      "name": "003_trip_records.sql",
+      "sha256": "3af92a90098083896b57ab6983243bcb680499c73ceb9f4e471ec6635711e4d9"
+    },
+    {
+      "name": "004_point_transactions_retention.sql",
+      "sha256": "00645ed69be5a970182f365bbca6e2293706c1ab92b209dad976f35d91881369"
+    },
+    {
+      "name": "005_user_persona.sql",
+      "sha256": "ff5d0482f7a914b6942688687f53b162d9afd6ae8c0d8111d28d75cbfd7b5c5f"
+    },
+    {
+      "name": "006_persona_transport_mode.sql",
+      "sha256": "0691ad87909e573f53ec85ce7d9eeaf703bf61f1e1d633f58fcfcf0fd7affdd2"
+    },
+    {
+      "name": "007_persona_people.sql",
+      "sha256": "61a39fe779a58c84d709bdc775372d934e5189b1811ae4dfa3e98e0d54e20a40"
+    },
+    {
+      "name": "008_fix_initial_points_logic.sql",
+      "sha256": "78918e2019d29c9c7030f5a74f0680a907824b179633d82b7bea7f679f03e7f3"
+    },
+    {
+      "name": "009_persona_people_nullable.sql",
+      "sha256": "d94bf45f49f3501c3f66fd55786b456e4d55209ab47ae932ce6df55f372a8d4a"
+    },
+    {
+      "name": "010_personalization_events.sql",
+      "sha256": "90ede28d70d495854304cbedb86626eb9bd25e51a2cb5504882662a35a9343c6"
+    }
+  ],
+  "additionalFixtures": [
+    {
+      "name": "011_community_trip_sharing.sql",
+      "blob": "74b0e7518de97b37fbc4471a89a35d97971d0ad5"
+    },
+    {
+      "name": "012_community_discussions_and_filters.sql",
+      "blob": "d37be58b3733671a1be5613ff58f2cc9e5d3a301"
+    },
+    {
+      "name": "013_community_privacy_controls.sql",
+      "blob": "921bc0dc887f386ca1a0a0adf20b719e5c64522b"
+    },
+    {
+      "name": "014_shared_trip_access_and_privacy.sql",
+      "blob": "84ef62e03283070cfa5ce60ee534cbbc60672138"
+    },
+    {
+      "name": "015_api_rate_limits.sql",
+      "blob": "785b8fb188d912a1086b203fc90aa0f7fc3883f1"
+    },
+    {
+      "name": "016_community_hardening_and_pagination.sql",
+      "blob": "4308af4ff69375d34cba6ed88934554499145d43"
+    },
+    {
+      "name": "017_shared_trip_validation_and_completion.sql",
+      "blob": "770485d4c309e01bce402bcccc42f3ce9e79b6e1"
+    },
+    {
+      "name": "018_preserve_shared_interactions_and_transport.sql",
+      "blob": "664de97f498fb8b2ed676bbb98d673c12e51aca9"
+    }
+  ],
+  "passed": 72,
+  "failed": 0,
+  "limitations": [
+    "PGlite PostgreSQL with synthetic Supabase auth primitives/default grants; no native Supabase CLI reset or migration history integration",
+    "No production access, real JWT/PostgREST, HTTP manager or paid API calls",
+    "Single session: concurrent initialization is outside this migration test"
+  ],
+  "results": [
+    {
+      "scenario": "dev-clean",
+      "name": "all original migrations rebuild without edits",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "new migration applies to clean rebuilt database",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "migration changes no schema, RLS, functions, triggers, memberships or data",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "second application is idempotent across every table and column ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "effective grants allow exactly eight persona columns; deny sensitive writes",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "authenticated direct balance/initial flag and mixed payload updates fail",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "INSERT, UPSERT, DELETE and TRUNCATE cannot reset initial eligibility",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "ordinary users cannot forge, update, delete or truncate ledger",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "persona save and reset with RETURNING work; other accounts remain hidden",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "20-point RPC debits and records ledger",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "2-point RPC debits and records ledger",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "insufficient, zero, negative and NULL costs leave balance and ledger unchanged",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "new and legacy unclaimed users receive initial 100 exactly once sequentially",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "service_role manager changes another account and inserts ledger; trigger keeps newest 30",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "20/2-point RPCs and retention continue after threshold; initialization cannot recredit",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "inherited table grant: failure aborts transaction and restores every ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "inherited column INSERT: failure aborts transaction and restores every ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "NOINHERIT reachable parent: failure aborts transaction and restores every ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "service_role missing INSERT: failure aborts transaction and restores every ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "disabled RLS: failure aborts transaction and restores every ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "RPC INVOKER drift: failure aborts transaction and restores every ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "unprivileged RPC owner: failure aborts transaction and restores every ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "disabled retention trigger: failure aborts transaction and restores every ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "retention INVOKER drift: failure aborts transaction and restores every ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-clean",
+      "name": "retention owner lacks DELETE: failure aborts transaction and restores every ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "all original migrations rebuild without edits",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "new migration applies over identical pre-existing ACL repair",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "migration changes no schema, RLS, functions, triggers, memberships or data",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "prepatched ACLs remain exactly identical",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "second application is idempotent across every table and column ACL",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "effective grants allow exactly eight persona columns; deny sensitive writes",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "authenticated direct balance/initial flag and mixed payload updates fail",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "INSERT, UPSERT, DELETE and TRUNCATE cannot reset initial eligibility",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "ordinary users cannot forge, update, delete or truncate ledger",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "persona save and reset with RETURNING work; other accounts remain hidden",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "20-point RPC debits and records ledger",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "2-point RPC debits and records ledger",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "insufficient, zero, negative and NULL costs leave balance and ledger unchanged",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "new and legacy unclaimed users receive initial 100 exactly once sequentially",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "service_role manager changes another account and inserts ledger; trigger keeps newest 30",
+      "passed": true
+    },
+    {
+      "scenario": "dev-prepatched",
+      "name": "20/2-point RPCs and retention continue after threshold; initialization cannot recredit",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "all original migrations rebuild without edits",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "new migration applies to clean rebuilt database",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "migration changes no schema, RLS, functions, triggers, memberships or data",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "second application is idempotent across every table and column ACL",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "effective grants allow exactly eight persona columns; deny sensitive writes",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "authenticated direct balance/initial flag and mixed payload updates fail",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "INSERT, UPSERT, DELETE and TRUNCATE cannot reset initial eligibility",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "ordinary users cannot forge, update, delete or truncate ledger",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "persona save and reset with RETURNING work; other accounts remain hidden",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "20-point RPC debits and records ledger",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "2-point RPC debits and records ledger",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "insufficient, zero, negative and NULL costs leave balance and ledger unchanged",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "new and legacy unclaimed users receive initial 100 exactly once sequentially",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "service_role manager changes another account and inserts ledger; trigger keeps newest 30",
+      "passed": true
+    },
+    {
+      "scenario": "weather-clean",
+      "name": "20/2-point RPCs and retention continue after threshold; initialization cannot recredit",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "all original migrations rebuild without edits",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "new migration applies over identical pre-existing ACL repair",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "migration changes no schema, RLS, functions, triggers, memberships or data",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "prepatched ACLs remain exactly identical",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "second application is idempotent across every table and column ACL",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "effective grants allow exactly eight persona columns; deny sensitive writes",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "authenticated direct balance/initial flag and mixed payload updates fail",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "INSERT, UPSERT, DELETE and TRUNCATE cannot reset initial eligibility",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "ordinary users cannot forge, update, delete or truncate ledger",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "persona save and reset with RETURNING work; other accounts remain hidden",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "20-point RPC debits and records ledger",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "2-point RPC debits and records ledger",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "insufficient, zero, negative and NULL costs leave balance and ledger unchanged",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "new and legacy unclaimed users receive initial 100 exactly once sequentially",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "service_role manager changes another account and inserts ledger; trigger keeps newest 30",
+      "passed": true
+    },
+    {
+      "scenario": "weather-prepatched",
+      "name": "20/2-point RPCs and retention continue after threshold; initialization cannot recredit",
+      "passed": true
+    }
+  ]
+}

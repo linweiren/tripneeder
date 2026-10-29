@@ -1,0 +1,91 @@
+{
+  "date": "2026-10-27",
+  "nativePostgres": "PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit",
+  "migrationHash": "e206a7d762172a3df43104ff23e64697c8273fb20e74894f4c294db86fa17ba6",
+  "results": [
+    {
+      "name": "new migration preserves all existing functions, table and column ACLs",
+      "passed": true,
+      "milliseconds": 11.53
+    },
+    {
+      "name": "normal claim and completion charge exactly 20 and persist the identical final snapshot",
+      "passed": true,
+      "milliseconds": 68.27
+    },
+    {
+      "name": "paid replay ignores a different replacement snapshot and cannot charge again",
+      "passed": true,
+      "milliseconds": 6.47
+    },
+    {
+      "name": "same UUID with different input or different owner cannot reuse payment or result",
+      "passed": true,
+      "milliseconds": 2.05
+    },
+    {
+      "name": "eight independent simultaneous claims elect exactly one worker",
+      "passed": true,
+      "milliseconds": 232.2
+    },
+    {
+      "name": "lease expiration fences the old worker before and after takeover, including fail",
+      "passed": true,
+      "milliseconds": 10.61
+    },
+    {
+      "name": "failed unpaid attempt is retryable under the same UUID with a new fence",
+      "passed": true,
+      "milliseconds": 7.06
+    },
+    {
+      "name": "two different IDs competing for the last 20 points can complete only once",
+      "passed": true,
+      "milliseconds": 74.2
+    },
+    {
+      "name": "snapshot failure after debit AND ledger insertion rolls back all changes including ledger pruning",
+      "passed": true,
+      "milliseconds": 15.23
+    },
+    {
+      "name": "30-row ledger pruning and recent deletion cannot remove payment idempotency",
+      "passed": true,
+      "milliseconds": 10.19
+    },
+    {
+      "name": "anon/authenticated cannot directly read/write snapshots or invoke any generation RPC",
+      "passed": true,
+      "milliseconds": 99.27
+    },
+    {
+      "name": "existing 2-point recalculation debit, initial gift, owner ACL and admin adjustment still work",
+      "passed": true,
+      "milliseconds": 163.56
+    },
+    {
+      "name": "fresh independent server process restores from PostgreSQL with no old worker memory or paid providers",
+      "passed": true,
+      "milliseconds": 858.94
+    },
+    {
+      "name": "real handler with Mock providers commits final validated JSON to PostgreSQL and recovers after post-commit disconnect",
+      "passed": true,
+      "milliseconds": 2087.47
+    },
+    {
+      "name": "account deletion removes private generation input and snapshots",
+      "passed": true,
+      "milliseconds": 3.92
+    }
+  ],
+  "localOnlyTimings": [
+    {
+      "claimMs": 9.905300000000011,
+      "atomicCompleteMs": 8.736499999999978
+    }
+  ],
+  "limitations": [
+    "Synthetic local data and mocked Supabase HTTP; no production or paid API calls."
+  ]
+}

@@ -1,0 +1,529 @@
+{
+  "date": "2026-10-27",
+  "engine": "PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit",
+  "isolation": "read committed",
+  "migration": "20261027111646_initial_points_concurrency.sql",
+  "migrationSha256": "f0e666231d8ae1d40e17e34a72e71c282078e9bb6a8940937700eed64e1bd404",
+  "baseline": [
+    {
+      "name": "001_points_schema.sql",
+      "sha256": "cf2d1f7cfe725b9a7d2d3e120d18a384cfc31e14a781ce94e4eaad79705566f2"
+    },
+    {
+      "name": "002_points_consumption.sql",
+      "sha256": "16b4203f0459da4bab751c331e8c949962cc4a468dc64a8753bbe1f35e764974"
+    },
+    {
+      "name": "003_trip_records.sql",
+      "sha256": "3af92a90098083896b57ab6983243bcb680499c73ceb9f4e471ec6635711e4d9"
+    },
+    {
+      "name": "004_point_transactions_retention.sql",
+      "sha256": "00645ed69be5a970182f365bbca6e2293706c1ab92b209dad976f35d91881369"
+    },
+    {
+      "name": "005_user_persona.sql",
+      "sha256": "ff5d0482f7a914b6942688687f53b162d9afd6ae8c0d8111d28d75cbfd7b5c5f"
+    },
+    {
+      "name": "006_persona_transport_mode.sql",
+      "sha256": "0691ad87909e573f53ec85ce7d9eeaf703bf61f1e1d633f58fcfcf0fd7affdd2"
+    },
+    {
+      "name": "007_persona_people.sql",
+      "sha256": "61a39fe779a58c84d709bdc775372d934e5189b1811ae4dfa3e98e0d54e20a40"
+    },
+    {
+      "name": "008_fix_initial_points_logic.sql",
+      "sha256": "78918e2019d29c9c7030f5a74f0680a907824b179633d82b7bea7f679f03e7f3"
+    },
+    {
+      "name": "009_persona_people_nullable.sql",
+      "sha256": "d94bf45f49f3501c3f66fd55786b456e4d55209ab47ae932ce6df55f372a8d4a"
+    },
+    {
+      "name": "010_personalization_events.sql",
+      "sha256": "90ede28d70d495854304cbedb86626eb9bd25e51a2cb5504882662a35a9343c6"
+    },
+    {
+      "name": "20261027103330_points_column_write_acl.sql",
+      "sha256": "cd6c1a2873326a56789458dcd7b25aafd17128f73c72dd26950a5dea0fa93839"
+    }
+  ],
+  "databases": [
+    "initial_points_before_1793100080233",
+    "initial_points_after_1793100081830"
+  ],
+  "passed": 20,
+  "failed": 0,
+  "results": [
+    {
+      "phase": "before",
+      "name": "rebuild every baseline migration including the committed ACL fix",
+      "passed": true
+    },
+    {
+      "phase": "before",
+      "name": "reproduce eight initial credits on a legacy false profile",
+      "passed": true
+    },
+    {
+      "phase": "before",
+      "name": "new-profile primary key prevents duplicate credit but seven callers fail",
+      "passed": true
+    },
+    {
+      "phase": "before",
+      "name": "eight already-claimed calls do not add balance or initial ledger",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "rebuild every baseline migration including the committed ACL fix",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "apply new migration without changing ACLs, other functions, RLS or schema",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "reapplying the migration preserves the same function definition and ACLs",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "eight legacy-profile initializations grant exactly 100 once",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "eight new-profile initializations all succeed and grant only once",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "eight already-claimed calls do not add balance or initial ledger",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "first initialization and five sequential repeats return one profile and credit",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "anon without UID still cannot initialize",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "different users do not share the same initialization lock",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "explicit rollback leaves new profile and ledger unchanged",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "explicit rollback leaves legacy profile and ledger unchanged",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "ledger failure rolls back new/legacy profile, flag and balance; retry grants once",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "waiting initializer succeeds once after the first transaction rolls back",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "persona save/reset, service_role adjustment and 20/2-point RPCs remain normal",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "retention trims to newest 30 and cannot re-enable initial credit",
+      "passed": true
+    },
+    {
+      "phase": "after",
+      "name": "ACL stays restricted to eight persona fields and direct sensitive writes fail",
+      "passed": true
+    }
+  ],
+  "evidence": [
+    {
+      "phase": "before",
+      "kind": "legacy-false",
+      "independentConnections": 8,
+      "waitEvents": [
+        "tuple",
+        "tuple",
+        "tuple",
+        "transactionid",
+        "tuple",
+        "tuple",
+        "tuple",
+        "tuple"
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "balance": 107
+        },
+        {
+          "ok": true,
+          "balance": 307
+        },
+        {
+          "ok": true,
+          "balance": 707
+        },
+        {
+          "ok": true,
+          "balance": 407
+        },
+        {
+          "ok": true,
+          "balance": 607
+        },
+        {
+          "ok": true,
+          "balance": 207
+        },
+        {
+          "ok": true,
+          "balance": 807
+        },
+        {
+          "ok": true,
+          "balance": 507
+        }
+      ],
+      "balance": 807,
+      "claimed": true,
+      "initialTransactions": [
+        {
+          "amount": 100,
+          "balance_after": 107
+        },
+        {
+          "amount": 100,
+          "balance_after": 207
+        },
+        {
+          "amount": 100,
+          "balance_after": 307
+        },
+        {
+          "amount": 100,
+          "balance_after": 407
+        },
+        {
+          "amount": 100,
+          "balance_after": 507
+        },
+        {
+          "amount": 100,
+          "balance_after": 607
+        },
+        {
+          "amount": 100,
+          "balance_after": 707
+        },
+        {
+          "amount": 100,
+          "balance_after": 807
+        }
+      ]
+    },
+    {
+      "phase": "before",
+      "kind": "new",
+      "independentConnections": 8,
+      "waitEvents": [
+        "relation",
+        "relation",
+        "relation",
+        "relation",
+        "relation",
+        "relation",
+        "relation",
+        "relation"
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "balance": 100
+        },
+        {
+          "ok": false,
+          "code": "23505"
+        },
+        {
+          "ok": false,
+          "code": "23505"
+        },
+        {
+          "ok": false,
+          "code": "23505"
+        },
+        {
+          "ok": false,
+          "code": "23505"
+        },
+        {
+          "ok": false,
+          "code": "23505"
+        },
+        {
+          "ok": false,
+          "code": "23505"
+        },
+        {
+          "ok": false,
+          "code": "23505"
+        }
+      ],
+      "balance": 100,
+      "claimed": true,
+      "initialTransactions": [
+        {
+          "amount": 100,
+          "balance_after": 100
+        }
+      ]
+    },
+    {
+      "phase": "before",
+      "kind": "claimed",
+      "independentConnections": 8,
+      "waitEvents": [
+        "tuple",
+        "tuple",
+        "tuple",
+        "tuple",
+        "tuple",
+        "transactionid",
+        "tuple",
+        "tuple"
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        }
+      ],
+      "balance": 42,
+      "claimed": true,
+      "initialTransactions": []
+    },
+    {
+      "phase": "after",
+      "kind": "legacy-false",
+      "independentConnections": 8,
+      "waitEvents": [
+        "advisory",
+        "advisory",
+        "advisory",
+        "advisory",
+        "transactionid",
+        "advisory",
+        "advisory",
+        "advisory"
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "balance": 107
+        },
+        {
+          "ok": true,
+          "balance": 107
+        },
+        {
+          "ok": true,
+          "balance": 107
+        },
+        {
+          "ok": true,
+          "balance": 107
+        },
+        {
+          "ok": true,
+          "balance": 107
+        },
+        {
+          "ok": true,
+          "balance": 107
+        },
+        {
+          "ok": true,
+          "balance": 107
+        },
+        {
+          "ok": true,
+          "balance": 107
+        }
+      ],
+      "balance": 107,
+      "claimed": true,
+      "initialTransactions": [
+        {
+          "amount": 100,
+          "balance_after": 107
+        }
+      ]
+    },
+    {
+      "phase": "after",
+      "kind": "new",
+      "independentConnections": 8,
+      "waitEvents": [
+        "relation",
+        "advisory",
+        "advisory",
+        "advisory",
+        "advisory",
+        "advisory",
+        "advisory",
+        "advisory"
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "balance": 100
+        },
+        {
+          "ok": true,
+          "balance": 100
+        },
+        {
+          "ok": true,
+          "balance": 100
+        },
+        {
+          "ok": true,
+          "balance": 100
+        },
+        {
+          "ok": true,
+          "balance": 100
+        },
+        {
+          "ok": true,
+          "balance": 100
+        },
+        {
+          "ok": true,
+          "balance": 100
+        },
+        {
+          "ok": true,
+          "balance": 100
+        }
+      ],
+      "balance": 100,
+      "claimed": true,
+      "initialTransactions": [
+        {
+          "amount": 100,
+          "balance_after": 100
+        }
+      ]
+    },
+    {
+      "phase": "after",
+      "kind": "claimed",
+      "independentConnections": 8,
+      "waitEvents": [
+        "advisory",
+        "advisory",
+        "transactionid",
+        "advisory",
+        "advisory",
+        "advisory",
+        "advisory",
+        "advisory"
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        },
+        {
+          "ok": true,
+          "balance": 42
+        }
+      ],
+      "balance": 42,
+      "claimed": true,
+      "initialTransactions": []
+    }
+  ],
+  "limitations": [
+    "Local native PostgreSQL with synthetic Supabase auth helpers/default grants; no production, real JWT/PostgREST or HTTP manager calls",
+    "Concurrency uses distinct PostgreSQL backend PIDs and catalog-confirmed lock barriers; no PGlite or mocked SQL",
+    "The unchanged nullable-flag legacy case and production population are not repaired or inferred; no SSE debit work",
+    "Native tests use the dev migration sequence; teammates 011-018 are not applied by this runner"
+  ]
+}

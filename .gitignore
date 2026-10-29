@@ -29,7 +29,11 @@ dist-ssr
 .gemini/
 
 # Local testing
+.tripneeder-acceptance-evidence/
 tests/data/
 tests/output/
 .vercel
 .env*
+
+# Local production security backups
+/docs/security/backups/

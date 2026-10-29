@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { CheckCircle, ChevronRight, LoaderCircle, SlidersHorizontal } from 'lucide-react'
 import { useAuth } from '../contexts/auth'
+import { supabase } from '../services/auth/supabaseClient'
+import { reverseGeocodeCoordinates } from '../services/auth/reverseGeocode'
 import { useAnalysisSession } from '../contexts/analysisSession'
 import { useDialog } from '../contexts/dialog'
 import type {
@@ -346,17 +348,14 @@ export function HomePage() {
           setLocationStatus('座標抓取成功，正在背景查詢地名...')
 
           try {
-            const response = await fetch('/api/geocode', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ lat, lng }),
-            })
-            const data = await response.json()
+            const session = await supabase?.auth.getSession()
+            const data = await reverseGeocodeCoordinates(lat, lng, session?.data.session?.access_token)
 
-            if (data.name) {
+            const resolvedName = data?.name
+            if (resolvedName) {
               setInput(prev => ({
                 ...prev,
-                location: { ...prev.location, lat, lng, name: data.name }
+                location: { ...prev.location, lat, lng, name: resolvedName }
               }))
               setLocationStatus('定位成功！')
             } else {
@@ -462,16 +461,12 @@ export function HomePage() {
 
     void (async () => {
       try {
-        const response = await fetch('/api/geocode', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lat, lng }),
-        })
-        const data = (await response.json()) as { name?: string }
+        const session = await supabase?.auth.getSession()
+        const data = await reverseGeocodeCoordinates(lat, lng, session?.data.session?.access_token)
 
         if (reverseGeocodeRequestId.current !== requestId) return
 
-        const resolvedName = data.name?.trim()
+        const resolvedName = data?.name?.trim()
 
         if (resolvedName) {
           setInput((current) => {
@@ -685,7 +680,7 @@ export function HomePage() {
   async function handleCancelAnalysis() {
     const confirmed = await dialog.confirm({
       title: '取消分析',
-      message: '確定取消嗎？分析未完成前不會扣除點數。',
+      message: '確定取消等待嗎？若付款已完成，仍可從最近生成免費恢復行程。',
       confirmLabel: '確認取消',
     })
 
@@ -703,8 +698,8 @@ export function HomePage() {
 
   // 只有在還沒成功，且正在分析中或有錯誤時才顯示載入/錯誤畫面
   if (isAnalysisInProgress || analysisError) {
-    const partialPlans = session?.partialPlans ?? []
-    const completedCount = Math.min(partialPlans.length, 3)
+    const progressStyles = session?.progressStyles ?? []
+    const completedCount = Math.min(progressStyles.length, 3)
     const totalCount = 3
     const percent = Math.round((completedCount / totalCount) * 100)
 
@@ -752,7 +747,7 @@ export function HomePage() {
                 />
                 <div className="analysis-progress-panel">
                   <div className="analysis-progress-meta">
-                    <span>已完成 {completedCount} / {totalCount} 個方案</span>
+                    <span>已整理 {completedCount} / {totalCount} 個方案，正在驗證與確認付款</span>
                     <strong>{percent}%</strong>
                   </div>
                   <div className="analysis-progress-track">
@@ -766,8 +761,7 @@ export function HomePage() {
 
               <ul className="analysis-plan-list">
                 {planSlotLabels.map((slotLabel, index) => {
-                  const plan = partialPlans[index]
-                  const isReady = Boolean(plan?.title)
+                  const isReady = progressStyles.includes((['safe', 'balanced', 'explore'] as const)[index])
                   const isGenerating = !isReady && index === completedCount
 
                   return (
@@ -787,7 +781,7 @@ export function HomePage() {
                         {isReady ? (
                           <span className="analysis-status-badge is-complete">
                             <CheckCircle size={17} strokeWidth={2.2} aria-hidden="true" />
-                            已完成
+                            驗證中
                           </span>
                         ) : isGenerating ? (
                           <span className="analysis-status-badge is-generating">
@@ -803,11 +797,7 @@ export function HomePage() {
 
                       {isReady ? (
                         <div className="analysis-plan-content">
-                          <h2>{plan?.title}</h2>
-                          {/* 僅保留一段簡短敘述，優先顯示 subtitle，若無則顯示 summary */}
-                          {(plan?.subtitle || plan?.summary) ? (
-                            <p>{plan.subtitle || plan.summary}</p>
-                          ) : null}
+                          <p>方案整理中，完成驗證及付款後即可查看完整行程。</p>
                         </div>
                       ) : (
                         <div className="analysis-plan-skeleton" aria-hidden="true">
@@ -835,7 +825,7 @@ export function HomePage() {
           )}
 
           {analysisError ? (
-            <p className="analysis-no-charge-note">分析失敗不扣除點數</p>
+            <p className="analysis-no-charge-note">請重試原生成紀錄以確認付款狀態；已付款行程可從最近生成恢復。</p>
           ) : null}
 
           {analysisError ? (

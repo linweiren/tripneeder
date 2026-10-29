@@ -1,8 +1,27 @@
 /// <reference types="node" />
+import { recordAiDurations, traceDurationPlan, traceDurationStops, recordCoverageShadow } from './_lib/trip-coverage-v2.js'
 
 import https from 'node:https'
+import { requireAuthenticatedUser, handleApiOptions } from './_lib/authenticated-user.js'
+import { claimGeneration, createGenerationStore, generationInput, isGenerationId, readGeneration } from './_lib/trip-generations.js'
 import { appendFileSync } from 'node:fs'
 import { buildTripPrompt, buildRetryTripSkeletonPrompt, parseTripPlanSkeletonResponse } from '../src/services/ai/tripPlanPrompt.js'
+import { getTripPlanStyleLabel, normalizeTripPlanIdentity, normalizeTripPlanIdentities } from '../src/services/ai/tripPlanIdentity.js'
+import { getMealSuitabilityRank, MEAL_SUITABILITY_PROMPT_RULE } from '../src/services/ai/mealSuitability.js'
+import { compareOriginalActivities, getActivityPurpose } from './_lib/trip-activity-purpose.js'
+import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
+import { buildIntentCandidateGrounding } from './_lib/trip-intent-candidate-grounding.js'
+import { assessVisitRequirements, filterDemandCandidates, getForbiddenVisitIssues,
+  getVisitRequirementWarnings, getVisitRequirementContentText, preservesCoreVisitRequirements,
+  isForbiddenStop, visitRequirementEvidence } from './_lib/trip-demand-compliance.js'
+import { withAcceptanceEvidence, evidenceAiFetch, observeEvidenceCall, recordAiModelText,
+  recordRawAiPlan, recordAiUsage, recordAiStreamUsage, bindEvidencePlan, recordEvidenceDecision,
+  recordEvidencePoints, recordEvidenceProfile, recordEvidencePlanDecision, bindLocalEvidencePlan,
+  recordEvidenceDelivery, carryEvidencePlan } from './_lib/trip-acceptance-evidence.js'
+import { recordCapacityDurationLoss, proposeStopDurationRedistribution,
+  getDurationRedistributionIssues, type CapacityDurationLoss } from './_lib/trip-stop-duration-quality.js'
+import { compareFoodPurposes, getFoodPurposeHint, hasFoodPurposeConflict, recordFoodReplacement,
+  type FoodPurposeProvenance } from './_lib/trip-food-purpose.js'
 import { tripPlanSkeletonResponseSchema } from '../src/services/ai/tripPlanResponseSchema.js'
 import type {
   GenerateTripPlansRequest,
@@ -12,6 +31,7 @@ import type {
 import { createClient } from '@supabase/supabase-js'
 import {
   FIRST_STOP_MAX_DISTANCE_KM,
+  hasConfirmedCulturalPrimaryPurpose,
   calculateDistance,
   validateStopsWithPlaces,
   validatePlanOpeningHours,
@@ -29,14 +49,20 @@ import {
 import {
   createTripCandidateDebugSession,
   writeTripCandidateDebugReport,
+  type TripCandidateDebugSession,
 } from './_lib/trip-candidate-debug.js'
 import { loadServerPreferenceProfile } from './_lib/server-personalization-profile.js'
+import type { DiagnosticStageContext } from './_lib/trip-quality-diagnostics.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
+import { chooseSupplementalInsertion, createSupplementRouteContext, createRepairRouteResolver,
+  resolveMealComparisonRoutes, SUPPLEMENT_SIMILAR_SCORE_TOLERANCE,
+  hasReusableStaticRouteTimings,
+  type SupplementRouteContext } from './_lib/trip-supplement-quality.js'
 import {
   PLAN_IDS,
   TIMELINE_START_GRANULARITY_MINUTES,
   POST_TIMING_ALIGNMENT_MAX_PASSES,
-  MEAL_ALIGNMENT_MIN_OVERLAP_MINUTES,
+  MINIMUM_MEAL_DURATION_MINUTES,
   clamp,
   formatMinutesAsTime,
   getAllowedTripMinutes,
@@ -46,10 +72,8 @@ import {
   getOpeningHoursSearchStartMinutes,
   getRequiredMealWindows,
   getScheduleCapacityMinutes,
-  getVisitMealWindowOverlapMinutes,
   isStopAlignedWithMealWindow,
   parseTimeToMinutes,
-  tripOverlapsMealWindow,
   type PlanId,
   type RequiredMealWindow,
 } from './_lib/trip-planning-rules.js'
@@ -57,10 +81,9 @@ import {
   estimateTransportTotal,
   getDefaultStopDuration,
   getMaximumStopDuration,
-  getMinimumStopCountForLongTrip,
   getMinimumStopDuration,
   getPlanActualDuration,
-  getReasonablePlanDuration,
+  getReasonableStopDuration,
   getStopStretchWeight,
 } from './_lib/trip-plan-metrics.js'
 import {
@@ -77,11 +100,9 @@ import {
 import {
   comparePlansByDisplayPriority,
   getCoverageRepairTargetMinutes,
-  getPlanDisplayPriority,
-  getPlanDiversityOffset,
   pickRotatedItem,
 } from './_lib/trip-repair-strategy.js'
-import type { Stop, TripPlan } from '../src/types/trip.js'
+import type { Stop, TripInput, TripPlan } from '../src/types/trip.js'
 
 type VercelRequest = {
   method?: string
@@ -95,6 +116,8 @@ type VercelRequest = {
 const SUPABASE_FETCH_TIMEOUT_MS = 10000
 
 type VercelResponse = {
+  on?: (event: string, listener: () => void) => void
+  writableEnded?: boolean
   status: (code: number) => VercelResponse
   json: (body: unknown) => void
   setHeader: (name: string, value: string) => void
@@ -165,63 +188,107 @@ const DAWN_TAIL_NEAR_END_MINUTES = 90
 type DeliveryPlanIssueOptions = {
   coverageShortfallAllowanceMinutes?: number
   candidates?: NearbyPlaceCandidates
+  skipMealCoverage?: boolean
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Cache-Control', 'no-store')
+  return withAcceptanceEvidence(req.body, res, sink => generateTrip(req, sink))
+}
 
+async function generateTrip(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Cache-Control', 'no-store')
+  if (handleApiOptions(req.method, res)) return
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
 
-  const request = parseRequestBody(req.body)
-  const accessToken = getBearerToken(req.headers?.authorization)
-
-  if (!request) {
+  const auth = await observeEvidenceCall('supabase', () => requireAuthenticatedUser(req.headers?.authorization, res))
+  if (!auth) return
+  const body = parseRequestBody(req.body)
+  const input = generationInput(body?.input)
+  if (!body || !input || !isGenerationId(body.generationId)) {
     res.status(400).json({ error: '行程偏好資料不完整，請回到表單重新送出。' })
     return
   }
 
-  if (getAllowedTripMinutes(request.input) === 0) {
+  const generationId = body.generationId
+  if (getAllowedTripMinutes(input) === 0) {
     res.status(400).json({ error: '開始時間與結束時間不可相同。' })
     return
   }
 
-  if (!accessToken) {
-    res.status(401).json({ error: '請登入以繼續使用本服務。' })
-    return
-  }
-
-  const apiKey = process.env.OPENAI_API_KEY
-
-  if (!apiKey) {
-    res.status(500).json({
-      error: '尚未在 Vercel Environment Variables 設定 OPENAI_API_KEY。',
-    })
-    return
-  }
-
-  let supabase: PointsSupabaseClient
-  let userId: string | undefined
+  let store: ReturnType<typeof createGenerationStore>
+  let attemptToken: string
   try {
-    supabase = createUserScopedSupabaseClient(accessToken)
-    userId = getUserIdFromToken(accessToken)
-    const balance = await getAvailablePoints(supabase)
-
-    if (balance < ANALYSIS_COST) {
-      res.status(402).json({
-        error: `點數不足。每次分析需要 ${ANALYSIS_COST} 點，目前剩餘 ${balance} 點。`,
-      })
+    store = createGenerationStore()
+    const claim = await claimGeneration(store, auth.userId, generationId, input)
+    if (claim.outcome === 'completed') { res.status(200).json(claim.response); return }
+    if (claim.outcome === 'missing') { res.status(404).json({ error: '找不到這筆生成。' }); return }
+    if (claim.outcome === 'input_mismatch') { res.status(409).json({ error: '生成編號與原始輸入不符，請開始新一次生成。' }); return }
+    if (claim.outcome === 'running') {
+      res.setHeader('Retry-After', '3')
+      res.status(202).json({ generationId: generationId, status: 'running', leaseExpiresAt: claim.leaseExpiresAt })
       return
     }
-  } catch (error) {
-    res.status(502).json({
-      error: error instanceof Error ? error.message : 'AI 分析失敗，請稍後再試。',
-    })
+    if (claim.outcome !== 'claimed' || !isGenerationId(claim.attemptToken)) throw new Error('Invalid claim')
+    attemptToken = claim.attemptToken
+  } catch {
+    res.status(503).json({ error: '付款狀態暫時無法確認，請稍後查詢原生成編號。' })
     return
   }
 
+  const controller = new AbortController()
+  if (req.signal?.aborted) controller.abort()
+  const abort = () => controller.abort()
+  req.signal?.addEventListener('abort', abort, { once: true })
+  res.on?.('close', () => { if (!res.writableEnded) controller.abort() })
+  let commitStarted = false
+  try {
+    const apiKey = process.env.OPENAI_API_KEY
+    if (!apiKey) { res.status(500).json({ error: '行程生成服務設定不完整。' }); return }
+    const supabase = createUserScopedSupabaseClient(auth.accessToken)
+    const balance = await getAvailablePoints(supabase)
+    if (balance < ANALYSIS_COST) {
+      res.status(402).json({ error: `點數不足。每次分析需要 ${ANALYSIS_COST} 點，目前剩餘 ${balance} 點。` })
+      return
+    }
+    controller.signal.throwIfAborted()
+    await runTripGeneration({ ...req, signal: controller.signal }, res, { input }, supabase, auth.userId, apiKey, async response => {
+      // Serialize the final Validation/Repair/text version before starting the transaction.
+      const snapshot = JSON.parse(JSON.stringify(response)) as GenerateTripPlansResponse
+      controller.signal.throwIfAborted()
+      commitStarted = true
+      recordEvidencePoints('attempted', ANALYSIS_COST)
+      try {
+        const { data, error } = await store.rpc('complete_paid_trip_generation', {
+          p_user_id: auth.userId, p_generation_id: generationId, p_attempt_token: attemptToken, p_response: snapshot,
+        })
+        if (error || !data) throw new Error('Commit unconfirmed')
+        recordEvidencePoints('rpc_confirmed', ANALYSIS_COST)
+        return data as GenerateTripPlansResponse
+      } catch {
+        // A timeout may have happened AFTER commit. Never mark failed or change the ID.
+        const saved = await readGeneration(store, auth.userId, generationId)
+        if (saved?.status === 'completed' && saved.response) return saved.response
+        recordEvidencePoints('rpc_failed', ANALYSIS_COST)
+        throw new Error('付款與保存尚未確認，請使用原生成編號恢復；不會交付未付款行程。')
+      }
+    })
+  } catch {
+    if (!controller.signal.aborted) res.status(503).json({ error: '生成服務暫時無法使用，請使用原生成編號重試。' })
+  } finally {
+    req.signal?.removeEventListener('abort', abort)
+    if (!commitStarted) {
+      // Fenced failure cannot clear a newer worker or a completed payment.
+      try { await store.rpc('fail_trip_generation', { p_user_id: auth.userId, p_generation_id: generationId, p_attempt_token: attemptToken }) } catch { /* Lease permits recovery after a database outage. */ }
+    }
+  }
+}
+
+async function runTripGeneration(req: VercelRequest, res: VercelResponse, request: GenerateTripPlansRequest,
+  supabase: PointsSupabaseClient, userId: string, apiKey: string,
+  complete: (response: GenerateTripPlansResponse) => Promise<GenerateTripPlansResponse>) {
   // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
   let locationWarning = ''
   if (
@@ -250,6 +317,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 獲取並合併人設
   const persona = await getMergedPersona(supabase, userId, request.input)
   const preferenceProfile = await loadServerPreferenceProfile(supabase, userId)
+  recordEvidenceProfile(persona.stamina, preferenceProfile.sampleCount, (preferenceProfile.foodSubtypeScores.cafe ?? 0) > 0)
 
   // 9D-7: 智慧前置搜尋 (Search-Inject)
   if (!request.input.location.lat || !request.input.location.lng) {
@@ -276,7 +344,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }, candidateDebugSession ?? undefined, { preferenceProfile })
   candidateDebugSession?.recordCandidateSets(nearbyPlaceCandidates)
   candidateDebugSession?.recordAiInput(getPromptCandidateSelection(nearbyPlaceCandidates))
-  const nearbyPlaces = formatNearbyRecommendations(nearbyPlaceCandidates)
+  const nearbyPlaces = [formatNearbyRecommendations(nearbyPlaceCandidates),
+    buildIntentCandidateGrounding(request.input, nearbyPlaceCandidates)].filter(Boolean).join('\n\n')
   if (nearbyPlaceCandidates.allCandidates.length === 0) {
     const message = '目前這個時間窗附近沒有可驗證且營業時間已知的候選地點，系統不會用 AI 自創地點硬湊方案。請調整開始時間或拉長行程後再試。'
     writeGenerateDebugLog('candidate-pool-empty-aborted', {
@@ -326,11 +395,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('X-Accel-Buffering', 'no')
 
   const writeEvent = (event: Record<string, unknown>) => {
+    req.signal?.throwIfAborted()
     res.write(`${JSON.stringify(event)}\n`)
+    recordEvidenceDelivery(event)
   }
 
   try {
-    const openAiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    const openAiResponse = await evidenceAiFetch('initial', PLAN_IDS, 'https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -374,8 +445,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const extractor = new PlanExtractor()
+    const streamedPlanTypes = new Set<string>()
     let fullText = ''
-    let pointsConsumed = false
     const validatedPlans: TripPlan[] = []
     const invalidPlanIds: string[] = []
     const validationSummaries = new Map<string, string[]>()
@@ -396,6 +467,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       sseBuffer = events.pop() ?? ''
 
       for (const rawEvent of events) {
+        recordAiStreamUsage(openAiResponse, rawEvent)
         const delta = extractDeltaFromSseEvent(rawEvent)
         const finishReason = extractFinishReasonFromSseEvent(rawEvent)
         if (finishReason) streamFinishReasons.push(finishReason)
@@ -404,7 +476,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         fullText += delta
         const plans = extractor.push(delta)
 
-        for (const plan of plans) {
+        for (const rawPlan of plans) {
+          recordRawAiPlan(openAiResponse, rawPlan)
+          const plan = normalizeTripPlanIdentity(rawPlan)
+          if (!plan || streamedPlanTypes.has(plan.type)) continue
+          bindEvidencePlan(openAiResponse, plan)
+          streamedPlanTypes.add(plan.type)
           const bias = request.input.location.lat && request.input.location.lng
             ? { lat: request.input.location.lat, lng: request.input.location.lng }
             : undefined
@@ -413,6 +490,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             plan as TripPlan,
             nearbyPlaceCandidates,
           )
+          candidateDebugSession?.recordPlanTransition(plan as TripPlan, groundedPlan, 'stream:grounding')
           const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
           candidateDebugSession?.recordValidation(groundedPlan, validation, 'stream')
           if (!validation.validationPerformed) {
@@ -434,12 +512,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           upsertValidatedPlan(validatedPlans, validatedPlan)
-          writeEvent({ event: 'plan', plan: validatedPlan })
+          if (!getForbiddenVisitIssues(validatedPlan, request.input, nearbyPlaceCandidates).length) {
+            writeEvent({ event: 'progress', style: validatedPlan.type, stage: 'validating' })
+          }
         }
       }
     }
 
     if (sseBuffer.trim()) {
+      recordAiStreamUsage(openAiResponse, sseBuffer)
       const delta = extractDeltaFromSseEvent(sseBuffer)
       const finishReason = extractFinishReasonFromSseEvent(sseBuffer)
       if (finishReason) streamFinishReasons.push(finishReason)
@@ -447,7 +528,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         fullText += delta
         const plans = extractor.push(delta)
 
-        for (const plan of plans) {
+        for (const rawPlan of plans) {
+          recordRawAiPlan(openAiResponse, rawPlan)
+          const plan = normalizeTripPlanIdentity(rawPlan)
+          if (!plan || streamedPlanTypes.has(plan.type)) continue
+          bindEvidencePlan(openAiResponse, plan)
+          streamedPlanTypes.add(plan.type)
           const bias = request.input.location.lat && request.input.location.lng
             ? { lat: request.input.location.lat, lng: request.input.location.lng }
             : undefined
@@ -456,6 +542,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             plan as TripPlan,
             nearbyPlaceCandidates,
           )
+          candidateDebugSession?.recordPlanTransition(plan as TripPlan, groundedPlan, 'stream-tail:grounding')
           const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
           candidateDebugSession?.recordValidation(groundedPlan, validation, 'stream-tail')
           if (!validation.validationPerformed) {
@@ -477,17 +564,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           upsertValidatedPlan(validatedPlans, validatedPlan)
-          writeEvent({ event: 'plan', plan: validatedPlan })
+          if (!getForbiddenVisitIssues(validatedPlan, request.input, nearbyPlaceCandidates).length) {
+            writeEvent({ event: 'progress', style: validatedPlan.type, stage: 'validating' })
+          }
         }
       }
     }
 
     let finalResponse: GenerateTripPlansResponse
+    let initialDiagnosticPhase = 'initial-ai-output'
     try {
       try {
+        recordAiModelText(openAiResponse, fullText)
         finalResponse = parseTripPlanSkeletonResponse(fullText)
+        finalResponse.plans.forEach(plan => bindEvidencePlan(openAiResponse, plan))
       } catch {
         if (validatedPlans.length > 0) {
+          initialDiagnosticPhase = 'initial-stream-validation-fallback'
           finalResponse = {
             plans: validatedPlans,
             warnings: ['部分方案產生不完整，已為您呈現已完成的行程。']
@@ -503,13 +596,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             tripPrompt,
             'initial-json-repair',
           )
+          initialDiagnosticPhase = 'initial-json-repair-ai-output'
         }
       }
 
       if (!finalResponse || !Array.isArray(finalResponse.plans)) {
         finalResponse = { plans: validatedPlans || [], warnings: [] }
       }
-      candidateDebugSession?.recordAiOutput(finalResponse.plans, 'initial-ai-output')
+      candidateDebugSession?.recordAiOutput(finalResponse.plans, initialDiagnosticPhase)
 
       for (const plan of finalResponse.plans) {
         const bias = request.input.location.lat && request.input.location.lng
@@ -519,6 +613,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           plan as TripPlan,
           nearbyPlaceCandidates,
         )
+        candidateDebugSession?.recordPlanTransition(plan as TripPlan, groundedPlan, 'final-parse:grounding')
         const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
         candidateDebugSession?.recordValidation(groundedPlan, validation, 'final-parse')
         if (!validation.validationPerformed) {
@@ -552,7 +647,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             nearbyPlaces,
             formatRetryValidationSummaries(invalidPlanIds, validationSummaries),
           )
-          const retryResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+          const retryResponse = await evidenceAiFetch('retry', invalidPlanIds, 'https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -573,7 +668,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               json_schema: {
                   name: 'trip_plan_skeleton_response',
                   strict: true,
-                  schema: tripPlanSkeletonResponseSchema,
+                  schema: buildTripPlanRefillResponseSchema(invalidPlanIds.length),
                 },
               },
             }),
@@ -583,8 +678,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const retryData = (await retryResponse.json()) as {
               choices: Array<{ message: { content: string } }>
             }
+            recordAiUsage(retryResponse, retryData)
+            recordAiModelText(retryResponse, retryData.choices?.[0]?.message?.content)
             const retryText = retryData.choices[0].message.content
             const retryParsed = parseTripPlanSkeletonResponse(retryText)
+            retryParsed.plans.forEach(plan => bindEvidencePlan(retryResponse, plan))
             candidateDebugSession?.recordAiOutput(retryParsed.plans, 'retry-ai-output')
 
             for (const plan of retryParsed.plans) {
@@ -596,6 +694,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   plan as TripPlan,
                   nearbyPlaceCandidates,
                 )
+                candidateDebugSession?.recordPlanTransition(plan as TripPlan, groundedPlan, 'retry:grounding')
                 const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
                 candidateDebugSession?.recordValidation(groundedPlan, validation, 'retry')
                 if (!validation.validationPerformed) {
@@ -653,7 +752,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           finalResponse.plans.push(validatedPlan)
         }
       }
-      finalResponse.plans = finalResponse.plans.sort(comparePlansByDisplayPriority)
+      finalResponse.plans = normalizeTripPlanIdentities(finalResponse.plans)
 
       const finalRepairResults: Array<{
         sourcePlan: TripPlan
@@ -671,12 +770,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           new Set(),
           'final-repair',
           crossPlanUsedPlaceIds,
+          candidateDebugSession ?? undefined,
+          persona.stamina,
         )
 
         finalRepairResults.push({
           sourcePlan: plan,
           ...result,
         })
+        recordEvidencePlanDecision(plan, result.plan ? 'delivery_accepted_provisional' : 'delivery_rejected', result.issues)
         if (result.plan) {
           getPlanPlaceIds(result.plan).forEach((placeId) => crossPlanUsedPlaceIds.add(placeId))
         }
@@ -700,7 +802,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       finalResponse.plans = openingHoursSafePlans
 
-      if (finalResponse.plans.length < PLAN_IDS.length) {
+      if (PLAN_IDS.some(planId => !finalResponse.plans.some(plan => plan.id === planId && plan.type === planId))) {
         const existingPlanIds = new Set(finalResponse.plans.map((plan) => plan.id))
         const missingPlanIds = PLAN_IDS.filter((planId) => !existingPlanIds.has(planId))
 
@@ -732,6 +834,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   plan as TripPlan,
                   missingPlanId,
                 )
+                carryEvidencePlan(plan, normalizedRetryPlan)
 
                 const bias = request.input.location.lat && request.input.location.lng
                   ? { lat: request.input.location.lat, lng: request.input.location.lng }
@@ -740,6 +843,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   normalizedRetryPlan,
                   nearbyPlaceCandidates,
                 )
+                candidateDebugSession?.recordPlanTransition(normalizedRetryPlan, groundedPlan, 'refill:grounding')
                 const validation = await validateStopsWithPlanningTimeline(groundedPlan, bias, request.input)
                 candidateDebugSession?.recordValidation(groundedPlan, validation, 'refill')
                 if (!validation.validationPerformed) {
@@ -773,6 +877,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   new Set(),
                   'refill-final-repair',
                   new Set(finalResponse.plans.flatMap(getPlanPlaceIds)),
+                  candidateDebugSession ?? undefined,
+                  persona.stamina,
                 )
                 candidateDebugSession?.recordRepair(
                   validatedPlan,
@@ -780,6 +886,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   repairResult.issues,
                   'refill-final-repair',
                 )
+                recordEvidencePlanDecision(validatedPlan, repairResult.plan ? 'delivery_accepted_provisional' : 'delivery_rejected', repairResult.issues)
                 if (repairResult.routesFailed) routesApiFailed = true
                 if (!repairResult.plan) {
                   validationSummaries.set(validatedPlan.id, repairResult.issues)
@@ -832,6 +939,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           let lastLocalIssues = ['本地補案未通過最終驗證']
 
           for (const localPlan of localPlans) {
+            bindLocalEvidencePlan(localPlan)
             const repairResult = await repairAndValidatePlanForDelivery(
               localPlan,
               request.input,
@@ -839,6 +947,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               new Set(),
               'local-refill-final-repair',
               new Set(finalResponse.plans.flatMap(getPlanPlaceIds)),
+              candidateDebugSession ?? undefined,
+              persona.stamina,
             )
             candidateDebugSession?.recordRepair(
               localPlan,
@@ -878,7 +988,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         writeGenerateDebugLog('local-refill-disabled', localRefillPayload)
       }
 
-      finalResponse.plans = finalResponse.plans.sort(comparePlansByDisplayPriority)
+      finalResponse.plans = normalizeTripPlanIdentities(finalResponse.plans)
 
       const finalPlanIds = new Set(finalResponse.plans.map((plan) => plan.id))
       const unresolvedPlanIds = PLAN_IDS.filter((planId) => !finalPlanIds.has(planId))
@@ -902,6 +1012,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (!finalResponse.warnings) finalResponse.warnings = []
+      const responseWarnings = finalResponse.warnings
+      const demandWarningGroups = new Map<string, string[]>()
+      finalResponse.plans = finalResponse.plans.map(plan => {
+        const demandWarnings = getVisitRequirementWarnings(plan, request.input, nearbyPlaceCandidates)
+        for (const warning of demandWarnings) {
+          const styles = demandWarningGroups.get(warning) ?? []
+          styles.push(getTripPlanStyleLabel(plan.type) ?? plan.type)
+          demandWarningGroups.set(warning, styles)
+        }
+        return withVisitRequirementText(plan, demandWarnings, request.input, nearbyPlaceCandidates)
+      })
+      for (const [warning, styles] of demandWarningGroups) {
+        const scope = styles.length === finalResponse.plans.length && styles.length > 1 ? '所有方案' : styles.join('、')
+        const message = `${scope}：${warning}`
+        if (!responseWarnings.includes(message)) responseWarnings.push(message)
+      }
       if (!placesValidationPerformed) {
         finalResponse.warnings.push('Google Places 驗證未啟用，部分地點資訊可能不夠準確。')
       }
@@ -911,7 +1037,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       if (finalResponse.plans.length < PLAN_IDS.length) {
         finalResponse.warnings.push(
-          `目前附近營業中的景點較少，僅 ${finalResponse.plans.length} 個可用方案。`,
+          `目前僅 ${finalResponse.plans.length} 個風格方案通過驗收；未能提供的風格：${unresolvedPlanIds.map(getTripPlanStyleLabel).join('、')}。`,
         )
       }
 
@@ -924,20 +1050,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       )
       validationSummaries.clear()
 
-      if (!pointsConsumed) {
-        pointsConsumed = true
-        try {
-          await consumeAnalysisPoints(supabase)
-        } catch (error) {
-          writeEvent({
-            event: 'points_warning',
-            message:
-              error instanceof Error
-                ? error.message
-                : '扣點流程失敗，請稍後再試。',
-          })
-        }
-      }
     } catch (error) {
       writeTripCandidateDebugReport(
         candidateDebugSession,
@@ -957,11 +1069,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return
     }
 
+    finalResponse.plans = finalResponse.plans.map(plan => finalizePlanText(rememberPlanTextTransition(
+      validatedPlans.find(previous => previous.id === plan.id) ?? plan, plan)))
+    const savedResponse = await complete(finalResponse)
+    // Preserve observation provenance across the persisted JSON snapshot boundary.
+    for (const plan of savedResponse.plans) {
+      const previous = finalResponse.plans.find(p => p.id === plan.id)
+      if (previous) carryEvidencePlan(previous, plan)
+    }
+    finalResponse = savedResponse
     writeGenerateDebugLog('generate-trip-done', {
       planIds: finalResponse.plans.map((plan) => plan.id),
       planCount: finalResponse.plans.length,
       warnings: finalResponse.warnings ?? [],
     })
+    for (const plan of finalResponse.plans) writeEvent({ event: 'plan', plan })
     writeEvent({ event: 'done', response: finalResponse })
     res.end()
   } catch (error) {
@@ -981,18 +1103,81 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
+// Keep the AI skeleton outside response/schema fields and scoped to plan object lifetime.
+const originalActivitySkeletons = new WeakMap<TripPlan, Stop[]>()
+const foodPurposeProvenance = new WeakMap<TripPlan, FoodPurposeProvenance>()
+const lastCoverageAttempt = new WeakMap<SupplementRouteContext, TripPlan>()
+const durationRepairEvidence = new WeakMap<TripPlan, {
+  losses: Map<string, CapacityDurationLoss>; routeContext: SupplementRouteContext
+}>()
+function carryOriginalActivities(source: TripPlan, target: TripPlan) {
+  const originals = originalActivitySkeletons.get(source)
+  if (originals) originalActivitySkeletons.set(target, originals)
+  const foodTrace = foodPurposeProvenance.get(source)
+  if (foodTrace) foodPurposeProvenance.set(target, foodTrace)
+  const durationEvidence = durationRepairEvidence.get(source)
+  if (durationEvidence) durationRepairEvidence.set(target, durationEvidence)
+  return rememberPlanTextTransition(source, target)
+}
+
+// Neither provisional nor final text may claim an unconfirmed visit was achieved.
+export function withVisitRequirementText(plan: TripPlan, warnings: string[], input?: TripInput,
+  candidates?: NearbyPlaceCandidates) {
+  const content = input ? getVisitRequirementContentText(plan, input, candidates) : ''
+  let summary = input ? plan.summary.replace(/(?:^| )(?:已確認文化內容|文化內容說明)：[\s\S]*$/, '') : plan.summary
+  // A previously emitted machine warning may survive a later successful repair.
+  // Reassess it from this final plan instead of appending a contradictory success.
+  if (input && !warnings.length && /^(?:未安排可確認符合「|已安排文化場館；目前僅有場館用途資料)/.test(summary)) {
+    summary = '依下方地點與順序展開行程。'
+  }
+  if (!warnings.length && !content && summary === plan.summary) return plan
+  return carryOriginalActivities(plan, { ...plan,
+    ...(warnings.length ? { title: getTripPlanStyleLabel(plan.type) ?? plan.title,
+      subtitle: '已依可用地點調整活動安排' } : {}),
+    summary: [warnings.length ? warnings.join(' ') : summary, content].filter(Boolean).join(' '),
+  })
+}
+
+export function getOriginalActivityImpact(source: TripPlan, finalStops: Stop[]) {
+  return compareOriginalActivities(originalActivitySkeletons.get(source) ?? source.stops, finalStops)
+}
+
+export function getFoodPurposeImpact(source: TripPlan, finalStops: Stop[]) {
+  const trace = foodPurposeProvenance.get(source)
+  const baseline = trace?.baseline ?? source.stops
+  const impact = compareFoodPurposes(baseline, finalStops)
+  const changes = impact.changes.map(change => ({ ...change,
+    reason: trace?.replacements.findLast(event => event.stopId === change.stopId &&
+      event.toPlaceId === change.toPlaceId)?.reason ?? 'unknown' }))
+  const raw = originalActivitySkeletons.get(source) ?? source.stops
+  return { ...impact, changes, groundingCorrections: baseline.filter(stop => stop.type === 'food' &&
+    raw.some(original => original.id === stop.id && original.placeId !== stop.placeId)).length,
+    necessarySafetyReplacements: changes.filter(change => change.reason === 'safety').length,
+    optionalFoodReplacements: changes.filter(change => change.reason === 'optional_diversity').length }
+}
+
+function logOriginalActivityImpact(source: TripPlan, final: TripPlan, phase: string) {
+  const payload = { planId: source.id, phase, ...getOriginalActivityImpact(source, final.stops) }
+  console.info('[original-activity-impact]', payload)
+  writeGenerateDebugLog('original-activity-impact', payload)
+  const foodPayload = { planId: source.id, phase, ...getFoodPurposeImpact(source, final.stops) }
+  console.info('[food-purpose-impact]', foodPayload)
+  writeGenerateDebugLog('food-purpose-impact', foodPayload)
+  carryOriginalActivities(source, final)
+}
+
 function normalizePlanTotalTime(plan: TripPlan): TripPlan {
-  return {
+  return carryOriginalActivities(plan, {
     ...plan,
     totalTime: getPlanActualDuration(plan),
-  }
+  })
 }
 
 function upsertValidatedPlan(plans: TripPlan[], nextPlan: TripPlan) {
   const existingIndex = plans.findIndex((plan) => plan.id === nextPlan.id)
 
   if (existingIndex >= 0) {
-    plans[existingIndex] = nextPlan
+    plans[existingIndex] = rememberPlanTextTransition(plans[existingIndex], nextPlan)
     return
   }
 
@@ -1005,6 +1190,7 @@ function markPlanInvalid(
   planId: string,
   issues: string[],
 ) {
+  recordEvidenceDecision(planId, 'validation_rejected', issues)
   if (!invalidPlanIds.includes(planId)) {
     invalidPlanIds.push(planId)
   }
@@ -1016,6 +1202,7 @@ function markPlanValid(
   validationSummaries: Map<string, string[]>,
   planId: string,
 ) {
+  recordEvidenceDecision(planId, 'validation_accepted_provisional')
   const existingIndex = invalidPlanIds.indexOf(planId)
   if (existingIndex >= 0) {
     invalidPlanIds.splice(existingIndex, 1)
@@ -1027,33 +1214,14 @@ function getRetryPlansForMissingId(
   retryPlans: TripPlan[],
   missingPlanId: PlanId,
 ) {
-  const targetPlans = retryPlans.filter((plan) => plan.id === missingPlanId)
-  if (targetPlans.length > 0) {
-    return targetPlans
-  }
-
-  const usablePlans = retryPlans.filter((plan) => Array.isArray(plan.stops) && plan.stops.length > 0)
-  if (usablePlans.length === 0) return []
-
-  console.info('[plan-refill-id-normalized]', {
-    targetPlanId: missingPlanId,
-    returnedPlanIds: retryPlans.map((plan) => plan.id),
-  })
-  writeGenerateDebugLog('plan-refill-id-normalized', {
-    targetPlanId: missingPlanId,
-    returnedPlanIds: retryPlans.map((plan) => plan.id),
-  })
-
-  return [usablePlans[0]]
+  return retryPlans.filter(plan => plan.id === missingPlanId && plan.type === missingPlanId)
 }
 
 function normalizeRefillPlanForMissingId(plan: TripPlan, missingPlanId: PlanId): TripPlan {
-  const shouldReplaceTitle = plan.id !== missingPlanId || hasPlanNumberTitle(plan.title)
+  const shouldReplaceTitle = hasPlanNumberTitle(plan.title)
 
   return {
     ...plan,
-    id: missingPlanId,
-    type: missingPlanId,
     title: shouldReplaceTitle ? getRefillPlanFallbackTitle(missingPlanId) : plan.title,
   }
 }
@@ -1124,8 +1292,8 @@ Hard constraints for real places:
 - Copy "name", "address", and "placeId" exactly from one injected candidate. Do not paraphrase or invent venue names.
 - Prefer higher score candidates. Use FOOD_CANDIDATES for food stops and MAIN_ACTIVITY_CANDIDATES for main activity stops.
 - Do not force every plan to include a food stop. Include food only when the trip overlaps lunch/dinner and a FOOD_CANDIDATE can be scheduled inside its opening window for at least 45 minutes.
-- Keep the three plans meaningfully different. Avoid reusing the same placeId across different plans when there are viable alternatives, but reuse is allowed if the candidate pool is too constrained.
-- If the user did not explicitly choose food-first, prefer FOOD_CANDIDATES with foodSubtype=cafe, dessert, or restaurant over snack/traditional street food, because they are better rest stops inside a short trip.
+- Follow only the style tasks requested in this prompt; do not produce extra styles. Keep different plans meaningfully different. Avoid reusing the same placeId across different plans when there are viable alternatives, but reuse is allowed if the candidate pool is too constrained.
+- ${MEAL_SUITABILITY_PROMPT_RULE}
 - Every selected candidate must have known Google opening hours. Schedule it only inside that available window, make sure the visit ends no later than leaveBy, and do not select a candidate whose opening window cannot support at least 40 minutes of visit time in the user's trip window (45 minutes for food).
 - Treat bestSlots as the allowed position hint: early belongs in the first third, middle in the middle third, late in the final third. Do not place a candidate with only late availability in the first half of the route.
 - When FIRST_STOP_CANDIDATES_WITHIN_2KM exists, stops[0] must come from that section.
@@ -1153,7 +1321,7 @@ async function fetchRetrySkeletonPlans(
     formatRetryValidationSummaries([...planIds], validationSummaries),
   )
   const retryResponseSchema = buildTripPlanRefillResponseSchema(planIds.length)
-  const retryResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+  const retryResponse = await evidenceAiFetch('refill', planIds, 'https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1185,7 +1353,12 @@ async function fetchRetrySkeletonPlans(
   const retryData = (await retryResponse.json()) as {
     choices: Array<{ message: { content: string } }>
   }
-  return parseTripPlanSkeletonResponse(retryData.choices[0].message.content).plans
+  recordAiUsage(retryResponse, retryData)
+  recordAiModelText(retryResponse, retryData.choices?.[0]?.message?.content)
+  const parsedPlans = parseTripPlanSkeletonResponse(retryData.choices[0].message.content).plans
+  parsedPlans.forEach(plan => bindEvidencePlan(retryResponse, plan))
+  return parsedPlans
+    .filter(plan => planIds.includes(plan.type))
 }
 
 function buildTripPlanRefillResponseSchema(planCount: number) {
@@ -1210,7 +1383,7 @@ async function fetchSkeletonPlansNonStreaming(
   prompt: string,
   phase: string,
 ): Promise<GenerateTripPlansResponse> {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await evidenceAiFetch('initial_json_repair', PLAN_IDS, 'https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1247,6 +1420,8 @@ async function fetchSkeletonPlansNonStreaming(
       message: { content: string }
     }>
   }
+  recordAiUsage(response, data)
+  recordAiModelText(response, data.choices?.[0]?.message?.content)
   const choice = data.choices[0]
   if (choice?.finish_reason) {
     console.info('[trip-json-fallback-finish]', {
@@ -1255,14 +1430,17 @@ async function fetchSkeletonPlansNonStreaming(
     })
   }
 
-  return parseTripPlanSkeletonResponse(choice.message.content)
+  const parsed = parseTripPlanSkeletonResponse(choice.message.content)
+  parsed.plans.forEach(plan => bindEvidencePlan(response, plan))
+  return parsed
 }
 
-function applyCandidateGroundingToPlan(
+export function applyCandidateGroundingToPlan(
   plan: TripPlan,
   candidates: NearbyPlaceCandidates,
 ): TripPlan {
-  return {
+  recordAiDurations(plan)
+  const grounded = {
     ...plan,
     stops: (plan.stops ?? []).map((stop, index) =>
       groundStopWithCandidate(stop, index, candidates),
@@ -1271,6 +1449,13 @@ function applyCandidateGroundingToPlan(
       groundStopWithCandidate(stop, index, candidates),
     ),
   }
+  originalActivitySkeletons.set(grounded, originalActivitySkeletons.get(plan) ??
+    plan.stops.map(stop => ({ ...stop, googleTypes: stop.googleTypes?.slice() })))
+  foodPurposeProvenance.set(grounded, foodPurposeProvenance.get(plan) ?? {
+    baseline: grounded.stops.map(stop => ({ ...stop, googleTypes: stop.googleTypes?.slice() })), replacements: [],
+  })
+  traceDurationPlan(plan, grounded, 'grounding')
+  return rememberPlanTextTransition(plan, grounded)
 }
 
 function groundStopWithCandidate(
@@ -1288,12 +1473,14 @@ async function validateStopsWithPlanningTimeline(
   input: GenerateTripPlansRequest['input'],
 ) {
   const placeResolution = await validateStopsWithPlaces(plan, bias)
+  carryOriginalActivities(plan, placeResolution.validatedPlan)
   if (!placeResolution.validationPerformed || placeResolution.invalidCount > 0) {
     return placeResolution
   }
 
   const timelineInput = await getOpeningHoursTimelineInput(placeResolution.validatedPlan, input)
   const validation = await validateStopsWithPlaces(placeResolution.validatedPlan, bias, timelineInput)
+  carryOriginalActivities(plan, validation.validatedPlan)
 
   return {
     ...validation,
@@ -1301,26 +1488,71 @@ async function validateStopsWithPlanningTimeline(
   }
 }
 
-async function repairPlanForDelivery(
+export async function repairPlanForDelivery(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
   avoidedPlaceIds: Set<string> = new Set(),
-  options: { allowCoverageRepair?: boolean; crossPlanUsedPlaceIds?: Set<string> } = {},
+  options: { allowCoverageRepair?: boolean; crossPlanUsedPlaceIds?: Set<string>;
+    routeContext?: SupplementRouteContext; skipActivitySupplement?: boolean;
+    debugSession?: TripCandidateDebugSession; debugPhase?: string } = {},
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
+  // Filter at every entry, including recursive alternatives and fallbacks. An optional
+  // diversity fallback can relax its own exclusions, never the user's prohibition.
+  const sourceCandidates = candidates
+  candidates = filterDemandCandidates(candidates, input)
+  const debug = options.debugSession
+  const attemptId = debug?.beginRepairAttempt(plan, options.debugPhase ?? 'repair')
+  const diagnosticContext = debug ? { session: debug, stage: { attemptId } } : undefined
   const allowCoverageRepair = options.allowCoverageRepair ?? true
   const crossPlanUsedPlaceIds = options.crossPlanUsedPlaceIds ?? new Set<string>()
+  const routeContext = options.routeContext ?? createSupplementRouteContext()
+  routeContext.remedy.events.push({ kind: 'repair', outcome: 'attempt_started',
+    details: `${options.debugPhase ?? 'repair'}:coverage=${allowCoverageRepair};skipSupplement=${Boolean(options.skipActivitySupplement)}` })
+  const capacityLosses = new Map(durationRepairEvidence.get(plan)?.losses)
+  const shrinkToCapacity = (value: TripPlan) => {
+    const shrunk = shrinkPlanDurationToScheduleCapacity(value, input)
+    recordCapacityDurationLoss(value, shrunk, capacityLosses)
+    return shrunk
+  }
+  const resolveRoutes = createRepairRouteResolver(routeContext)
+  // Capture verified place evidence before optional replacements, independently of the raw AI IDs.
+  let foodTrace = foodPurposeProvenance.get(plan)
+  if (!foodTrace) {
+    foodTrace = { baseline: plan.stops.map((stop, index) => {
+      const grounded = groundStopWithCandidate(stop, index, candidates)
+      return { ...grounded, googleTypes: grounded.googleTypes?.slice() }
+    }),
+      replacements: [] }
+    foodPurposeProvenance.set(plan, foodTrace)
+  }
   const usedPlaceIds = new Set<string>()
-  const repairedStops = plan.stops.map((stop, index) =>
-    ensureStopHasVerifiedPlace(
-      stop,
+  const foodTimelineInput = { ...input, scheduleStartTime: plan.scheduleStartTime }
+  const requiredFoodMeals = getRequiredMealWindows(foodTimelineInput)
+  const repairedStops = plan.stops.map((stop, index) => {
+    const arrival = getEstimatedArrivalMinutesForStop(plan.stops, index,
+      stop.type === 'food' ? foodTimelineInput : input, plan.transportSegments)
+    const replacementHint = isForbiddenStop(stop, input, sourceCandidates) ? { ...stop,
+      // A formerly verified, now forbidden venue must not take the missing-pool
+      // preservation path in ensureStopHasVerifiedPlace.
+      googleMapsUrl: undefined,
+      type: stop.type === 'food' && !candidates.allCandidates.some(isFoodCandidate) ? 'main_activity' as const : stop.type,
+    } : stop
+    return ensureStopHasVerifiedPlace(
+      replacementHint,
       index,
       candidates,
       usedPlaceIds,
       avoidedPlaceIds,
       crossPlanUsedPlaceIds,
-    ),
-  )
+      arrival,
+      foodTrace,
+      stop.type === 'food' && requiredFoodMeals.some(window =>
+        isStopAlignedWithMealWindow(arrival, stop.duration, window)),
+      input,
+    )
+  })
+  traceDurationStops(plan.stops, repairedStops, 'replacement')
   const scheduleAlignedStops = allowCoverageRepair
     ? alignStopsWithCandidateAvailability(
         repairedStops,
@@ -1329,44 +1561,91 @@ async function repairPlanForDelivery(
         avoidedPlaceIds,
         crossPlanUsedPlaceIds,
         plan.transportSegments,
+        foodTrace,
       )
     : repairedStops
+  traceDurationStops(repairedStops, scheduleAlignedStops, 'opening_alignment')
+  // Candidate replacement invalidates the old route. Resolve it before judging coverage.
+  const initialRouteRepair = await resolveRoutes(
+    plan.transportSegments, scheduleAlignedStops, plan.transportMode,
+  )
+  const routedPlan = normalizePlanTotalTime({
+    ...plan, stops: scheduleAlignedStops, transportSegments: initialRouteRepair.segments,
+  })
+  debug?.recordPlanTransition(plan, routedPlan, 'repair:verified-replacements-and-routes', { attemptId })
+  const capacity = getScheduleCapacityMinutes(input)
+  const startedWithOverflow = Boolean(capacity && getPlanActualDuration(routedPlan) > capacity)
+  const initialCapacityRepair = allowCoverageRepair
+    ? await trimPlanToTimeWindow(shrinkToCapacity(routedPlan), input, resolveRoutes, diagnosticContext)
+    : { plan: routedPlan, routesFailed: false }
+  const canAddStops = allowCoverageRepair && !startedWithOverflow && !initialRouteRepair.routesFailed &&
+    initialCapacityRepair.plan.stops.length === scheduleAlignedStops.length
   usedPlaceIds.clear()
-  scheduleAlignedStops.forEach((stop) => {
+  initialCapacityRepair.plan.stops.forEach((stop) => {
     if (stop.placeId) usedPlaceIds.add(stop.placeId)
   })
-  const expandedStops = allowCoverageRepair
-    ? expandStopsForLongTrip(
-        scheduleAlignedStops,
+  // Resolve required meals and their real routes before offering spare capacity to ordinary additions.
+  const mealRepair = allowCoverageRepair && !initialRouteRepair.routesFailed
+    ? await repairRequiredMeals(initialCapacityRepair.plan, input, candidates, routeContext,
+        canAddStops, crossPlanUsedPlaceIds)
+    : { plan: initialCapacityRepair.plan, routesFailed: false }
+  const mealStops = mealRepair.plan.stops
+  const mealRoutes = { segments: mealRepair.plan.transportSegments, routesFailed: mealRepair.routesFailed }
+  // Keep coverage/capacity based on the original request, but carry the resolved meal timeline.
+  input = Object.assign({}, input, { scheduleStartTime: mealRepair.plan.scheduleStartTime })
+  const mealCapacityRepair = allowCoverageRepair
+    ? await trimPlanToTimeWindow(shrinkToCapacity(normalizePlanTotalTime({
+        ...mealRepair.plan, stops: mealStops, transportSegments: mealRoutes.segments,
+      })), input, resolveRoutes, diagnosticContext)
+    : initialCapacityRepair
+  debug?.recordPlanTransition(routedPlan, mealCapacityRepair.plan, 'repair:capacity-and-required-meals', { attemptId,
+    reason: 'existing_capacity_meal_and_availability_repairs_substep_unknown' })
+  const preExpansionPlan = canAddStops && !mealRoutes.routesFailed
+    ? extendExistingActivitiesToMinimum(mealCapacityRepair.plan, input, candidates)
+    : mealCapacityRepair.plan
+  debug?.recordPlanTransition(mealCapacityRepair.plan, preExpansionPlan, 'repair:coverage-existing-activities', {
+    attemptId, reason: 'minimum_required_actual_minutes',
+  })
+  usedPlaceIds.clear()
+  preExpansionPlan.stops.forEach(stop => { if (stop.placeId) usedPlaceIds.add(stop.placeId) })
+  const expansionResult = canAddStops && !mealRoutes.routesFailed && !options.skipActivitySupplement
+    ? await expandStopsForLongTrip(
+        preExpansionPlan.stops,
         input,
         candidates,
         usedPlaceIds,
         plan.id,
         crossPlanUsedPlaceIds,
+        preExpansionPlan.transportSegments,
+        plan.transportMode,
+        routeContext,
       )
-    : scheduleAlignedStops
-  const deliveryStops = allowCoverageRepair
-    ? ensureMealStopForTrip(
-        expandedStops,
-        input,
-        candidates,
-        usedPlaceIds,
-        plan.id,
-        crossPlanUsedPlaceIds,
-      )
-    : expandedStops
+    : {
+        stops: preExpansionPlan.stops,
+        segments: preExpansionPlan.transportSegments,
+        routesFailed: false,
+      }
+  traceDurationStops(preExpansionPlan.stops, expansionResult.stops, 'replacement')
+  const expandedStops = expansionResult.stops
+  const deliveryStops = expandedStops
   const temporallyAlignedStops = allowCoverageRepair
-    ? realignFoodStopsForMealWindows(deliveryStops, input)
+    ? realignFoodStopsForMealWindows(
+        deliveryStops, input,
+        haveStopOrderChanged(expandedStops, deliveryStops) ? undefined : expansionResult.segments,
+      )
     : deliveryStops
-  const { segments: repairedSegments, routesFailed } = await repairTransportSegments(
-    plan.transportSegments,
-    temporallyAlignedStops,
-    plan.transportMode,
+  traceDurationStops(expandedStops, temporallyAlignedStops, 'meal_alignment')
+  const { segments: repairedSegments, routesFailed } = haveStopRouteEndpointsChanged(
+    expandedStops, temporallyAlignedStops,
   )
+    ? await resolveRoutes(
+        expansionResult.segments, temporallyAlignedStops, plan.transportMode,
+      )
+    : expansionResult
   const repairedRainBackup = (plan.rainBackup ?? []).map((stop, index) =>
     ensureStopHasVerifiedPlace(stop, index, candidates, usedPlaceIds),
   )
-  const { segments: repairedRainSegments } = await repairTransportSegments(
+  const { segments: repairedRainSegments } = await resolveRoutes(
     plan.rainTransportSegments ?? [],
     repairedRainBackup,
     plan.transportMode,
@@ -1378,17 +1657,22 @@ async function repairPlanForDelivery(
     rainBackup: repairedRainBackup,
     rainTransportSegments: repairedRainSegments,
   }
-  const coverageRepairedPlan = allowCoverageRepair
+  const coverageRepairedPlan = allowCoverageRepair && !isAboveMinimumCoverage(routeRepairedPlan, input)
     ? stretchPlanDurationToCoverage(routeRepairedPlan, input)
     : normalizePlanTotalTime(routeRepairedPlan)
+  debug?.recordPlanTransition(preExpansionPlan, routeRepairedPlan, 'repair:expansion-and-meal-alignment', { attemptId })
+  debug?.recordPlanTransition(routeRepairedPlan, coverageRepairedPlan, 'repair:coverage-target', {
+    attemptId, reason: 'coverage_repair_target_minutes',
+  })
   const capacityRepairedPlan = allowCoverageRepair
-    ? shrinkPlanDurationToScheduleCapacity(coverageRepairedPlan, input)
+    ? shrinkToCapacity(coverageRepairedPlan)
     : coverageRepairedPlan
-  const trimmedPlan = allowCoverageRepair
-    ? await trimPlanToTimeWindow(capacityRepairedPlan, input)
-    : coverageRepairedPlan
+  const trimResult = allowCoverageRepair
+    ? await trimPlanToTimeWindow(capacityRepairedPlan, input, resolveRoutes, diagnosticContext)
+    : { plan: coverageRepairedPlan, routesFailed: false }
+  const trimmedPlan = trimResult.plan
   const postCoverageMealAlignment = allowCoverageRepair
-    ? await realignPlanMealsAfterTiming(trimmedPlan, input)
+    ? await realignPlanMealsAfterTiming(trimmedPlan, input, resolveRoutes)
     : { plan: trimmedPlan, routesFailed: false }
   const postTimingAlignment = allowCoverageRepair
     ? await realignPlanCandidatesAfterTiming(
@@ -1397,10 +1681,12 @@ async function repairPlanForDelivery(
         candidates,
         avoidedPlaceIds,
         crossPlanUsedPlaceIds,
+        resolveRoutes,
+        foodTrace,
       )
     : { plan: postCoverageMealAlignment.plan, routesFailed: false }
   const finalMealAlignment = allowCoverageRepair
-    ? await realignPlanMealsAfterTiming(postTimingAlignment.plan, input)
+    ? await realignPlanMealsAfterTiming(postTimingAlignment.plan, input, resolveRoutes)
     : { plan: postTimingAlignment.plan, routesFailed: false }
   const finalTimingAlignment = allowCoverageRepair
     ? await realignPlanCandidatesAfterTiming(
@@ -1409,9 +1695,51 @@ async function repairPlanForDelivery(
         candidates,
         avoidedPlaceIds,
         crossPlanUsedPlaceIds,
+        resolveRoutes,
+        foodTrace,
       )
     : { plan: finalMealAlignment.plan, routesFailed: false }
-  const finalPlan = normalizePlanTotalTime(finalTimingAlignment.plan)
+  // No additions or reordering may run after this capacity pass.
+  const finalCapacityRepair = allowCoverageRepair
+    ? await trimPlanToTimeWindow(
+        shrinkToCapacity(finalTimingAlignment.plan), input, resolveRoutes, diagnosticContext,
+      )
+    : { plan: finalTimingAlignment.plan, routesFailed: false }
+  // Timing/capacity changes can invalidate a previously satisfied meal. Reorder only;
+  // no late refill or deletion loop. An unresolved meal is rejected by the final gate.
+  const finalMealRepair = allowCoverageRepair && !initialRouteRepair.routesFailed && !mealRoutes.routesFailed
+    ? await repairRequiredMeals(finalCapacityRepair.plan, input, candidates, routeContext, false,
+        crossPlanUsedPlaceIds)
+    : { plan: finalCapacityRepair.plan, routesFailed: false }
+  traceDurationPlan(finalCapacityRepair.plan, finalMealRepair.plan, 'meal_alignment')
+  const finalPlan = normalizePlanTotalTime(finalMealRepair.plan)
+  rememberPlanTextTransition(plan, finalPlan, repairedStops, scheduleAlignedStops,
+    routedPlan, initialCapacityRepair.plan, mealRepair.plan, mealCapacityRepair.plan, preExpansionPlan,
+    expandedStops, routeRepairedPlan, coverageRepairedPlan, trimmedPlan, postCoverageMealAlignment.plan,
+    postTimingAlignment.plan, finalMealAlignment.plan, finalTimingAlignment.plan, finalCapacityRepair.plan)
+  debug?.recordPlanTransition(coverageRepairedPlan, finalPlan, 'repair:final-capacity-meal-and-availability', { attemptId })
+  const originalStayLoss = getOriginalStayLoss(initialCapacityRepair.plan.stops, finalPlan.stops)
+  const addedActivities = expansionResult.stops.filter(stop =>
+    !preExpansionPlan.stops.some(original => original.id === stop.id))
+  // A local choice is provisional until the entire repair completes. One bounded alternative
+  // retains required meals and every safety repair, but omits discretionary activity additions.
+  if (allowCoverageRepair && !options.skipActivitySupplement && addedActivities.length && originalStayLoss > 0) {
+    const alternative = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
+      ...options, routeContext, skipActivitySupplement: true,
+    })
+    const alternativeLoss = getOriginalStayLoss(initialCapacityRepair.plan.stops, alternative.plan.stops)
+    if (!alternative.routesFailed && alternativeLoss < originalStayLoss &&
+      getMissingMealWindows(alternative.plan.stops, input, getRequiredMealWindows(input),
+        alternative.plan.transportSegments).length === 0 &&
+      (await getDeliveryPlanIssues(alternative.plan, input, 'supplement-final-alternative', { candidates })).length === 0) {
+      routeContext.remedy.events.push({ kind: 'supplement', outcome: 'activity_loss_rejected', details: 'selected_whole_repair_alternative' })
+      console.info('[supplement-final-alternative]', { planId: plan.id, originalStayLoss,
+        alternativeLoss, routeCalls: routeContext.totalCalls, cacheHits: routeContext.cacheHits })
+      debug?.recordPlanTransition(finalPlan, alternative.plan, 'fallback:supplement-alternative-selected', { attemptId,
+        disposition: 'selected', reason: 'preserve_original_activity_stays' })
+      return alternative
+    }
+  }
 
   if (allowCoverageRepair) {
     const coveragePayload = {
@@ -1424,18 +1752,32 @@ async function repairPlanForDelivery(
       foodStops: finalPlan.stops
         .filter((stop) => stop.type === 'food')
         .map((stop) => stop.name),
+      originalStayLoss,
+      comparisonRouteCalls: routeContext.calls,
+      repairRouteCalls: routeContext.totalCalls,
+      routeCacheHits: routeContext.cacheHits,
     }
     console.info('[coverage-repair-result]', coveragePayload)
     writeGenerateDebugLog('coverage-repair-result', coveragePayload)
   }
 
+  const deliveredPlan = carryOriginalActivities(plan, {
+    ...finalPlan, totalTime: getPlanActualDuration(finalPlan),
+  })
+  durationRepairEvidence.set(deliveredPlan, { losses: capacityLosses, routeContext })
+  lastCoverageAttempt.set(routeContext, deliveredPlan)
   return {
-    plan: {
-      ...finalPlan,
-      totalTime: getPlanActualDuration(finalPlan),
-    },
+    plan: deliveredPlan,
     routesFailed:
       routesFailed ||
+      initialRouteRepair.routesFailed ||
+      expansionResult.routesFailed ||
+      initialCapacityRepair.routesFailed ||
+      mealRoutes.routesFailed ||
+      mealCapacityRepair.routesFailed ||
+      trimResult.routesFailed ||
+      finalCapacityRepair.routesFailed ||
+      finalMealRepair.routesFailed ||
       postCoverageMealAlignment.routesFailed ||
       postTimingAlignment.routesFailed ||
       finalMealAlignment.routesFailed ||
@@ -1443,25 +1785,24 @@ async function repairPlanForDelivery(
   }
 }
 
-async function realignPlanMealsAfterTiming(
+export async function realignPlanMealsAfterTiming(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
+  resolveRoutes: typeof repairTransportSegments = repairTransportSegments,
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
-  const alignedStops = realignFoodStopsForMealWindows(plan.stops, input)
+  const alignedStops = realignFoodStopsForMealWindows(plan.stops, input, plan.transportSegments)
   if (!haveStopOrderChanged(plan.stops, alignedStops)) {
     return { plan, routesFailed: false }
   }
 
-  const { segments, routesFailed } = await repairTransportSegments(
+  const { segments, routesFailed } = await resolveRoutes(
     plan.transportSegments ?? [],
     alignedStops,
     plan.transportMode,
   )
-  const alignedPlan = normalizePlanTotalTime({
-    ...plan,
-    stops: alignedStops,
-    transportSegments: segments,
-  })
+  const alignedPlan = shrinkPlanDurationToScheduleCapacity(
+    normalizePlanTotalTime({ ...plan, stops: alignedStops, transportSegments: segments }), input,
+  )
 
   writeGenerateDebugLog('post-timing-meal-realignment', {
     planId: plan.id,
@@ -1489,6 +1830,8 @@ async function realignPlanCandidatesAfterTiming(
   candidates: NearbyPlaceCandidates,
   avoidedPlaceIds: Set<string>,
   crossPlanUsedPlaceIds: Set<string>,
+  resolveRoutes: typeof repairTransportSegments = repairTransportSegments,
+  foodTrace?: FoodPurposeProvenance,
 ): Promise<{ plan: TripPlan; routesFailed: boolean }> {
   let nextPlan = normalizePlanTotalTime(plan)
   let routesFailed = false
@@ -1502,6 +1845,7 @@ async function realignPlanCandidatesAfterTiming(
       avoidedPlaceIds,
       crossPlanUsedPlaceIds,
       nextPlan.transportSegments,
+      foodTrace,
     )
 
     if (!haveStopsChangedForTimingAlignment(nextPlan.stops, alignedStops)) break
@@ -1511,7 +1855,7 @@ async function realignPlanCandidatesAfterTiming(
       haveStopRouteEndpointsChanged(nextPlan.stops, alignedStops) ||
       alignedSegments.length !== Math.max(alignedStops.length - 1, 0)
     ) {
-      const routeRepair = await repairTransportSegments(
+      const routeRepair = await resolveRoutes(
         nextPlan.transportSegments ?? [],
         alignedStops,
         nextPlan.transportMode,
@@ -1520,6 +1864,7 @@ async function realignPlanCandidatesAfterTiming(
       routesFailed = routesFailed || routeRepair.routesFailed
     }
 
+    const previousPlan = nextPlan
     nextPlan = shrinkPlanDurationToScheduleCapacity(
       normalizePlanTotalTime({
         ...nextPlan,
@@ -1528,6 +1873,7 @@ async function realignPlanCandidatesAfterTiming(
       }),
       input,
     )
+    rememberPlanTextTransition(previousPlan, nextPlan, alignedStops)
     appliedPasses = pass
   }
 
@@ -1578,21 +1924,279 @@ function haveStopRouteEndpointsChanged(before: Stop[], after: Stop[]) {
   })
 }
 
-async function repairAndValidatePlanForDelivery(
+export async function repairAndValidatePlanForDelivery(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
   avoidedPlaceIds: Set<string>,
   phase: string,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
+  debugSession?: TripCandidateDebugSession,
+  demandStamina?: string,
 ): Promise<{ plan: TripPlan | null; routesFailed: boolean; issues: string[] }> {
-  const firstAttempt = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
+  const routeContext = createSupplementRouteContext()
+  // The existing safety/diversity pipeline chooses its result first. Nothing below
+  // re-enters repair or fallback, so there is at most one allocation comparison.
+  const result = await repairAndValidatePlanForDeliveryCore(plan, input, candidates, avoidedPlaceIds,
+    phase, crossPlanUsedPlaceIds, debugSession, routeContext)
+  const observedRemedy = (selected: TripPlan) => {
+    const own = durationRepairEvidence.get(selected)?.routeContext.remedy
+    return !own || own === routeContext.remedy ? routeContext.remedy : {
+      events: [...routeContext.remedy.events, ...own.events],
+      supplementPasses: [...routeContext.remedy.supplementPasses, ...own.supplementPasses],
+      budgetExhausted: routeContext.remedy.budgetExhausted || own.budgetExhausted,
+      technicalFailure: routeContext.remedy.technicalFailure || own.technicalFailure,
+    }
+  }
+  if (!result.plan || result.routesFailed) {
+    const assessed = result.plan ?? lastCoverageAttempt.get(routeContext) ?? plan
+    recordCoverageShadow(assessed, input, candidates, observedRemedy(assessed), result)
+    debugSession?.recordCoverageV2?.(assessed)
+    return result
+  }
+  const finish = async (value: typeof result) => {
+    const selected = value.plan ? await repairPlanVisitRequirements(value.plan, input, candidates,
+      durationRepairEvidence.get(value.plan)?.routeContext ?? routeContext, debugSession, demandStamina) : null
+    if (selected) {
+      recordCoverageShadow(selected, input, candidates, observedRemedy(selected), value)
+      debugSession?.recordCoverageV2?.(selected)
+    }
+    return { ...value, plan: selected }
+  }
+  const evidence = durationRepairEvidence.get(result.plan)
+  if (!evidence?.losses.size) return finish(result)
+  const comparison = proposeStopDurationRedistribution(result.plan, input, candidates, evidence.losses)
+  if (!comparison) return finish(result)
+  const issues = await hasReusableStaticRouteTimings(evidence.routeContext, result.plan)
+    ? getDurationRedistributionIssues(result.plan, comparison.plan, input, candidates)
+    : ['route_timing_not_reusable_without_new_queries']
+  if (getFirstStopDistanceIssue(comparison.plan, input, candidates)) issues.push('first_stop_distance')
+  if (issues.length) {
+    debugSession?.recordPlanTransition(result.plan, comparison.plan, 'duration-redistribution:rejected', {
+      disposition: 'rejected', reason: issues.join(','),
+    })
+    return finish(result)
+  }
+  traceDurationPlan(result.plan, comparison.plan, 'redistribution')
+  debugSession?.recordPlanTransition(result.plan, comparison.plan, 'duration-redistribution:accepted', {
+    disposition: 'selected', reason: 'restore_capacity_compressed_explicit_theme_activity;excess_activity_support_unknown',
+  })
+  return finish({ ...result, plan: carryOriginalActivities(result.plan, comparison.plan) })
+}
+
+// At most three candidates and two existing positions per missing theme. All new
+// edges share the repair's comparison budget/memo; no recursive repair or AI retry.
+async function repairPlanVisitRequirements(plan: TripPlan, input: GenerateTripPlansRequest['input'],
+  candidates: NearbyPlaceCandidates, context: SupplementRouteContext,
+  debug?: TripCandidateDebugSession, stamina?: string): Promise<TripPlan> {
+  candidates = filterDemandCandidates(candidates, input)
+  let selected = plan
+  for (const requirement of assessVisitRequirements(plan, input, candidates)) {
+    const before = assessVisitRequirements(selected, input, candidates)
+    if (before.find(item => item.label === requirement.label)?.status === 'satisfied') continue
+    const used = new Set(selected.stops.map(stop => stop.placeId))
+    const available = candidates.allCandidates.filter(candidate => !used.has(candidate.placeId) &&
+      candidate.openingHours?.isKnown && !candidate.openingHours.isNeverOpen)
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.placeId.localeCompare(b.placeId))
+    const primary = available.filter(candidate => visitRequirementEvidence(requirement, candidate) === 'satisfied')
+    const alternatives = before.find(item => item.label === requirement.label)?.status === 'alternative' ? []
+      : available.filter(candidate => visitRequirementEvidence(requirement, candidate) === 'alternative')
+    // Primary visits get the bounded opportunity first; related visits use remaining slots.
+    const shortlist = [...primary.slice(0, 2), ...alternatives.slice(0, 1), ...primary.slice(2, 3)].slice(0, 3)
+    context.remedy.events.push({ kind: 'demand', outcome: 'gap_observed', demandGap: requirement.label,
+      details: `eligible=${primary.length + alternatives.length};shortlist=${shortlist.length}` })
+    if (primary.length + alternatives.length > shortlist.length) context.remedy.events.push({
+      kind: 'demand', outcome: 'candidates_unprocessed', demandGap: requirement.label })
+    const demandEvent = (outcome: string, placeId?: string, position?: number, routeComparisonCompleted = false) =>
+      context.remedy.events.push({ kind: 'demand', outcome, placeId, position, routeComparisonCompleted, demandGap: requirement.label })
+    const roundStart = context.calls
+    const arrivals = selected.stops.map((_stop, index) => getEstimatedArrivalMinutesForStop(
+      selected.stops, index, { ...input, scheduleStartTime: selected.scheduleStartTime }, selected.transportSegments))
+    const meals = getRequiredMealWindows({ ...input, scheduleStartTime: selected.scheduleStartTime })
+    const positions = selected.stops.map((_stop, index) => index).filter(index =>
+      !(selected.stops[index].type === 'food' && meals.some(window =>
+        isStopAlignedWithMealWindow(arrivals[index], selected.stops[index].duration, window))))
+      .sort((a, b) => Number(a === 0) - Number(b === 0) || b - a).slice(0, 2)
+    let accepted = false
+    for (const candidate of shortlist) {
+      for (const index of positions) {
+        const stops = selected.stops.map(stop => ({ ...stop }))
+        const original = stops[index]
+        const replacement = applyCandidateToStop({ ...original, description: '' }, candidate)
+        replacement.duration = clamp(original.duration, getMinimumStopDuration(replacement), getMaximumStopDuration(replacement))
+        stops[index] = replacement
+        const trial = { ...selected, stops }
+        if (getFirstStopDistanceIssue(trial, input, candidates)) { demandEvent('first_stop_distance_rejected', candidate.placeId, index); continue }
+        const after = assessVisitRequirements(trial, input, candidates)
+        if (before.some(item => item.label !== requirement.label &&
+          (item.status === 'satisfied' && after.find(next => next.label === item.label)?.status !== 'satisfied' ||
+            item.status === 'alternative' && !['satisfied', 'alternative'].includes(after.find(next => next.label === item.label)?.status ?? '')))) { demandEvent('core_activity_loss_rejected', candidate.placeId, index); continue }
+        const routing = await resolveMealComparisonRoutes(context, stops, selected.transportMode, roundStart)
+        if (!routing || routing.routesFailed) { demandEvent(!routing ? 'comparison_budget_exhausted' : 'route_failure', candidate.placeId, index); continue }
+        demandEvent('route_comparison_completed', candidate.placeId, index, true)
+        trial.transportSegments = routing.segments
+        trial.totalTime = getPlanActualDuration(trial)
+        const travel = (value: TripPlan) => value.transportSegments.reduce((sum, leg) => sum + leg.duration, 0)
+        if ((stamina === '弱' || input.tags.some(tag => ['not_too_tired', 'short_distance'].includes(tag))) &&
+          travel(trial) > travel(selected)) { demandEvent('travel_rejected', candidate.placeId, index, true); continue }
+        if (getPlanRhythmIssues(trial, input).some(issue => !getPlanRhythmIssues(selected, input).includes(issue))) { demandEvent('activity_rhythm_rejected', candidate.placeId, index, true); continue }
+        const trialArrivals = stops.map((_stop, i) => getEstimatedArrivalMinutesForStop(stops, i,
+          { ...input, scheduleStartTime: selected.scheduleStartTime }, routing.segments))
+        const start = parseTimeToMinutes(input.startTime), rawEnd = parseTimeToMinutes(input.endTime)
+        if (start === null || rawEnd === null) continue
+        const end = rawEnd < start ? rawEnd + 1440 : rawEnd
+        if (trialArrivals[0] < start || trialArrivals.at(-1)! + stops.at(-1)!.duration > end ||
+          !stops.every((stop, i) => {
+            const known = candidates.allCandidates.find(place => place.placeId === stop.placeId)
+            return known && isCandidateOpenForVisit(known, trialArrivals[i], stop.duration)
+          })) { demandEvent('opening_or_capacity_rejected', candidate.placeId, index, true); continue }
+        if ((await getDeliveryPlanIssues(trial, input, 'visit-requirement-comparison', { candidates })).length) { demandEvent('delivery_conditions_rejected', candidate.placeId, index, true); continue }
+        debug?.recordPlanTransition(selected, trial, 'visit-requirement:selected', {
+          disposition: 'selected', reason: `${requirement.theme}:${visitRequirementEvidence(requirement, candidate)}`,
+        })
+        demandEvent('selected', candidate.placeId, index, true)
+        traceDurationPlan(selected, trial, 'replacement')
+        selected = carryOriginalActivities(selected, trial)
+        accepted = true
+        break
+      }
+      if (accepted) break
+    }
+  }
+  return selected
+}
+
+async function repairAndValidatePlanForDeliveryCore(
+  plan: TripPlan,
+  input: GenerateTripPlansRequest['input'],
+  candidates: NearbyPlaceCandidates,
+  avoidedPlaceIds: Set<string>,
+  phase: string,
+  crossPlanUsedPlaceIds: Set<string> = new Set(),
+  debugSession?: TripCandidateDebugSession,
+  routeContext: SupplementRouteContext = createSupplementRouteContext(),
+): Promise<{ plan: TripPlan | null; routesFailed: boolean; issues: string[] }> {
+  let firstAttempt = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
     allowCoverageRepair: false,
     crossPlanUsedPlaceIds,
+    routeContext,
+    debugSession, debugPhase: `${phase}:first-attempt`,
   })
-  const firstIssues = await getDeliveryPlanIssues(firstAttempt.plan, input, phase, { candidates })
+  let firstIssues = await getDeliveryPlanIssues(firstAttempt.plan, input, phase, { candidates })
+  // One bounded comparison of whole repair results. Optional variety must not buy
+  // legality by shrinking/removing useful original activities after real routing.
+  let diversityFallbackTried = false
+  const restoreOptionalLoss = async (current: typeof firstAttempt, issues: string[]) => {
+    if (diversityFallbackTried || crossPlanUsedPlaceIds.size === 0) return null
+    const impact = compareOriginalActivities(plan.stops, current.plan.stops)
+    const foodImpact = getFoodPurposeImpact(plan, current.plan.stops)
+    const requirements = assessVisitRequirements(plan, input, candidates)
+    // Distinct venues are not interchangeable merely because their coarse purpose
+    // matches. Only protect a verified, feasible original that fulfills an explicit
+    // visit requirement; unknown venue evidence does not acquire a preference here.
+    const optionalChanges = plan.stops.filter((stop, index) => {
+      const replacement = current.plan.stops.find(final => final.id === stop.id)
+      const candidate = findMatchingCandidateForStop(stop, index, candidates)
+      return stop.placeId && crossPlanUsedPlaceIds.has(stop.placeId) && replacement &&
+        replacement.placeId !== stop.placeId && candidate?.placeId === stop.placeId &&
+        !avoidedPlaceIds.has(stop.placeId) && !isForbiddenStop(stop, input, candidates) &&
+        isCandidateAllowedForStopIndex(candidate, index) && isCandidateOpenForVisit(candidate,
+          getEstimatedArrivalMinutesForStop(plan.stops, index,
+            { ...input, startTime: plan.scheduleStartTime ?? input.startTime }, plan.transportSegments),
+          stop.duration)
+    })
+    const fulfilledActivities = optionalChanges.filter(stop => {
+      const candidate = candidates.allCandidates.find(candidate => candidate.placeId === stop.placeId)
+      return stop.type === 'main_activity' && candidate && requirements.some(requirement =>
+        visitRequirementEvidence(requirement, candidate) === 'satisfied')
+    })
+    // Only comparable optional food changes need a trusted route comparison. A clearly
+    // better final candidate score can still justify extra travel; never re-add its boost.
+    const comparableFoodChange = foodImpact.changes.some(change => {
+      if (change.reason !== 'optional_diversity') return false
+      const from = candidates.allCandidates.find(candidate => candidate.placeId === change.fromPlaceId)
+      const to = candidates.allCandidates.find(candidate => candidate.placeId === change.toPlaceId)
+      return from && to && Math.abs((from.score ?? 0) - (to.score ?? 0)) <= SOFT_DIVERSITY_SCORE_TOLERANCE
+    })
+    if (issues.length === 0 && impact.retainedStayLoss === 0 && impact.removedStops === 0 &&
+      impact.purposeChanges === 0 && foodImpact.foodPurposeChanges === 0 && !comparableFoodChange &&
+      fulfilledActivities.length === 0) return null
+    if (optionalChanges.length === 0) return null
+    const currentRequirements = assessVisitRequirements(current.plan, input, candidates)
+    // A lawful replacement already completing every explicit visit request needs
+    // no route comparison when only the protected identities changed and no known
+    // purpose/stay was lost. This confirms demand gain, not venue equivalence.
+    if (issues.length === 0 && !current.routesFailed && fulfilledActivities.length > 0 &&
+      requirements.some(item => item.fulfillment !== 'satisfied') &&
+      currentRequirements.every(item => item.fulfillment === 'satisfied') &&
+      impact.identityChanges === fulfilledActivities.length && impact.retainedStayLoss === 0 &&
+      impact.removedStops === 0 && impact.purposeChanges === 0 && foodImpact.foodPurposeChanges === 0 &&
+      fulfilledActivities.every(original =>
+        (current.plan.stops.find(stop => stop.id === original.id)?.duration ?? 0) >= original.duration)) {
+      debugSession?.recordPlanTransition(plan, current.plan, 'fallback:activity-diversity-retained', {
+        disposition: 'selected',
+        reason: 'confirmed_visit_requirement_gain_with_preserved_purpose_and_stay;comparison_not_needed',
+      })
+      return null
+    }
+    diversityFallbackTried = true
+    const fallback = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
+      allowCoverageRepair: true, routeContext, crossPlanUsedPlaceIds: new Set(),
+      debugSession, debugPhase: `${phase}:diversity-fallback-attempt`,
+    })
+    if (fallback.routesFailed || (await getDeliveryPlanIssues(fallback.plan, input,
+      `${phase}-activity-diversity-fallback`, { candidates })).length > 0) return null
+    const alternative = compareOriginalActivities(plan.stops, fallback.plan.stops)
+    const alternativeFood = getFoodPurposeImpact(plan, fallback.plan.stops)
+    const travel = (value: TripPlan) => value.transportSegments.reduce((sum, leg) => sum + leg.duration, 0)
+    const fallbackRequirements = assessVisitRequirements(fallback.plan, input, candidates)
+    const preservesRequirements = (before: typeof currentRequirements, after: typeof currentRequirements) =>
+      before.every((item, index) => item.fulfillment === 'satisfied' ? after[index].fulfillment === 'satisfied'
+        : item.fulfillment !== 'alternative' || after[index].fulfillment !== 'not_confirmed')
+    const fallbackPreservesDemand = preservesRequirements(currentRequirements, fallbackRequirements)
+    // Identity value remains unknown. Routes may justify the change only while
+    // preserving confirmed demands, coarse purposes and the protected visit's stay.
+    const currentImprovesTravel = preservesRequirements(fallbackRequirements, currentRequirements) &&
+      travel(current.plan) < travel(fallback.plan) && impact.retainedStayLoss <= alternative.retainedStayLoss &&
+      impact.removedStops <= alternative.removedStops && impact.purposeLostMinutes <= alternative.purposeLostMinutes &&
+      foodImpact.foodPurposeChanges <= alternativeFood.foodPurposeChanges && fulfilledActivities.every(original =>
+        (current.plan.stops.find(stop => stop.id === original.id)?.duration ?? 0) >=
+        (fallback.plan.stops.find(stop => stop.id === original.id)?.duration ?? original.duration))
+    if (issues.length === 0 && fulfilledActivities.length &&
+      (!fallbackPreservesDemand || currentImprovesTravel)) {
+      debugSession?.recordPlanTransition(fallback.plan, current.plan, 'fallback:activity-diversity-retained', {
+        disposition: 'selected', reason: currentImprovesTravel ? 'verified_travel_improvement_with_preserved_demand_purpose_and_stay'
+          : 'preserve_confirmed_visit_requirement_improvement',
+      })
+      return null
+    }
+    const restoresFulfilledActivity = fallbackPreservesDemand && fulfilledActivities.some(original =>
+      fallback.plan.stops.some(stop => stop.id === original.id && stop.placeId === original.placeId)) &&
+      alternative.retainedStayLoss <= impact.retainedStayLoss && alternative.removedStops <= impact.removedStops &&
+      alternative.purposeLostMinutes <= impact.purposeLostMinutes &&
+      alternativeFood.foodPurposeChanges <= foodImpact.foodPurposeChanges
+    if (issues.length === 0 && !(alternative.retainedStayLoss <= impact.retainedStayLoss &&
+      alternative.removedStops <= impact.removedStops && alternative.purposeLostMinutes <= impact.purposeLostMinutes &&
+      alternativeFood.foodPurposeChanges <= foodImpact.foodPurposeChanges &&
+      travel(fallback.plan) <= travel(current.plan) &&
+      (alternative.retainedStayLoss < impact.retainedStayLoss || alternative.removedStops < impact.removedStops ||
+        alternative.purposeLostMinutes < impact.purposeLostMinutes ||
+        alternativeFood.foodPurposeChanges < foodImpact.foodPurposeChanges ||
+        (comparableFoodChange && travel(fallback.plan) < travel(current.plan)))) && !restoresFulfilledActivity) return null
+    console.info('[activity-diversity-fallback]', { planId: plan.id, before: impact, after: alternative,
+      routeCalls: routeContext.totalCalls, cacheHits: routeContext.cacheHits })
+    debugSession?.recordPlanTransition(current.plan, fallback.plan, 'fallback:activity-diversity-selected', {
+      disposition: 'selected', reason: restoresFulfilledActivity
+        ? 'activity_equivalence_unknown;retain_feasible_fulfilled_original_without_confirmed_gain'
+        : 'existing_optional_diversity_comparison',
+    })
+    return fallback
+  }
+  const preferredFirst = await restoreOptionalLoss(firstAttempt, firstIssues)
+  if (preferredFirst) { firstAttempt = preferredFirst; firstIssues = [] }
 
   if (firstIssues.length === 0) {
+    logOriginalActivityImpact(plan, firstAttempt.plan, phase)
     console.info('[plan-repair-preserved]', {
       phase,
       planId: plan.id,
@@ -1604,18 +2208,23 @@ async function repairAndValidatePlanForDelivery(
     }
   }
 
-  const coverageAttempt = await repairPlanForDelivery(plan, input, candidates, avoidedPlaceIds, {
+  let coverageAttempt = await repairPlanForDelivery(firstAttempt.plan, input, candidates, avoidedPlaceIds, {
     allowCoverageRepair: true,
     crossPlanUsedPlaceIds,
+    routeContext,
+    debugSession, debugPhase: `${phase}:coverage-attempt`,
   })
-  const coverageIssues = await getDeliveryPlanIssues(
+  let coverageIssues = await getDeliveryPlanIssues(
     coverageAttempt.plan,
     input,
     `${phase}-coverage-repair`,
     { candidates },
   )
+  const preferredCoverage = await restoreOptionalLoss(coverageAttempt, coverageIssues)
+  if (preferredCoverage) { coverageAttempt = preferredCoverage; coverageIssues = [] }
 
   if (coverageIssues.length === 0) {
+    logOriginalActivityImpact(plan, coverageAttempt.plan, `${phase}-coverage-repair`)
     console.info('[plan-repair-coverage-applied]', {
       phase,
       planId: plan.id,
@@ -1636,6 +2245,7 @@ async function repairAndValidatePlanForDelivery(
   )
 
   if (dawnTailAttempt.plan) {
+    logOriginalActivityImpact(plan, dawnTailAttempt.plan, `${phase}-dawn-tail-trim`)
     console.info('[plan-repair-dawn-tail-trim-applied]', {
       phase,
       planId: plan.id,
@@ -1690,10 +2300,13 @@ async function repairAndValidatePlanForDelivery(
   const fallbackAttempt = await repairPlanForDelivery(plan, input, candidates, new Set(), {
     allowCoverageRepair: false,
     crossPlanUsedPlaceIds,
+    debugSession, debugPhase: `${phase}:fallback-attempt`,
   })
   const fallbackIssues = await getDeliveryPlanIssues(fallbackAttempt.plan, input, `${phase}-fallback`, {
     candidates,
   })
+  if (fallbackIssues.length === 0) logOriginalActivityImpact(plan, fallbackAttempt.plan, `${phase}-fallback`)
+  lastCoverageAttempt.set(routeContext, fallbackAttempt.plan)
 
   return {
     plan:
@@ -1780,21 +2393,23 @@ export async function getDeliveryPlanIssues(
 
   const firstStopDistanceIssue = getFirstStopDistanceIssue(plan, input, options.candidates)
   const placesIssues = firstStopDistanceIssue ? [firstStopDistanceIssue] : []
-  const hardIssues = getHardPlanQualityIssues(plan, input, placesIssues, options)
+  const hardIssues = getHardPlanQualityIssues(plan, input, placesIssues, { ...options, skipMealCoverage: true })
+  hardIssues.push(...getForbiddenVisitIssues(plan, input, options.candidates))
   if (hardIssues.length > 0) {
     return hardIssues
   }
 
-  const openingHoursIssues = await validatePlanOpeningHours(
-    plan,
-    await getOpeningHoursTimelineInput(plan, input),
+  const timelineInput = await getOpeningHoursTimelineInput(plan, input)
+  const openingHoursIssues = await validatePlanOpeningHours(plan, timelineInput)
+  const mealIssues = getRequiredMealCoverageIssues(
+    { ...plan, scheduleStartTime: timelineInput.startTime }, input,
   )
   if (openingHoursIssues.length > 0) {
     logOpeningHoursIssues(plan.id, openingHoursIssues)
-    return openingHoursIssues.map(formatOpeningHoursValidationIssue)
+    return [...openingHoursIssues.map(formatOpeningHoursValidationIssue), ...mealIssues]
   }
 
-  return []
+  return mealIssues
 }
 
 export function getFirstStopDistanceIssue(
@@ -1857,10 +2472,10 @@ async function annotatePlanWithScheduleStart(
 }
 
 function annotatePlanScheduleStart(plan: TripPlan, scheduleStartTime: string) {
-  return {
+  return carryOriginalActivities(plan, {
     ...plan,
     scheduleStartTime,
-  }
+  })
 }
 
 function buildLocalFallbackPlanCandidates(
@@ -2003,8 +2618,7 @@ function getLocalFallbackPool(
 function shouldLocalFallbackIncludeFood(input: GenerateTripPlansRequest['input']) {
   return (
     !input.tags.includes('no_full_meals') &&
-    (tripOverlapsMealWindow(input, 11 * 60, 13 * 60) ||
-      tripOverlapsMealWindow(input, 17 * 60, 19 * 60) ||
+    (getRequiredMealWindows(input).length > 0 ||
       input.tags.includes('food_first'))
   )
 }
@@ -2142,6 +2756,26 @@ function isCandidateCloseEnoughForSoftDiversity(
   return true
 }
 
+function candidateActivityPurpose(candidate: VerifiedPlaceCandidate) {
+  return getActivityPurpose({ id: candidate.placeId, ...candidate,
+    type: inferStopTypeFromCandidate(candidate), description: '', duration: 0,
+    googleTypes: candidate.types, candidateRole: candidate.role })
+}
+
+// Mandatory replacement still has a cross-purpose fallback. Purpose wins only among
+// candidates comparable by the existing score/distance tolerances, never as a hard gate.
+function pickPurposeAwareReplacement(stop: Stop, pool: VerifiedPlaceCandidate[], crossPlanUsed: Set<string>) {
+  const ranked = pool.filter(isSoftDiversityEligibleCandidate)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+  const best = ranked[0]
+  if (!best) return null
+  const purpose = getActivityPurpose(stop)
+  const comparable = ranked.filter(candidate => candidateActivityPurpose(candidate) === purpose &&
+    isCandidateCloseEnoughForSoftDiversity(candidate, best,
+      SOFT_DIVERSITY_SCORE_TOLERANCE, SOFT_DIVERSITY_DISTANCE_TOLERANCE_KM))
+  return pickSoftDiverseCandidate(comparable.length ? comparable : ranked, crossPlanUsed)
+}
+
 function ensureStopHasVerifiedPlace(
   stop: Stop,
   index: number,
@@ -2149,19 +2783,23 @@ function ensureStopHasVerifiedPlace(
   usedPlaceIds: Set<string>,
   avoidedPlaceIds: Set<string> = new Set(),
   crossPlanUsedPlaceIds: Set<string> = new Set(),
+  arrivalMinutes?: number,
+  foodTrace?: FoodPurposeProvenance,
+  servesRequiredMeal = false,
+  input?: TripInput,
 ) {
   const existingCandidate = findMatchingCandidateForStop(stop, index, candidates)
+  const originalWasUsed = Boolean(stop.placeId && usedPlaceIds.has(stop.placeId))
   if (
     stop.placeId &&
     stop.address &&
     stop.googleMapsUrl &&
-    (!existingCandidate || isCandidateAllowedForStopIndex(existingCandidate, index)) &&
+    !existingCandidate &&
     !usedPlaceIds.has(stop.placeId) &&
-    !avoidedPlaceIds.has(stop.placeId) &&
-    !crossPlanUsedPlaceIds.has(stop.placeId)
+    !avoidedPlaceIds.has(stop.placeId)
   ) {
     usedPlaceIds.add(stop.placeId)
-    return existingCandidate ? applyCandidateToStop(stop, existingCandidate) : stop
+    return stop
   }
 
   const candidate = pickCandidateForStop(
@@ -2172,11 +2810,21 @@ function ensureStopHasVerifiedPlace(
     avoidedPlaceIds,
     crossPlanUsedPlaceIds,
     existingCandidate,
+    arrivalMinutes,
+    servesRequiredMeal,
+    input,
   )
   if (!candidate) return stop
 
   usedPlaceIds.add(candidate.placeId)
-  return applyCandidateToStop(stop, candidate)
+  const nextStop = applyCandidateToStop(stop, candidate)
+  const reason = existingCandidate && existingCandidate.placeId !== stop.placeId ? 'grounding'
+    : existingCandidate && isCandidateAllowedForStopIndex(existingCandidate, index) &&
+      !originalWasUsed && !avoidedPlaceIds.has(stop.placeId ?? '') &&
+      (arrivalMinutes === undefined || isCandidateOpenForVisit(existingCandidate, arrivalMinutes, stop.duration))
+      ? 'optional_diversity' : 'safety'
+  recordFoodReplacement(foodTrace, stop, nextStop, reason)
+  return nextStop
 }
 
 export function pickCandidateForStop(
@@ -2187,17 +2835,46 @@ export function pickCandidateForStop(
   avoidedPlaceIds: Set<string> = new Set(),
   crossPlanUsedPlaceIds: Set<string> = new Set(),
   knownExistingCandidate?: VerifiedPlaceCandidate | null,
+  arrivalMinutes?: number,
+  servesRequiredMeal = false,
+  input?: TripInput,
 ) {
   const existingCandidate = knownExistingCandidate ?? findMatchingCandidateForStop(stop, index, candidates)
 
   if (
     existingCandidate &&
     isCandidateAllowedForStopIndex(existingCandidate, index) &&
+    isSoftDiversityEligibleCandidate(existingCandidate) &&
     !usedPlaceIds.has(existingCandidate.placeId) &&
-    !avoidedPlaceIds.has(existingCandidate.placeId) &&
-    !crossPlanUsedPlaceIds.has(existingCandidate.placeId)
+    !avoidedPlaceIds.has(existingCandidate.placeId)
   ) {
-    return existingCandidate
+    // Optional cross-plan variety cannot turn a legal activity into a meal. Keep the
+    // original as anchor; only a comparable, same-purpose alternative can displace it.
+    const purpose = candidateActivityPurpose(existingCandidate)
+    const alternatives = filterCandidatePoolForStopIndex(candidates.allCandidates, index).filter(candidate =>
+      candidate.placeId !== existingCandidate.placeId && !usedPlaceIds.has(candidate.placeId) &&
+      !avoidedPlaceIds.has(candidate.placeId) && candidateActivityPurpose(candidate) === purpose &&
+      (!input || arrivalMinutes === undefined || !isCandidateOpenForVisit(existingCandidate, arrivalMinutes, stop.duration) ||
+        preservesCoreVisitRequirements(stop, candidate, input, candidates)) &&
+      (arrivalMinutes === undefined || isCandidateOpenForVisit(candidate, arrivalMinutes,
+        applyCandidateToStop(stop, candidate).duration)))
+    // Local optional preference only. Safety replacement below keeps its full fallback pool.
+    if (stop.type === 'food' && (arrivalMinutes === undefined ||
+      isCandidateOpenForVisit(existingCandidate, arrivalMinutes, stop.duration))) {
+      const original = applyCandidateToStop(stop, existingCandidate)
+      const originalHint = getFoodPurposeHint(original)
+      const asFood = (candidate: VerifiedPlaceCandidate) => applyCandidateToStop({ ...stop, description: '' }, candidate)
+      const closest = alternatives.filter(candidate => originalHint !== 'uncertain' &&
+        getFoodPurposeHint(asFood(candidate)) === originalHint)
+      const closeChoice = pickSoftDiverseCandidate([existingCandidate, ...closest], crossPlanUsedPlaceIds)
+      if (closeChoice && closeChoice.placeId !== existingCandidate.placeId) return closeChoice
+      // Unknown/mixed evidence remains available, rather than becoming a hard food category.
+      const remaining = servesRequiredMeal && originalHint === 'uncertain'
+        ? [...alternatives].sort((a, b) => getMealSuitabilityRank(b) - getMealSuitabilityRank(a)) : alternatives
+      const choice = pickSoftDiverseCandidate([existingCandidate, ...remaining], crossPlanUsedPlaceIds)
+      return choice && hasFoodPurposeConflict(original, asFood(choice)) ? existingCandidate : choice
+    }
+    return pickSoftDiverseCandidate([existingCandidate, ...alternatives], crossPlanUsedPlaceIds)
   }
 
   const pool =
@@ -2214,7 +2891,7 @@ export function pickCandidateForStop(
     existingCandidate ? mergeCandidatePools([existingCandidate], scopedPool) : scopedPool,
     index,
   )
-  const primaryCandidate = pickSoftDiverseCandidate(
+  const primaryCandidate = pickPurposeAwareReplacement(stop,
     primaryPool.filter(
       (candidate) => !usedPlaceIds.has(candidate.placeId) && !avoidedPlaceIds.has(candidate.placeId),
     ),
@@ -2223,7 +2900,7 @@ export function pickCandidateForStop(
   if (primaryCandidate || stop.type === 'food') {
     return (
       primaryCandidate ??
-      pickSoftDiverseCandidate(
+      pickPurposeAwareReplacement(stop,
         scopedPool.filter((candidate) => !usedPlaceIds.has(candidate.placeId)),
         crossPlanUsedPlaceIds,
       )
@@ -2232,18 +2909,18 @@ export function pickCandidateForStop(
 
   return (
     primaryCandidate ??
-    pickSoftDiverseCandidate(
+    pickPurposeAwareReplacement(stop,
       filterCandidatePoolForStopIndex(candidates.allCandidates, index).filter(
         (candidate) =>
           !usedPlaceIds.has(candidate.placeId) && !avoidedPlaceIds.has(candidate.placeId),
       ),
       crossPlanUsedPlaceIds,
     ) ??
-    pickSoftDiverseCandidate(
+    pickPurposeAwareReplacement(stop,
       scopedPool.filter((candidate) => !usedPlaceIds.has(candidate.placeId)),
       crossPlanUsedPlaceIds,
     ) ??
-    pickSoftDiverseCandidate(scopedPool, crossPlanUsedPlaceIds)
+    pickPurposeAwareReplacement(stop, scopedPool, crossPlanUsedPlaceIds)
   )
 }
 
@@ -2254,6 +2931,7 @@ function alignStopsWithCandidateAvailability(
   avoidedPlaceIds: Set<string>,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
   transportSegments?: TripPlan['transportSegments'],
+  foodTrace?: FoodPurposeProvenance,
 ) {
   const usedPlaceIds = new Set<string>()
 
@@ -2293,7 +2971,6 @@ function alignStopsWithCandidateAvailability(
       crossPlanUsedPlaceIds,
       requiredSlot,
       estimatedArrivalMinutes,
-      estimatedDuration,
     )
 
     if (!replacementCandidate) {
@@ -2303,6 +2980,7 @@ function alignStopsWithCandidateAvailability(
 
     usedPlaceIds.add(replacementCandidate.placeId)
     const replacementStop = applyCandidateToStop(stop, replacementCandidate)
+    recordFoodReplacement(foodTrace, stop, replacementStop, 'safety')
 
     if (existingCandidate?.placeId !== replacementCandidate.placeId) {
       console.info('[schedule-candidate-replaced]', {
@@ -2334,7 +3012,6 @@ function pickCandidateForStopAvailabilitySlot(
   crossPlanUsedPlaceIds: Set<string>,
   requiredSlot: string,
   estimatedArrivalMinutes: number,
-  estimatedDuration: number,
 ) {
   const rawBasePool =
     stop.type === 'food'
@@ -2353,7 +3030,7 @@ function pickCandidateForStopAvailabilitySlot(
   const pools = basePool === fallbackPool ? [basePool] : [basePool, fallbackPool]
 
   for (const pool of pools) {
-    const candidate = pickSoftDiverseCandidate(
+    const candidate = pickPurposeAwareReplacement(stop,
       pool.filter(
         (item) =>
           !usedPlaceIds.has(item.placeId) &&
@@ -2362,7 +3039,7 @@ function pickCandidateForStopAvailabilitySlot(
             item,
             requiredSlot,
             estimatedArrivalMinutes,
-            estimatedDuration,
+            applyCandidateToStop(stop, item).duration,
           ),
       ),
       crossPlanUsedPlaceIds,
@@ -2395,7 +3072,19 @@ function findMatchingCandidateForStop(
 
   if (stop.placeId) {
     const placeIdMatch = pool.find((candidate) => candidate.placeId === stop.placeId)
-    if (placeIdMatch) return placeIdMatch
+    if (placeIdMatch) {
+      const name = normalizeStopSearchText(stop.name)
+      const exactNames = pool.filter(candidate => normalizeStopSearchText(candidate.name) === name)
+      // Correct a conflict only with unique, already verified local evidence. Aliases,
+      // ambiguous names and unsupported names continue to use the supplied ID.
+      if (name && normalizeStopSearchText(placeIdMatch.name) !== name && exactNames.length === 1) {
+        writeGenerateDebugLog('candidate-identity-conflict', { stopId: stop.id,
+          suppliedPlaceId: stop.placeId, resolvedPlaceId: exactNames[0].placeId,
+          suppliedName: stop.name, idName: placeIdMatch.name, reason: 'unique_verified_name' })
+        return exactNames[0]
+      }
+      return placeIdMatch
+    }
   }
 
   const stopName = normalizeStopSearchText(stop.name)
@@ -2466,19 +3155,174 @@ function getCandidatePoolByStopType(stop: Stop, candidates: NearbyPlaceCandidate
   return typedPool.length > 0 ? typedPool : basePool
 }
 
-function ensureMealStopForTrip(
+function mealPositionOrders(stops: Stop[], food: Stop, input: GenerateTripPlansRequest['input'],
+  window: RequiredMealWindow) {
+  const remaining = stops.filter(stop => stop.id !== food.id)
+  return Array.from({ length: remaining.length + 1 }, (_, index) => {
+    const order = [...remaining]
+    order.splice(index, 0, food)
+    const arrival = getEstimatedArrivalMinutesForStop(order, index, input)
+    return { order, distance: Math.abs(arrival - getMealInsertionTargetMinutes(window)),
+      aligned: isStopAlignedWithMealWindow(arrival, food.duration, window) }
+  }).sort((a, b) => Number(b.aligned) - Number(a.aligned) || a.distance - b.distance)
+    .filter(position => position.order[0].id !== food.id || position.aligned)
+}
+
+// Only bounded extensions within existing reasonable activity ranges. Never invent a wait stop.
+function extendActivityBeforeMeal(plan: TripPlan, input: GenerateTripPlansRequest['input'],
+  window: RequiredMealWindow) {
+  for (let index = 1; index < plan.stops.length; index++) {
+    if (plan.stops[index].type !== 'food') continue
+    const arrival = getEstimatedArrivalMinutesForStop(plan.stops, index, input, plan.transportSegments)
+    if (arrival >= window.start) continue
+    let gap = window.start - arrival
+    const stops = plan.stops.map(stop => ({ ...stop }))
+    for (let before = index - 1; before >= 0 && gap > 0; before--) {
+      if (stops[before].type === 'food') continue
+      const extra = Math.min(gap, Math.max(0, getMaximumStopDuration(stops[before]) - stops[before].duration))
+      stops[before].duration += extra
+      gap -= extra
+    }
+    if (gap === 0) return traceDurationPlan(plan, { ...plan, stops }, 'meal_alignment')
+  }
+  return plan
+}
+
+async function repairRequiredMeals(plan: TripPlan, input: GenerateTripPlansRequest['input'],
+  candidates: NearbyPlaceCandidates, context: SupplementRouteContext, allowAdd: boolean,
+  crossPlanUsed: Set<string>) {
+  const timeline = await getOpeningHoursTimelineInput(plan, input)
+  const mealInput = { ...input, scheduleStartTime: timeline.startTime }
+  let next = { ...plan, scheduleStartTime: timeline.startTime }
+  const windows = getRequiredMealWindows(mealInput)
+  const repairStart = context.calls
+  const known = new Map(mergeCandidatePools(candidates.allCandidates, candidates.otherCandidates,
+    candidates.firstStopCandidates).map(candidate => [candidate.placeId, candidate]))
+  let routesFailed = false
+  for (const window of windows) {
+    const roundStart = context.calls
+    const missing = getMissingMealWindows(next.stops, mealInput, windows, next.transportSegments)
+    if (!missing.includes(window)) continue
+    context.remedy.events.push({ kind: 'meal', outcome: 'gap_observed', demandGap: window.id })
+    const covered = windows.filter(meal => !missing.includes(meal))
+    type MealChoice = { plan: TripPlan; loss: number; travel: number; suitability: number;
+      candidate?: VerifiedPlaceCandidate }
+    let choices: MealChoice[] = []
+    let failedComparison = false
+    const consider = async (stops: Stop[], candidate?: VerifiedPlaceCandidate) => {
+      let routeComparisonCompleted = false
+      const event = (outcome: string, details?: string) => context.remedy.events.push({ kind: 'meal', outcome,
+        placeId: candidate?.placeId, demandGap: window.id, routeComparisonCompleted, details })
+      event('considered')
+      const sameOrder = !haveStopRouteEndpointsChanged(next.stops, stops)
+      const routing = sameOrder ? { segments: next.transportSegments, routesFailed: false }
+        : await resolveMealComparisonRoutes(context, stops, next.transportMode, roundStart)
+      if (!routing) { event('comparison_budget_exhausted'); return } // No estimated comparison.
+      if (routing.routesFailed) { failedComparison = true; event('route_failure'); return }
+      routeComparisonCompleted = !sameOrder
+      event(sameOrder ? 'existing_route_reused' : 'route_comparison_completed')
+      let trial = normalizePlanTotalTime({ ...next, stops, transportSegments: routing.segments })
+      if (candidate) {
+        const capacity = getScheduleCapacityMinutes(input)
+        const spare = capacity === null ? getDefaultStopDuration('food')
+          : capacity - getPlanActualDuration(trial) + stops.find(stop => stop.placeId === candidate.placeId)!.duration
+        trial = { ...trial, stops: trial.stops.map(stop => stop.placeId === candidate.placeId
+          ? { ...stop, duration: Math.max(MINIMUM_MEAL_DURATION_MINUTES,
+              Math.min(getDefaultStopDuration('food'), spare)) } : stop) }
+      }
+      trial = shrinkPlanDurationToScheduleCapacity(trial, input)
+      trial = extendActivityBeforeMeal(trial, mealInput, window)
+      // A 60-minute default must not hide a legal minimum-length meal. Reuse the
+      // same real route; reduce only the newcomer when its own closing buffer requires it.
+      if (candidate) {
+        const index = trial.stops.findIndex(stop => stop.placeId === candidate.placeId)
+        const arrival = getEstimatedArrivalMinutesForStop(trial.stops, index, mealInput, trial.transportSegments)
+        if (!isCandidateOpenForVisit(candidate, arrival, trial.stops[index].duration)) {
+          trial = { ...trial, stops: trial.stops.map((stop, i) => i === index
+            ? { ...stop, duration: MINIMUM_MEAL_DURATION_MINUTES } : stop) }
+        }
+      }
+      const capacity = getScheduleCapacityMinutes(input)
+      if ((capacity && getPlanActualDuration(trial) > capacity) ||
+        getFirstStopDistanceIssue(trial, input, candidates)) { event('capacity_or_first_distance_rejected'); return }
+      const trialMissing = getMissingMealWindows(trial.stops, mealInput, windows, trial.transportSegments)
+      if (trialMissing.includes(window) || covered.some(meal => trialMissing.includes(meal))) { event('meal_rejected'); return }
+      if (!trial.stops.every((stop, index) => {
+        const verified = known.get(stop.placeId ?? '')
+        return verified && isCandidateOpenForVisit(verified,
+          getEstimatedArrivalMinutesForStop(trial.stops, index, mealInput, trial.transportSegments), stop.duration)
+      })) { event('opening_rejected'); return }
+      const suitability = Math.max(...trial.stops.map((stop, index) =>
+        stop.type === 'food' && isStopAlignedWithMealWindow(
+          getEstimatedArrivalMinutesForStop(trial.stops, index, mealInput, trial.transportSegments),
+          stop.duration, window) ? getMealSuitabilityRank(known.get(stop.placeId ?? '') ?? stop) : -1))
+      event('feasible', `originalStayLoss=${getOriginalStayLoss(next.stops, trial.stops)}`)
+      choices.push({ plan: trial, loss: getOriginalStayLoss(next.stops, trial.stops), suitability,
+        travel: trial.transportSegments.reduce((sum, segment) => sum + segment.duration, 0), candidate })
+    }
+    // Prefer existing food, including a two-stop plan or a single non-food activity.
+    await consider(extendActivityBeforeMeal(next, mealInput, window).stops)
+    const existingFoods = next.stops.filter(stop => stop.type === 'food')
+    // One start cannot serve two disjoint meal windows. Do not reroute the sole food
+    // already serving another required meal just to discover that it loses that meal.
+    for (const food of existingFoods.length > covered.length ? existingFoods : []) {
+      const positions = mealPositionOrders(next.stops, food, mealInput, window)
+        .filter(position => haveStopOrderChanged(next.stops, position.order) &&
+          !getFirstStopDistanceIssue({ ...next, stops: position.order }, input, candidates)).slice(0, 2)
+      await Promise.all(positions.map(position => consider(position.order)))
+      if (choices.some(choice => choice.loss === 0)) break
+    }
+    if (choices.length === 0 && allowAdd) {
+      const used = new Set(next.stops.map(stop => stop.placeId).filter((id): id is string => Boolean(id)))
+      for (let candidateIndex = 0; candidateIndex < 3; candidateIndex++) {
+        const candidate = selectMealCandidate(candidates, used, window, next.id, crossPlanUsed)
+        if (!candidate) break
+        used.add(candidate.placeId)
+        const food = applyCandidateToStop({ id: buildSupplementalStopId(input, next.stops.length + 1),
+          name: candidate.name, type: 'food', description: '', address: candidate.address,
+          duration: getDefaultStopDuration('food') }, candidate)
+        const positions = mealPositionOrders(next.stops, food, mealInput, window)
+          .filter(position => !getFirstStopDistanceIssue({ ...next, stops: position.order }, input, candidates))
+          .slice(0, 2)
+        await Promise.all(positions.map(position => consider(position.order, candidate)))
+      }
+    }
+    const bestScore = Math.max(...choices.map(choice => choice.candidate?.score ?? 0))
+    choices = choices.filter(choice => (choice.candidate?.score ?? 0) >= bestScore - SUPPLEMENT_SIMILAR_SCORE_TOLERANCE)
+    // Evidence is a soft tie-break inside the existing score band. It never buys
+    // extra original loss or travel solely on the strength of a Places type hint.
+    choices.sort((a, b) => a.loss - b.loss || a.travel - b.travel || b.suitability - a.suitability ||
+      Number(crossPlanUsed.has(a.candidate?.placeId ?? '')) - Number(crossPlanUsed.has(b.candidate?.placeId ?? '')) ||
+      (b.candidate?.score ?? 0) - (a.candidate?.score ?? 0))
+    if (choices[0]) context.remedy.events.push({ kind: 'meal', outcome: 'selected', placeId: choices[0].candidate?.placeId,
+      demandGap: window.id, details: `originalStayLoss=${choices[0].loss}` })
+    if (choices[0]) next = rememberPlanTextTransition(next, traceDurationPlan(next,
+      { ...choices[0].plan, scheduleStartTime: timeline.startTime }, 'meal_alignment'))
+    else routesFailed ||= failedComparison
+  }
+  console.info('[meal-consistency-repair]', { planId: plan.id,
+    comparisonRouteCalls: context.calls - repairStart, repairRouteCalls: context.totalCalls,
+    missingMeals: getMissingMealWindows(next.stops, mealInput, windows, next.transportSegments).map(window => window.id),
+    originalStayLoss: getOriginalStayLoss(plan.stops, next.stops) })
+  return { plan: next, routesFailed }
+}
+
+export function ensureMealStopForTrip(
   stops: Stop[],
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
   planId?: string,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
+  transportSegments?: TripPlan['transportSegments'],
 ) {
-  const nextStops = [...stops]
+  const alignedStops = realignFoodStopsForMealWindows(stops, input, transportSegments)
+  const nextStops = [...alignedStops]
+  const alignedSegments = haveStopOrderChanged(stops, alignedStops) ? undefined : transportSegments
   const mealWindows = getRequiredMealWindows(input)
   if (mealWindows.length === 0) return nextStops
 
-  const missingMealWindows = getMissingMealWindows(nextStops, input, mealWindows)
+  const missingMealWindows = getMissingMealWindows(nextStops, input, mealWindows, alignedSegments)
   if (missingMealWindows.length === 0) return nextStops
 
   for (const mealWindow of missingMealWindows) {
@@ -2530,6 +3374,7 @@ function getMissingMealWindows(
   stops: Stop[],
   input: GenerateTripPlansRequest['input'],
   mealWindows: RequiredMealWindow[],
+  transportSegments?: TripPlan['transportSegments'],
 ) {
   return mealWindows.filter(
     (mealWindow) =>
@@ -2537,7 +3382,7 @@ function getMissingMealWindows(
         if (stop.type !== 'food') return false
 
         return isStopAlignedWithMealWindow(
-          getEstimatedArrivalMinutesForStop(stops, index, input),
+          getEstimatedArrivalMinutesForStop(stops, index, input, transportSegments),
           Number(stop.duration) || getDefaultStopDuration('food'),
           mealWindow,
         )
@@ -2563,7 +3408,7 @@ function selectMealCandidate(
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
   mealWindow: RequiredMealWindow,
-  planId?: string,
+  _planId?: string,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
   requireFirstStopDistance = false,
 ) {
@@ -2582,23 +3427,29 @@ function selectMealCandidate(
   const mealWindowCandidates = foodCandidates.filter((candidate) =>
     isCandidateOpenDuringMealWindow(candidate, mealWindow),
   )
-  const pool = mealWindowCandidates.length > 0 ? mealWindowCandidates : foodCandidates
+  // No route can rescue a candidate that cannot fit even the existing 45-minute
+  // minimum anywhere in this meal window. This is the same final hours rule.
+  const pool = mealWindowCandidates
+  const bestScore = Math.max(...pool.map(candidate => candidate.score ?? 0))
 
   const rankedCandidates = pool
     .sort((left, right) => {
       const leftSlotScore = getMealCandidateSlotScore(left, mealWindow)
       const rightSlotScore = getMealCandidateSlotScore(right, mealWindow)
       if (leftSlotScore !== rightSlotScore) return rightSlotScore - leftSlotScore
-
+      const leftComparable = (left.score ?? 0) >= bestScore - SUPPLEMENT_SIMILAR_SCORE_TOLERANCE
+      const rightComparable = (right.score ?? 0) >= bestScore - SUPPLEMENT_SIMILAR_SCORE_TOLERANCE
+      if (leftComparable !== rightComparable) return Number(rightComparable) - Number(leftComparable)
+      if (leftComparable) {
+        const suitability = getMealSuitabilityRank(right) - getMealSuitabilityRank(left)
+        if (suitability) return suitability
+      }
       return (right.score ?? 0) - (left.score ?? 0)
     })
 
   return pickSoftDiverseCandidate(
     rankedCandidates.slice(0, Math.min(3, rankedCandidates.length)),
     crossPlanUsedPlaceIds,
-    {
-      preferredIndex: getPlanDisplayPriority(planId ?? '') + (mealWindow.id === 'dinner' ? 1 : 0),
-    },
   )
 }
 
@@ -2607,9 +3458,8 @@ function getMealCandidateSlotScore(
   mealWindow: RequiredMealWindow,
 ) {
   const slots = candidate.availabilitySlots ?? []
-  let score = 0
-
-  if (isCandidateOpenDuringMealWindow(candidate, mealWindow)) score += 8
+  // The caller already checked the exact minimum-length meal window once.
+  let score = 8
   if (slots.includes(mealWindow.preferredSlot)) score += 4
   if (slots.includes('middle')) score += mealWindow.id === 'lunch' ? 3 : 1
   if (slots.includes('late')) score += mealWindow.id === 'dinner' ? 3 : 1
@@ -2622,24 +3472,18 @@ function isCandidateOpenDuringMealWindow(
   candidate: VerifiedPlaceCandidate,
   mealWindow: RequiredMealWindow,
 ) {
-  const durationMinutes = getDefaultStopDuration('food')
-  const earliestStart = mealWindow.start - durationMinutes + MEAL_ALIGNMENT_MIN_OVERLAP_MINUTES
-  const latestStart = mealWindow.end - MEAL_ALIGNMENT_MIN_OVERLAP_MINUTES
-  const searchStart =
-    Math.floor(earliestStart / TIMELINE_START_GRANULARITY_MINUTES) *
-    TIMELINE_START_GRANULARITY_MINUTES
-  const searchEnd =
-    Math.ceil(latestStart / TIMELINE_START_GRANULARITY_MINUTES) *
-    TIMELINE_START_GRANULARITY_MINUTES
+  const durationMinutes = MINIMUM_MEAL_DURATION_MINUTES
+  const earliestStart = mealWindow.start
+  const latestStart = mealWindow.end - 1
+  if (!candidate.openingHours?.isKnown || candidate.openingHours.isNeverOpen) return false
 
   for (
-    let arrivalMinutes = searchStart;
-    arrivalMinutes <= searchEnd;
-    arrivalMinutes += TIMELINE_START_GRANULARITY_MINUTES
+    let arrivalMinutes = earliestStart;
+    arrivalMinutes <= latestStart;
+    arrivalMinutes++
   ) {
     if (
-      getVisitMealWindowOverlapMinutes(arrivalMinutes, durationMinutes, mealWindow) <
-      MEAL_ALIGNMENT_MIN_OVERLAP_MINUTES
+      !isStopAlignedWithMealWindow(arrivalMinutes, durationMinutes, mealWindow)
     ) {
       continue
     }
@@ -2650,32 +3494,41 @@ function isCandidateOpenDuringMealWindow(
   return false
 }
 
-function realignFoodStopsForMealWindows(
+export function realignFoodStopsForMealWindows(
   stops: Stop[],
   input: GenerateTripPlansRequest['input'],
+  transportSegments?: TripPlan['transportSegments'],
 ) {
-  if (stops.length < 3 || input.tags.includes('no_full_meals')) return stops
+  if (stops.length < 2 || input.tags.includes('no_full_meals')) return stops
   if (!shouldMoveFoodStopsTowardMealWindow(input)) return stops
   const mealWindows = getRequiredMealWindows(input)
   if (mealWindows.length === 0) return stops
+  // Preserve an already useful order, using actual route timings when available.
+  if (getMissingMealWindows(stops, input, mealWindows, transportSegments).length === 0) return stops
 
   const foodStops = stops.filter((stop) => stop.type === 'food')
   if (foodStops.length === 0) return stops
 
-  const nonFoodStops = stops.filter((stop) => stop.type !== 'food')
-  if (nonFoodStops.length < 2) return stops
-
-  const nextStops = [...nonFoodStops]
-
-  foodStops.forEach((foodStop, index) => {
-    const mealWindow = mealWindows[Math.min(index, mealWindows.length - 1)]
-    const targetIndex = findMealWindowInsertionIndex(
-      nextStops,
-      input,
-      getMealInsertionTargetMinutes(mealWindow),
-    )
-    nextStops.splice(Math.min(targetIndex, nextStops.length), 0, foodStop)
-  })
+  let nextStops = stops
+  let missing = getMissingMealWindows(stops, input, mealWindows, transportSegments)
+  for (const mealWindow of mealWindows) {
+    if (!missing.includes(mealWindow)) continue
+    for (const foodStop of foodStops) {
+      const proposal = mealPositionOrders(nextStops, foodStop, input, mealWindow).find(position => {
+        // Keep food ordering stable; actual route/first-stop legality is checked by the caller.
+        if (position.order.filter(stop => stop.type === 'food').some((stop, i) => stop.id !== foodStops[i].id)) return false
+        if (stops[0].type !== 'food' && position.order[0].id !== stops[0].id) return false
+        const trialMissing = getMissingMealWindows(position.order, input, mealWindows)
+        return !trialMissing.includes(mealWindow) &&
+          mealWindows.filter(window => !missing.includes(window)).every(window => !trialMissing.includes(window))
+      })
+      if (proposal) {
+        nextStops = proposal.order
+        missing = getMissingMealWindows(nextStops, input, mealWindows)
+        break
+      }
+    }
+  }
 
   const originalOrder = stops.map((stop) => stop.id).join('|')
   const nextOrder = nextStops.map((stop) => stop.id).join('|')
@@ -2701,33 +3554,66 @@ function isShortVisitCandidate(candidate: VerifiedPlaceCandidate) {
   return /(局|署|所|處|公所|辦公|服務中心|銀行|郵局|醫院|診所|公司|分局)/.test(text)
 }
 
-async function trimPlanToTimeWindow(
+export async function trimPlanToTimeWindow(
   plan: TripPlan,
   input: GenerateTripPlansRequest['input'],
-): Promise<TripPlan> {
+  resolveRoutes: typeof repairTransportSegments = repairTransportSegments,
+  diagnostics?: { session: TripCandidateDebugSession; stage: DiagnosticStageContext },
+): Promise<{ plan: TripPlan; routesFailed: boolean }> {
   const allowedMinutes = getAllowedTripMinutes(input)
-  if (!allowedMinutes || plan.stops.length <= 2) return normalizePlanTotalTime(plan)
-
-  let nextPlan = normalizePlanTotalTime(plan)
-
-  while (nextPlan.stops.length > 2 && shouldTrimTailStop(nextPlan, input)) {
-    const stops = nextPlan.stops.slice(0, -1)
-    const { segments } = await repairTransportSegments(
-      nextPlan.transportSegments ?? [],
-      stops,
-      nextPlan.transportMode,
-    )
-    const candidatePlan = normalizePlanTotalTime({
-      ...nextPlan,
-      stops,
-      transportSegments: segments,
-    })
-
-    if (!isAboveMinimumCoverage(candidatePlan, input)) break
-    nextPlan = candidatePlan
+  if (!allowedMinutes || plan.stops.length <= 2) {
+    return { plan: normalizePlanTotalTime(plan), routesFailed: false }
   }
 
-  return nextPlan
+  let nextPlan = normalizePlanTotalTime(plan)
+  let routesFailed = false
+
+  while (nextPlan.stops.length > 2 && shouldTrimTailStop(nextPlan, input)) {
+    let acceptedPlan: TripPlan | null = null
+    const beforeMinutes = getPlanActualDuration(nextPlan)
+    // Keep the first stop; try non-food stops from the tail before redundant food.
+    const removalIndexes = nextPlan.stops.map((_stop, index) => index).slice(1).reverse()
+      .sort((left, right) => Number(nextPlan.stops[left].type === 'food') -
+        Number(nextPlan.stops[right].type === 'food'))
+    for (const removalIndex of removalIndexes) {
+      const stops = nextPlan.stops.filter((_stop, index) => index !== removalIndex)
+      const mealWindows = getRequiredMealWindows(input)
+      // Preserve every required meal, including single-window trips.
+      if (stops.filter((stop) => stop.type === 'food').length < mealWindows.length) continue
+      const routeRepair = await resolveRoutes(
+        nextPlan.transportSegments ?? [], stops, nextPlan.transportMode,
+      )
+      routesFailed = routesFailed || routeRepair.routesFailed
+      if (routeRepair.routesFailed) continue
+      let candidatePlan = normalizePlanTotalTime({
+        ...nextPlan, stops, transportSegments: routeRepair.segments,
+      })
+      if (getPlanActualDuration(candidatePlan) >= beforeMinutes) continue
+      const mealAlignment = await realignPlanMealsAfterTiming(candidatePlan, input, resolveRoutes)
+      routesFailed = routesFailed || mealAlignment.routesFailed
+      if (mealAlignment.routesFailed) continue
+      candidatePlan = mealAlignment.plan
+      // Recover coverage through existing stays, never by adding back a deleted stop.
+      const coverageCandidate = isAboveMinimumCoverage(candidatePlan, input)
+        ? candidatePlan : stretchPlanDurationToCoverage(candidatePlan, input)
+      diagnostics?.session.recordPlanTransition(candidatePlan, coverageCandidate, 'repair:capacity-trim-coverage-trial', {
+        ...diagnostics.stage, disposition: 'provisional', reason: 'coverage_recovery_after_capacity_removal',
+      })
+      candidatePlan = shrinkPlanDurationToScheduleCapacity(
+        coverageCandidate, input,
+      )
+      if (!isAboveMinimumCoverage(candidatePlan, input)) continue
+      if (getMissingMealWindows(candidatePlan.stops, input, mealWindows, candidatePlan.transportSegments).length > 0) continue
+      if (getFirstStopDistanceIssue(candidatePlan, input)) continue
+      if ((await getDeliveryPlanIssues(candidatePlan, input, 'capacity-trim')).length > 0) continue
+      acceptedPlan = candidatePlan
+      break
+    }
+    if (!acceptedPlan) break
+    nextPlan = acceptedPlan
+  }
+
+  return { plan: nextPlan, routesFailed }
 }
 
 function shouldTrimTailStop(plan: TripPlan, input: GenerateTripPlansRequest['input']) {
@@ -2814,8 +3700,7 @@ function getNormalizedTripWindowMinutes(input: GenerateTripPlansRequest['input']
 
 function applyCandidateToStop(stop: Stop, candidate: VerifiedPlaceCandidate): Stop {
   const nextType = getStopTypeForCandidate(stop, candidate)
-
-  return {
+  const nextStop = {
     ...stop,
     type: nextType,
     duration: Math.max(stop.duration, getMinimumStopDuration({ ...stop, type: nextType })),
@@ -2829,6 +3714,21 @@ function applyCandidateToStop(stop: Stop, candidate: VerifiedPlaceCandidate): St
     candidateRole: candidate.role,
     foodSubtype: candidate.foodSubtype,
   }
+  const changedIdentity = Boolean(stop.placeId && stop.placeId !== candidate.placeId)
+  const changedPurpose = stop.type !== nextType || (changedIdentity &&
+    (getActivityPurpose(stop) !== getActivityPurpose(nextStop) || hasFoodPurposeConflict(stop, nextStop)))
+  // A different purpose starts with the existing reasonable/default duration. Later
+  // coverage/capacity repair remains free to stretch/shrink it within existing rules.
+  if (changedPurpose) {
+    const reasonable = getReasonableStopDuration(nextStop)
+    nextStop.duration = stop.type === 'food' && nextType === 'food'
+      ? Math.min(reasonable, nextStop.duration) : reasonable
+  }
+  else if (changedIdentity) nextStop.duration = clamp(nextStop.duration,
+    getMinimumStopDuration(nextStop), getMaximumStopDuration(nextStop))
+  // A food description belongs to its place; details can describe the final identity.
+  if ((changedIdentity || changedPurpose) && (stop.type === 'food' || nextType === 'food')) nextStop.description = ''
+  return nextStop
 }
 
 function getStopTypeForCandidate(stop: Stop, candidate: VerifiedPlaceCandidate): Stop['type'] {
@@ -2838,24 +3738,38 @@ function getStopTypeForCandidate(stop: Stop, candidate: VerifiedPlaceCandidate):
   return stop.type
 }
 
-function expandStopsForLongTrip(
+export async function expandStopsForLongTrip(
   stops: Stop[],
   input: GenerateTripPlansRequest['input'],
   candidates: NearbyPlaceCandidates,
   usedPlaceIds: Set<string>,
   planId?: string,
   crossPlanUsedPlaceIds: Set<string> = new Set(),
+  transportSegments?: TripPlan['transportSegments'],
+  transportMode: TripPlan['transportMode'] = input.transportMode ?? 'scooter',
+  routeContext: SupplementRouteContext = createSupplementRouteContext(),
 ) {
   const minimumMinutes = getMinimumRequiredActualMinutes(input)
-  if (!minimumMinutes) return stops
-  const expansionTargetMinutes = getCoverageRepairTargetMinutes(input)
-
+  const unchanged = { stops, segments: transportSegments ?? [], routesFailed: false }
+  if (!minimumMinutes) { routeContext.remedy.events.push({ kind: 'supplement', outcome: 'unknown_coverage_window' }); return unchanged }
+  // Coverage is a minimum, not a reason to replace useful stays with more travel.
+  const expansionTargetMinutes = minimumMinutes
+  // A missing, estimated, or stale route cannot establish spare capacity.
+  if (!transportSegments || !hasCurrentRouteTimings(stops, transportSegments)) { routeContext.remedy.events.push({ kind: 'supplement', outcome: 'route_timings_unverified' }); return unchanged }
+  const capacity = getScheduleCapacityMinutes(input) ?? 0
   const expandedStops = [...stops]
+  let currentSegments = transportSegments
+  let routesFailed = false
+  const actualMinutes = () => stopsDuration(expandedStops) +
+    currentSegments.reduce((total, segment) => total + segment.duration, 0)
+
   const allCandidatePool = mergeCandidatePools(
     candidates.otherCandidates,
     candidates.firstStopCandidates,
     candidates.allCandidates,
   )
+  routeContext.remedy.events.push({ kind: 'supplement', outcome: 'existing_pool_observed',
+    details: `candidateCount=${allCandidatePool.length};source=existing_nearby_candidates` })
   const baseCandidatePool = preferNonShortVisitCandidates(allCandidatePool)
   const mainActivityPool = baseCandidatePool.filter(
     (candidate) => inferStopTypeFromCandidate(candidate) !== 'food',
@@ -2864,53 +3778,37 @@ function expandStopsForLongTrip(
   let supplementalSelectionIndex = 0
 
   while (
-    expandedStops.length < getMinimumStopCountForLongTrip(input) ||
-    getReasonablePlanDuration(expandedStops) + estimateTransportTotal(expandedStops) < expansionTargetMinutes
+    supplementalSelectionIndex < allCandidatePool.length &&
+    actualMinutes() < capacity && actualMinutes() < expansionTargetMinutes
   ) {
-    const insertionIndex = Math.min(
-      Math.max(expandedStops.length - 1, 1),
-      expandedStops.length,
-    )
-    const estimatedArrivalMinutes = getEstimatedArrivalMinutesForStop(
-      expandedStops,
-      insertionIndex,
-      input,
-    )
-    const rotationOffset = getPlanDiversityOffset(planId, supplementalSelectionIndex)
-    const nextCandidate =
-      selectSupplementalCandidate(
-        candidatePool,
-        usedPlaceIds,
-        estimatedArrivalMinutes,
-        rotationOffset,
-        crossPlanUsedPlaceIds,
-      ) ??
-      selectSupplementalCandidate(
-        allCandidatePool,
-        usedPlaceIds,
-        estimatedArrivalMinutes,
-        rotationOffset,
-        crossPlanUsedPlaceIds,
-      )
-    if (!nextCandidate) break
-
-    supplementalSelectionIndex += 1
-    usedPlaceIds.add(nextCandidate.placeId)
-    expandedStops.splice(
-      insertionIndex,
-      0,
-      applyCandidateToStop(
-        {
-          id: buildSupplementalStopId(input, expandedStops.length + 1),
-          name: nextCandidate.name,
-          type: inferStopTypeFromCandidate(nextCandidate),
-          description: '',
-          address: nextCandidate.address,
-          duration: getDefaultStopDuration(inferStopTypeFromCandidate(nextCandidate)),
-        },
-        nextCandidate,
-      ),
-    )
+    const options = {
+      stops: expandedStops, segments: currentSegments, input, capacity,
+      allCandidates: allCandidatePool, used: usedPlaceIds, crossPlanUsed: crossPlanUsedPlaceIds,
+      mode: transportMode, context: routeContext,
+      makeStop: (candidate: VerifiedPlaceCandidate) => applyCandidateToStop({
+        id: buildSupplementalStopId(input, expandedStops.length + 1), name: candidate.name,
+        type: inferStopTypeFromCandidate(candidate), description: '', address: candidate.address,
+        duration: getDefaultStopDuration(inferStopTypeFromCandidate(candidate)),
+      }, candidate),
+    }
+    let comparison = await chooseSupplementalInsertion({ ...options, pool: candidatePool })
+    // Share the same round and plan budgets on the broad-pool fallback.
+    if (!comparison.choice && comparison.calls === 0 && candidatePool !== allCandidatePool) {
+      comparison = await chooseSupplementalInsertion({ ...options, pool: allCandidatePool })
+    }
+    if (!comparison.choice) {
+      routesFailed = comparison.routesFailed
+      break
+    }
+    const choice = comparison.choice
+    usedPlaceIds.add(choice.candidate.placeId)
+    expandedStops.splice(0, expandedStops.length, ...choice.stops)
+    currentSegments = choice.segments
+    supplementalSelectionIndex++
+    console.info('[supplement-quality-choice]', { planId, placeId: choice.candidate.placeId,
+      score: choice.candidate.score, insertionIndex: choice.index, deltaTravel: choice.deltaTravel,
+      activityMinutes: choice.activityMinutes, insertionStayLoss: getOriginalStayLoss(stops, choice.stops), routeCalls: comparison.calls,
+      planRouteCalls: routeContext.calls })
   }
 
   if (expandedStops.length !== stops.length) {
@@ -2918,12 +3816,24 @@ function expandStopsForLongTrip(
       originalStopCount: stops.length,
       expandedStopCount: expandedStops.length,
       targetMinutes: expansionTargetMinutes,
-      estimatedMinutes: getReasonablePlanDuration(expandedStops) + estimateTransportTotal(expandedStops),
+      actualMinutes: actualMinutes(),
       candidateCount: allCandidatePool.length,
+      routeCalls: routeContext.calls,
     })
   }
 
-  return expandedStops
+  return { stops: expandedStops, segments: currentSegments, routesFailed }
+}
+
+function stopsDuration(stops: Stop[]) {
+  return stops.reduce((total, stop) => total + stop.duration, 0)
+}
+
+function hasCurrentRouteTimings(stops: Stop[], segments?: TripPlan['transportSegments']) {
+  return Boolean(segments && segments.length === Math.max(0, stops.length - 1) &&
+    segments.every((segment, index) => segment.fromStopId === stops[index].id &&
+      segment.toStopId === stops[index + 1].id && Number.isFinite(segment.duration) &&
+      segment.duration > 0 && !segment.label?.includes('(估算)')))
 }
 
 function mergeCandidatePools(...pools: VerifiedPlaceCandidate[][]) {
@@ -2945,8 +3855,8 @@ export function selectSupplementalCandidate(
   candidatePool: VerifiedPlaceCandidate[],
   usedPlaceIds: Set<string>,
   estimatedArrivalMinutes: number,
-  rotationOffset = 0,
-  crossPlanUsedPlaceIds: Set<string> = new Set(),
+  // Preserve the legacy fourth argument slot; diversity still uses the fifth.
+  ...[, crossPlanUsedPlaceIds = new Set<string>()]: [rotationOffset?: number, crossPlanUsedPlaceIds?: Set<string>]
 ) {
   const unusedCandidates = candidatePool.filter((candidate) => {
     if (usedPlaceIds.has(candidate.placeId)) return false
@@ -2958,9 +3868,10 @@ export function selectSupplementalCandidate(
     )
   })
   const nonShortCandidates = unusedCandidates.filter((candidate) => !isShortVisitCandidate(candidate))
-  const pool = nonShortCandidates.length > 0 ? nonShortCandidates : unusedCandidates
+  const pool = (nonShortCandidates.length > 0 ? nonShortCandidates : unusedCandidates)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
 
-  return pickSoftDiverseCandidate(pool, crossPlanUsedPlaceIds, { preferredIndex: rotationOffset })
+  return pickSoftDiverseCandidate(pool, crossPlanUsedPlaceIds)
 }
 
 function buildSupplementalStopId(input: GenerateTripPlansRequest['input'], index: number) {
@@ -2975,6 +3886,10 @@ function inferStopTypeFromCandidate(candidate: VerifiedPlaceCandidate): Stop['ty
 }
 
 function isFoodCandidate(candidate: VerifiedPlaceCandidate) {
+  // Use the same verified venue evidence as Candidate classification. Ancillary
+  // dining metadata remains available, but does not turn a cultural visit into
+  // food or make it a required-meal candidate. Ambiguous/default roles fall through.
+  if (hasConfirmedCulturalPrimaryPurpose(candidate)) return false
   const types = candidate.types ?? []
   const text = `${candidate.name} ${candidate.address}`.toLocaleLowerCase('zh-TW')
 
@@ -2986,6 +3901,60 @@ function isFoodCandidate(candidate: VerifiedPlaceCandidate) {
     ) ||
     /(餐廳|餐酒館|咖啡|甜點|小吃|早午餐|bistro|restaurant|coffee|cafe|brunch|dessert|bar)/i.test(text)
   )
+}
+
+function getOriginalStayLoss(originals: Stop[], finalStops: Stop[]) {
+  return originals.reduce((loss, original) => loss + Math.max(0, original.duration -
+    (finalStops.find(stop => stop.id === original.id && stop.placeId === original.placeId)?.duration ?? 0)), 0)
+}
+
+function extendExistingActivitiesToMinimum(
+  plan: TripPlan, input: GenerateTripPlansRequest['input'], candidates: NearbyPlaceCandidates,
+) {
+  const minimum = getMinimumRequiredActualMinutes(input)
+  let remaining = (minimum ?? 0) - getPlanActualDuration(plan)
+  if (remaining <= 0 || !hasCurrentRouteTimings(plan.stops, plan.transportSegments)) return plan
+  const known = new Map(mergeCandidatePools(candidates.allCandidates, candidates.firstStopCandidates,
+    candidates.otherCandidates).map(candidate => [candidate.placeId, candidate]))
+  const coveredMeals = getRequiredMealWindows(input).filter(window => !getMissingMealWindows(
+    plan.stops, input, [window], plan.transportSegments).length)
+  let stops = plan.stops.map(stop => ({ ...stop }))
+  const order = stops.map((stop, index) => ({ index, weight: getStopStretchWeight(stop) }))
+    .filter(({ index, weight }) => weight > 0 && (stops[index].type !== 'food' ||
+      coveredMeals.some(window => isStopAlignedWithMealWindow(
+        getEstimatedArrivalMinutesForStop(stops, index, input, plan.transportSegments), stops[index].duration, window))))
+    .sort((a, b) => b.weight - a.weight || a.index - b.index)
+  // Existing duration bounds and weights define reasonable room. Check the full downstream
+  // timeline for each increment; no waiting time or new scoring weight is introduced.
+  while (remaining > 0) {
+    let progress = false
+    for (const { index, weight } of order) {
+      const room = getMaximumStopDuration(stops[index]) - stops[index].duration
+      let increment = Math.min(room, Math.max(5, weight * 5), remaining)
+      while (increment > 0) {
+        const trial = stops.map((stop, i) => i === index ? { ...stop, duration: stop.duration + increment } : stop)
+        const open = trial.every((stop, i) => {
+          const candidate = known.get(stop.placeId ?? '')
+          return candidate && isCandidateOpenForVisit(candidate,
+            getEstimatedArrivalMinutesForStop(trial, i, input, plan.transportSegments), stop.duration)
+        })
+        if (open && !getMissingMealWindows(trial, input, coveredMeals, plan.transportSegments).length) {
+          stops = trial
+          remaining -= increment
+          progress = true
+          break
+        }
+        increment--
+      }
+      if (remaining <= 0) break
+    }
+    if (!progress) break
+  }
+  // Partial stretching must not consume capacity needed by a genuinely necessary new activity.
+  if (remaining > 0) return plan
+  console.info('[coverage-existing-activities-extended]', { planId: plan.id,
+    addedMinutes: stopsDuration(stops) - stopsDuration(plan.stops), minimumMinutes: minimum })
+  return normalizePlanTotalTime(traceDurationPlan(plan, { ...plan, stops }, 'coverage_existing'))
 }
 
 function stretchPlanDurationToCoverage(
@@ -3004,6 +3973,8 @@ function stretchPlanDurationToCoverage(
   const durations = plan.stops.map((stop) =>
     clamp(stop.duration, getMinimumStopDuration(stop), getMaximumStopDuration(stop)),
   )
+  const boundedPlan = { ...plan, stops: plan.stops.map((stop, index) => ({ ...stop, duration: durations[index] })) }
+  traceDurationPlan(plan, boundedPlan, 'duration_bounds')
   let remainingExtra =
     targetMinutes -
     (durations.reduce((total, duration) => total + duration, 0) +
@@ -3030,13 +4001,13 @@ function stretchPlanDurationToCoverage(
     }
   }
 
-  return normalizePlanTotalTime({
+  return normalizePlanTotalTime(traceDurationPlan(boundedPlan, {
     ...plan,
     stops: plan.stops.map((stop, index) => ({
       ...stop,
       duration: durations[index],
     })),
-  })
+  }, 'coverage_target'))
 }
 
 function shrinkPlanDurationToScheduleCapacity(
@@ -3072,13 +4043,13 @@ function shrinkPlanDurationToScheduleCapacity(
     }
   }
 
-  const nextPlan = normalizePlanTotalTime({
+  const nextPlan = normalizePlanTotalTime(traceDurationPlan(plan, {
     ...plan,
     stops: plan.stops.map((stop, index) => ({
       ...stop,
       duration: durations[index],
     })),
-  })
+  }, 'capacity'))
 
   currentMinutes = getPlanActualDuration(nextPlan)
   if (currentMinutes > scheduleCapacityMinutes) {
@@ -3129,7 +4100,7 @@ function getHardPlanQualityIssues(
 ) {
   const issues = placesIssues.map(formatPlacesValidationIssue)
   const scheduleCapacityMinutes = getScheduleCapacityMinutes(input)
-  const mealCoverageIssues = getRequiredMealCoverageIssues(plan, input)
+  const mealCoverageIssues = options.skipMealCoverage ? [] : getRequiredMealCoverageIssues(plan, input)
 
   plan.stops.forEach((stop) => {
     if (stop.duration < getMinimumMeaningfulStopDuration(stop)) {
@@ -3180,7 +4151,11 @@ async function getOpeningHoursTimelineInput(
   if (endMinutes === originalStartMinutes) return input
   if (endMinutes < originalStartMinutes) endMinutes += 24 * 60
 
-  const searchStartMinutes = getOpeningHoursSearchStartMinutes(originalStartMinutes, endMinutes)
+  const selectedStart = parseTimeToMinutes(plan.scheduleStartTime)
+  const normalizedSelectedStart = selectedStart === null ? originalStartMinutes
+    : selectedStart < originalStartMinutes ? selectedStart + 24 * 60 : selectedStart
+  const searchStartMinutes = Math.max(normalizedSelectedStart,
+    getOpeningHoursSearchStartMinutes(originalStartMinutes, endMinutes))
   const resolution = await resolveOpeningHoursTimelineStart(plan, input, {
     earliestStartMinutes: searchStartMinutes,
     startStepMinutes: TIMELINE_START_GRANULARITY_MINUTES,
@@ -3651,7 +4626,7 @@ function createNodeHttpsFetch(): typeof fetch {
     const headers = new Headers(init?.headers ?? (typeof input === 'object' && 'headers' in input ? input.headers : undefined))
     const body = init?.body
 
-    return new Promise<Response>((resolve, reject) => {
+    return observeEvidenceCall('supabase', () => new Promise<Response>((resolve, reject) => {
       const req = https.request(
         requestUrl,
         {
@@ -3703,31 +4678,8 @@ function createNodeHttpsFetch(): typeof fetch {
       }
 
       req.end()
-    })
+    }))
   }
-}
-
-async function consumeAnalysisPoints(supabase: PointsSupabaseClient) {
-  const { error } = await supabase.rpc('consume_points_for_analysis', {
-    cost: ANALYSIS_COST,
-    reason: 'AI 行程分析',
-  })
-
-  if (error) {
-    if (error.message.includes('Insufficient points')) {
-      throw new Error('點數不足，請先到點數管理確認餘額。')
-    }
-
-    throw new Error('行程已產生，但扣點流程失敗，請稍後再試。')
-  }
-}
-
-function getBearerToken(value?: string) {
-  if (!value?.startsWith('Bearer ')) {
-    return ''
-  }
-
-  return value.slice('Bearer '.length).trim()
 }
 
 function parseRequestBody(body: unknown): GenerateTripPlansRequest | null {
@@ -3763,17 +4715,6 @@ async function readOpenAiErrorDetail(response: Response) {
     return data.error?.message ?? ''
   } catch {
     return ''
-  }
-}
-
-function getUserIdFromToken(accessToken: string): string | undefined {
-  try {
-    const payload = JSON.parse(
-      Buffer.from(accessToken.split('.')[1], 'base64').toString(),
-    )
-    return payload.sub
-  } catch {
-    return undefined
   }
 }
 

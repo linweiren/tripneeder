@@ -44,8 +44,21 @@ export function getReasonableStopDuration(stop: Stop) {
   return Math.min(getMaximumStopDuration(stop), Math.max(getMinimumStopDuration(stop), getDefaultStopDuration(stop.type)))
 }
 
+// Shared stay/rhythm evidence only. Street and district names are not venue
+// semantics. Keep the existing name-based duration references: an outdoor type
+// supports a rhythm hint, but does not by itself justify a longer stay.
+function hasOutdoorStopName(stop: Pick<Stop, 'name'>) {
+  return /(公園|步道|海邊|湖|山|森林|河濱|草地|park)/i.test(stop.name)
+}
+
+export function hasOutdoorStopEvidence(stop: Pick<Stop, 'name' | 'googleTypes'>) {
+  return (stop.googleTypes ?? []).some(type =>
+    ['park', 'city_park', 'national_park', 'hiking_area'].includes(type)) ||
+    hasOutdoorStopName(stop)
+}
+
 export function getMaximumStopDuration(stop: Stop) {
-  const text = `${stop.name} ${stop.address}`.toLocaleLowerCase('zh-TW')
+  const text = stop.name.toLocaleLowerCase('zh-TW')
 
   if (stop.type === 'food') return 90
   if (/(局|署|所|處|公所|辦公|服務中心|銀行|郵局|醫院|診所|公司|分局)/.test(text)) {
@@ -53,7 +66,7 @@ export function getMaximumStopDuration(stop: Stop) {
   }
   if (/(市場|商圈|老街|夜市|百貨|購物|mall|outlet)/i.test(text)) return 150
   if (/(博物館|美術館|展覽|園區|文化|文創|藝術|science|museum)/i.test(text)) return 150
-  if (/(公園|步道|海邊|湖|山|森林|河濱|草地|park)/i.test(text)) return 120
+  if (hasOutdoorStopName(stop)) return 120
   if (/(咖啡|書店|茶|甜點|cafe|coffee)/i.test(text)) return 100
 
   return 90

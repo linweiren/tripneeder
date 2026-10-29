@@ -1,0 +1,180 @@
+{
+  "date": "2026-10-27",
+  "head": "b92c3eccd57f7276df84de03a9a837dcc9df8626",
+  "localReviewReady": true,
+  "stagedFiles": "",
+  "checks": {
+    "typescript": "passed (tsc -b and build)",
+    "build": "passed",
+    "unit": {
+      "passed": 1859,
+      "failed": 0,
+      "skipped": 0
+    },
+    "finalRelatedRegression": {
+      "passed": 88,
+      "failed": 0
+    },
+    "nativePostgres": {
+      "passed": 15,
+      "failed": 0,
+      "version": "PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit"
+    },
+    "changedUiAndNewModulesLint": "passed",
+    "preExistingGenerateLint": "_rotationOffset unused at original HEAD; unchanged",
+    "gitDiffCheck": "passed"
+  },
+  "safety": {
+    "paidApiCalls": 0,
+    "productionDatabaseOperations": 0,
+    "commits": 0,
+    "pushes": 0,
+    "merges": 0,
+    "deployments": 0
+  },
+  "preservation": {
+    "originalManifestEntries": 383,
+    "unchangedEntriesVerified": 366,
+    "unexpectedChanges": [],
+    "oldMigrationsUnchanged": 12,
+    "researchDocsUnchanged": 92
+  },
+  "changeFiles": [
+    {
+      "path": "api/_lib/trip-generations.ts",
+      "sha256": "4c5e3f021a405490cbb7edd4c0dd15fa955944099c53446d363b475662aa08cc"
+    },
+    {
+      "path": "api/generate-trip.ts",
+      "sha256": "9fe0727e0f2a2becc73ef1c3528125f8f046637c560c453132784e10a53cc980"
+    },
+    {
+      "path": "api/trip-generations.ts",
+      "sha256": "8edd1dab6783b853b1aed603b6babf25515575c990feeb02b721a372dd968b46"
+    },
+    {
+      "path": "docs/security/paid-generation-consistency-v1-db-results.json",
+      "sha256": "445a7e6c1bb47624e950b393febcf993c51245f47d322d93906d0a6cecd8d2b7"
+    },
+    {
+      "path": "docs/security/paid-generation-consistency-v1-implementation.md",
+      "sha256": "a3c9678a8b5a4c04e6201147f515e3793a14cbf9e68108e36d75b4a31a1543c1"
+    },
+    {
+      "path": "scripts/security/test-paid-generation-consistency-v1.mjs",
+      "sha256": "54e01382c59d4db2762ffa42dac4eb053c05cba0a296bfdba175f3964e62feef"
+    },
+    {
+      "path": "src/components/PaidGenerationRecovery.tsx",
+      "sha256": "02e07621b0d95f0975418c255c42d6adbf8f192ea47d5b9c81e6d51e27d704a3"
+    },
+    {
+      "path": "src/contexts/AnalysisSessionContext.tsx",
+      "sha256": "6eb827de07cdcb2af6cbe8f495db4dfa39cba72513029d061bc058c59ceede2f"
+    },
+    {
+      "path": "src/contexts/analysisSession.ts",
+      "sha256": "1c6724e113108f8f4d049f870da925395158a70f62682dec4d0ae97ce1a96e5d"
+    },
+    {
+      "path": "src/pages/HomePage.tsx",
+      "sha256": "3815f7b14e7ca310b69d77a40349f151ddbbfeddc1f96a6b0a7cf61818d55352"
+    },
+    {
+      "path": "src/pages/RecentPage.tsx",
+      "sha256": "cf0571b4c8565e586501f2e5c9d14bf457370f6eed73bfff39cdc655a8fa92b3"
+    },
+    {
+      "path": "src/services/ai/generationInput.ts",
+      "sha256": "c66c8346c2dbaac56d6c39de16252ad177c6520f48c7250c8c27cfcf06b5087f"
+    },
+    {
+      "path": "src/services/ai/generationSessionStorage.ts",
+      "sha256": "613beabea3b5748a8f2c4b7e8987845c25b6a3fca61751fbebb857105817ac5d"
+    },
+    {
+      "path": "src/services/ai/proxyTripPlanner.ts",
+      "sha256": "41673ed8cc8520944c7f54d703d830c86253f73d12214f72ef55d79c48e7542f"
+    },
+    {
+      "path": "src/services/ai/types.ts",
+      "sha256": "f051cc884867a74301a706aec4037945c31f6a229eef616793cb309aa269e59b"
+    },
+    {
+      "path": "supabase/migrations/20261027220000_paid_generation_consistency_v1.sql",
+      "sha256": "e206a7d762172a3df43104ff23e64697c8273fb20e74894f4c294db86fa17ba6"
+    },
+    {
+      "path": "tests/unit/acceptance-evidence.test.mjs",
+      "sha256": "addbeaa751073995bf2bf421627bbaf133ed617bcd08bdf9bba21ebba51baa3a"
+    },
+    {
+      "path": "tests/unit/final-plan-text-regression.test.mjs",
+      "sha256": "076bebf57b22c2dcd420e84bc1cc9d4c5b6e1e175bf539598644431a0edbcf4c"
+    },
+    {
+      "path": "tests/unit/fixtures/acceptance-evidence-replay.mjs",
+      "sha256": "9d9d8ae41c6d7831c1bf69d6742d5e70b3352d1e83c3721d6c2e8111aa4887ef"
+    },
+    {
+      "path": "tests/unit/fixtures/coverage-experiment-loader.mjs",
+      "sha256": "b6fed4cc0f083925f9e76d3377c4affe0a3b90775707819122ea391894abf5a1"
+    },
+    {
+      "path": "tests/unit/fixtures/coverage-phase2c1-matrix.mjs",
+      "sha256": "9c5f1f49650abe9caffaed167790118af6c0b49c6faa6221770c924b718d14e0"
+    },
+    {
+      "path": "tests/unit/fixtures/coverage-phase2c1-replay.mjs",
+      "sha256": "3b078b2fec1fed43ec41e3ba8f687e2ccbdb0e59c0a27d825e0af28dd9c4cee3"
+    },
+    {
+      "path": "tests/unit/fixtures/paid-generation-native-handler.mjs",
+      "sha256": "643753553b664cc86837a53d4df2a76ecf743892a2bd803842b26d6866d44ee3"
+    },
+    {
+      "path": "tests/unit/fixtures/paid-generation-regression-contract.mjs",
+      "sha256": "695787ba81c5f859d9102056b211a9010e12b2254a3970eb7b989d120799294e"
+    },
+    {
+      "path": "tests/unit/fixtures/paid-generation-restart.mjs",
+      "sha256": "c2b283de5fa2aa82a04ea70ab1235f73ce89cfc1a7ff256def72cb9e62326340"
+    },
+    {
+      "path": "tests/unit/fixtures/plan-identity.mjs",
+      "sha256": "a5f7c29dc2e7e399534a3742d33b939cb76b87b22a5264daa55e1b44aa5858cd"
+    },
+    {
+      "path": "tests/unit/paid-generation-consistency.test.mjs",
+      "sha256": "0d353b8b261927402d07c6b89c666e49dc4407dea314b8b295eb9f77bb858840"
+    },
+    {
+      "path": "tests/unit/trip-coverage-v2.test.mjs",
+      "sha256": "3a5dd2f8e212e20b4719bc1329477bf7ffc932acc1634c45a4399a7cf8bf1d5a"
+    },
+    {
+      "path": "tests/unit/trip-plan-identity.test.mjs",
+      "sha256": "6fda681e95af26b85bb1c013096c2707e3a63f73f65acea98f29d35e85223272"
+    },
+    {
+      "path": "vite.config.ts",
+      "sha256": "9aacc0dd9fb52820b5a13ec28b0ff277d3327c739eda8cc625bbcd7dadcb5efe"
+    }
+  ],
+  "verificationFile": "docs/security/paid-generation-consistency-v1-verification.json",
+  "limitations": [
+    "Remote Supabase Auth/PostgREST and deployment/browser E2E not executed",
+    "All paid suppliers mocked",
+    "Local SQL timings are not cloud latency estimates",
+    "Full unit suite preceded final two UI-only adjustments; final build, lint and 88 related tests followed them"
+  ],
+  "commitPreparation": {
+    "authorizedBranch": "dev",
+    "message": "fix(trip): ensure atomic payment and recoverable generation",
+    "auditedImplementationFiles": 30,
+    "totalFilesIncludingThisManifest": 31,
+    "documentationOnlyChange": "Clarified running/failed retention, account-deletion cascade, and preservation of paid snapshots/idempotency.",
+    "programAndTestContentUnchanged": true,
+    "existingTestEvidenceReused": true
+  }
+}

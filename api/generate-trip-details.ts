@@ -2,6 +2,7 @@
 
 import https from 'node:https'
 import { createClient } from '@supabase/supabase-js'
+import { handleApiOptions, requireAuthenticatedUser } from './_lib/authenticated-user.js'
 import {
   buildTripDetailsPrompt,
   parseTripPlanDetailsResponse,
@@ -24,6 +25,8 @@ import {
   type VerifiedPlaceCandidate,
 } from './_lib/google-places.js'
 import { repairTransportSegments } from './_lib/google-routes.js'
+import { isForbiddenStop, isForbiddenVisit } from './_lib/trip-demand-compliance.js'
+import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
 
 type VercelRequest = {
   method?: string
@@ -37,6 +40,7 @@ type VercelRequest = {
 type VercelResponse = {
   status: (code: number) => VercelResponse
   json: (body: unknown) => void
+  end: () => void
   setHeader: (name: string, value: string) => void
 }
 
@@ -65,22 +69,20 @@ const SYSTEM_DEFAULT_PERSONA = {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Cache-Control', 'no-store')
+  if (handleApiOptions(req.method, res)) return
 
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' })
     return
   }
 
+  const authenticated = await requireAuthenticatedUser(req.headers?.authorization, res)
+  if (!authenticated) return
+  const { accessToken, userId } = authenticated
   const request = parseRequestBody(req.body)
-  const accessToken = getBearerToken(req.headers?.authorization)
 
   if (!request) {
     res.status(400).json({ error: '行程資料不完整，請回到結果頁重新選擇。' })
-    return
-  }
-
-  if (!accessToken) {
-    res.status(401).json({ error: '請登入以繼續使用本服務。' })
     return
   }
 
@@ -96,7 +98,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const logPhase = createDetailPhaseTimer(request.plan.id)
     const supabase = createUserScopedSupabaseClient(accessToken)
-    const userId = getUserIdFromToken(accessToken)
 
     // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
     let locationWarning = ''
@@ -239,7 +240,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const bias = request.input.location.lat && request.input.location.lng
       ? { lat: request.input.location.lat, lng: request.input.location.lng }
       : undefined
-    const stableDetailedPlan = preserveMainStopIdentity(detailedPlan, request.plan)
+    const stableDetailedPlan = rememberPlanTextTransition(request.plan,
+      preserveMainStopIdentity(detailedPlan, request.plan), detailedPlan.stops, detailedPlan.rainBackup)
     const stablePlan = await validateRainBackupWithPlaces(
       stableDetailedPlan,
       bias,
@@ -249,14 +251,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     logPhase('rain-places-validation-complete', {
       rainStopCount: stablePlan.rainBackup?.length ?? 0,
     })
-    const routedPlan = await repairDetailedPlanRoutes(stablePlan, request.input)
+    const routedPlan = rememberPlanTextTransition(stablePlan, await repairDetailedPlanRoutes(stablePlan, request.input))
     logPhase('routes-complete', {
       mainSegments: routedPlan.transportSegments.length,
       rainSegments: routedPlan.rainTransportSegments.length,
     })
 
     res.status(200).json({
-      plan: routedPlan,
+      plan: finalizePlanText(routedPlan),
     })
     logPhase('done')
   } catch (error) {
@@ -330,7 +332,7 @@ async function validateRainBackupWithPlaces(
     })
   }
 
-  return {
+  return rememberPlanTextTransition(plan, {
     ...plan,
     rainBackup: repairedRainBackup,
     rainTransportSegments: rainBackupChanged
@@ -340,7 +342,7 @@ async function validateRainBackupWithPlaces(
             !invalidRainBackupStopIds.has(segment.fromStopId) &&
             !invalidRainBackupStopIds.has(segment.toStopId),
         ),
-  }
+  }, validation.validatedPlan.rainBackup ?? [], validRainBackup, indoorRainBackup, dedupedRainBackup)
 }
 
 export function getRainBackupValidationInput(plan: TripPlan, input: TripInput): TripInput {
@@ -364,9 +366,11 @@ export function repairRainBackupStops(
   input: TripInput,
   planId = 'plan',
 ) {
-  const indoorCandidates = candidates.filter(isRainBackupCandidate)
+  const indoorCandidates = candidates.filter(candidate => isRainBackupCandidate(candidate) && !isForbiddenVisit(candidate, input))
   const scheduleStartMinutes = parseTimeToMinutes(input.startTime)
-  let repairedStops = dedupeRainBackupStops(stops)
+  let repairedStops = dedupeRainBackupStops(stops.filter(stop => !isForbiddenStop(stop, input, {
+    allCandidates: candidates, firstStopCandidates: [], otherCandidates: [],
+  })))
 
   if (scheduleStartMinutes === null) {
     return repairedStops.length >= MIN_RAIN_BACKUP_STOPS ? repairedStops : []
@@ -881,17 +885,6 @@ function createNodeHttpsFetch(): typeof fetch {
   }
 }
 
-function getUserIdFromToken(accessToken: string): string | undefined {
-  try {
-    const payload = JSON.parse(
-      Buffer.from(accessToken.split('.')[1], 'base64').toString(),
-    )
-    return payload.sub
-  } catch {
-    return undefined
-  }
-}
-
 type DbPersona = {
   persona_companion: string | null
   persona_budget: string | null
@@ -967,14 +960,6 @@ function parseRequestBody(body: unknown): {
   }
 
   return body as { input: TripInput; plan: TripPlan }
-}
-
-function getBearerToken(value?: string) {
-  if (!value?.startsWith('Bearer ')) {
-    return ''
-  }
-
-  return value.slice('Bearer '.length).trim()
 }
 
 async function buildOpenAiErrorMessage(response: Response) {
