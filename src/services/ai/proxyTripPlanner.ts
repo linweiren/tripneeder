@@ -9,6 +9,7 @@ import type {
   RecalculateTransportResponse,
 } from './types'
 import { sameGenerationInput } from './generationInput.js'
+import { readGenerationPreview } from './generationPreview.js'
 
 class GenerationRequestError extends Error {
   status: number
@@ -16,7 +17,7 @@ class GenerationRequestError extends Error {
 }
 
 type StreamEvent =
-  | { event: 'progress'; style: 'safe' | 'balanced' | 'explore'; stage: string }
+  | { event: 'progress'; style: 'safe' | 'balanced' | 'explore'; stage: string; preview?: unknown }
   | { event: 'plan'; plan: PartialTripPlan }
   | { event: 'done'; response: GenerateTripPlansResponse }
   | { event: 'error'; message: string }
@@ -113,6 +114,8 @@ export class ProxyTripPlanner implements AiTripPlanner {
 
         if (parsed.event === 'progress') {
           request.onProgress?.(parsed.style)
+          const preview = readGenerationPreview(parsed.preview)
+          if (preview && preview.type === parsed.style) request.onPreview?.(preview)
         } else if (parsed.event === 'plan') {
           request.onPlan?.(parsed.plan)
         } else if (parsed.event === 'done') {
@@ -197,7 +200,7 @@ export async function getPaidGeneration(id: string, accessToken?: string, signal
   const response = await fetchTripApi(`/api/trip-generations?generationId=${encodeURIComponent(id)}`, {
     headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {}, signal, cache: 'no-store',
   })
-  if (!response.ok) throw new Error('付款狀態暫時無法確認，請稍後使用原生成紀錄重試。')
+  if (!response.ok) throw new Error('扣點與生成狀態暫時無法確認，請稍後使用原生成紀錄重試。')
   return response.json()
 }
 
@@ -206,12 +209,12 @@ async function recoverGeneration(request: GenerateTripPlansRequest) {
   for (let poll = 0; poll < 125; poll++) {
     const generation = await getPaidGeneration(request.generationId!, request.accessToken, request.signal)
     if (generation.status === 'completed' && isGenerateTripPlansResponse(generation.response)) {
-      if (!sameGenerationInput(generation.input, request.input)) throw new Error('生成編號與原始輸入不符，無法沿用已付款結果。')
+      if (!sameGenerationInput(generation.input, request.input)) throw new Error('生成編號與原始輸入不符，無法沿用已扣點結果。')
       return generation.response
     }
     if (generation.status === 'failed') throw new Error('這次生成未完成，請使用重試按鈕繼續原生成紀錄。')
     if (generation.status === 'running' && generation.retryable) return null
-    if (generation.status !== 'running') throw new Error('付款狀態尚未確認，請稍後重試原生成紀錄。')
+    if (generation.status !== 'running') throw new Error('扣點與生成狀態尚未確認，請稍後重試原生成紀錄。')
     await new Promise<void>((resolve, reject) => {
       request.signal?.throwIfAborted()
       const abort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')) }
@@ -219,7 +222,7 @@ async function recoverGeneration(request: GenerateTripPlansRequest) {
       request.signal?.addEventListener('abort', abort, { once: true })
     })
   }
-  throw new Error('仍在確認付款狀態，請稍後使用原生成紀錄重試。')
+  throw new Error('仍在確認扣點與生成狀態，請稍後使用原生成紀錄重試。')
 }
 
 async function fetchTripApi(input: RequestInfo | URL, init?: RequestInit) {

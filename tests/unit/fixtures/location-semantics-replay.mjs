@@ -2,6 +2,7 @@ import { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { registerHooks, stripTypeScriptTypes } from 'node:module'
+import { readFileSync } from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
 import tls from 'node:tls'
@@ -15,7 +16,12 @@ if (mode === 'before') {
   // fresh process. No checkout, source mutation or partial handler-only baseline.
   const originals = new Map(['trip-plan-metrics', 'trip-quality-rules'].map(name => [
     new URL(`../../../api/_lib/${name}.ts`, import.meta.url).href,
-    stripTypeScriptTypes(execFileSync('git', ['show', `cc4a9f2:api/_lib/${name}.ts`], { encoding: 'utf8' })),
+    stripTypeScriptTypes(execFileSync('git', ['show', `cc4a9f2:api/_lib/${name}.ts`], { encoding: 'utf8' }))
+      // This new pure estimate is unrelated to the historical duration control.
+      // Preserve its current export for consumers added after that revision.
+      + (name === 'trip-plan-metrics' ? '\n' + stripTypeScriptTypes(readFileSync(
+        new URL('../../../api/_lib/trip-plan-metrics.ts', import.meta.url), 'utf8')
+        .match(/export function estimatePlanBudget\([^]*?\n}/)[0]) : ''),
   ]))
   registerHooks({ load(url, context, nextLoad) {
     return originals.has(url) ? { format: 'module', source: originals.get(url), shortCircuit: true } : nextLoad(url, context)

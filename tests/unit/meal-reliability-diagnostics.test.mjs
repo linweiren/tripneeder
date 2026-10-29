@@ -220,7 +220,8 @@ for (const kind of ['sketch-safe', 'thisball', 'independent-meal', 'no-full']) {
         './tests/unit/fixtures/meal-reliability-replay.mjs', mode, kind],
       { encoding: 'utf8', timeout: 60000, maxBuffer: 8 * 1024 * 1024 })))
     assert.equal(on.statusCode, 200)
-    assert.equal(on.response.plans.length, 3)
+    assert.deepEqual(on.response.plans.map(plan => plan.type), ['safe'])
+    assert.ok(on.response.warnings.some(warning => warning.includes('合併顯示')))
     for (const other of [off, production]) {
       assert.deepEqual(other.response, on.response)
       assert.deepEqual(other.events, on.events)

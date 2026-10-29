@@ -118,7 +118,14 @@ for (const kind of ['normal', 'history-coffee', 'raw-identity', 'retry', 'retry-
     }
     if (['refill', 'reject-refill'].includes(kind)) {
       assert.deepEqual(attempts.attempts.map(a => a.stage), ['initial', 'refill'])
-      if (kind === 'refill') assert.equal(attempts.finalVersions.find(p => p.type === 'balanced').attempt, 2)
+      if (kind === 'refill') {
+        const finalBalanced = attempts.finalVersions.find(p => p.type === 'balanced')
+        if (finalBalanced) assert.equal(finalBalanced.attempt, 2)
+        else {
+          assert.ok(on.result.response.warnings.some(warning => /平衡方案.*合併顯示/.test(warning)))
+          assert.ok(attempts.attempts[1].plans.some(p => p.type === 'balanced' && p.disposition !== 'final_selected'))
+        }
+      }
       else assert.ok(attempts.attempts[1].plans.every(p => p.disposition !== 'final_selected'))
     }
     if (kind === 'parse-failure') {

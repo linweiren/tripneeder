@@ -36,7 +36,10 @@ async function deliver(t, kind, refill) {
   const calls = mockGeneration(t, f, f.aiPlans, refill ? ids => refill(f, ids) : undefined, f.mockOptions)
   const result = await runHandler(handler, f)
   assert.ok(result.response, JSON.stringify(result.events))
-  assert.deepEqual(result.response.plans.map(p => p.id), ['safe', 'balanced', 'explore'])
+  const expected = { aliases: ['safe', 'balanced'], duplicate: ['safe', 'balanced'], identical: ['safe', 'balanced'],
+    missing: ['safe', 'explore'], unknown: ['safe', 'explore'], conflict: ['safe', 'explore'], 'missing-balanced': ['safe', 'explore'] }[kind] ?? ['safe', 'balanced', 'explore']
+  assert.deepEqual(result.response.plans.map(p => p.id), expected)
+  if (expected.length < 3) assert.match(result.response.warnings.join(' '), /合併顯示/)
   for (const plan of result.response.plans) {
     assert.equal(plan.type, plan.id)
     assert.deepEqual(await getDeliveryPlanIssues(plan, f.input, 'style-final', { candidates: f.candidates }), [])

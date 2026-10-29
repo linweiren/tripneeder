@@ -15,6 +15,7 @@ Object.assign(process.env,{NODE_ENV:'production',TRIP_CANDIDATE_DEBUG:'false',EN
   OPENAI_API_KEY:'mock-only',GOOGLE_PLACES_API_KEY:'mock-only',SUPABASE_URL:'https://unit-test.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY:'mock-service-key',SUPABASE_ANON_KEY:'mock-public-key'})
 const handler=(await import('../../api/generate-trip.ts')).default
+const { areDeliveryChoicesEquivalent } = await import('../../api/_lib/trip-delivery-coherence.ts')
 const recovery=(await import('../../api/trip-generations.ts')).default
 const A='11111111-1111-4111-8111-111111111111'
 const proxyInput={startTime:'10:00',endTime:'15:00',tags:[],location:{name:'mock'}}
@@ -59,7 +60,14 @@ test('normal handler delivers only committed final JSON; same UUID replay adds z
   assert.equal(res.events.at(-1).event,'done');assert.equal(calls.points,1)
   assert.deepEqual(res.events.at(-1).response,calls.generations.get(id).response)
   assert.deepEqual(res.events.filter(e=>e.event==='plan').map(e=>e.plan),res.events.at(-1).response.plans)
+  const delivered = res.events.at(-1).response
+  assert.match(delivered.warnings.join(' '), /合併顯示/)
+  assert.ok(delivered.plans.every((plan, index) => delivered.plans.slice(index + 1).every(other => !areDeliveryChoicesEquivalent(plan, other))))
   assert.equal(res.events.filter(e=>e.event==='progress').length,3)
+  assert.ok(res.events.filter(e=>e.event==='progress').every(e=>e.preview?.stopCount > 0 && e.preview.highlights.length > 0))
+  const sampleNames = new Set(res.events.flatMap(e => e.preview?.sampleVenueNames ?? []))
+  assert.equal(sampleNames.size, 1)
+  assert.ok([...sampleNames].every(name => f.plans.some(plan => plan.stops.some(stop => stop.name === name))))
   const before={ai:calls.ai.length,places:calls.places,routes:calls.routes.length}
   mockBalance(t,0);delete process.env.OPENAI_API_KEY
   try {
@@ -92,6 +100,8 @@ for (const kind of ['payment-rejected','commit-response-lost','confirmation-outa
   } else {
     assert.equal(calls.points,0)
     assert.ok(!result.events.some(e=>['plan','done','points_warning'].includes(e.event)))
+    assert.ok(new Set(result.events.flatMap(e => e.preview?.sampleVenueNames ?? [])).size <= 1)
+    assert.ok(result.events.every(e => e.event !== 'progress' || !/stops|placeId|address|duration|transportSegments|title|summary/.test(JSON.stringify(e))))
     assert.ok(result.events.some(e=>e.event==='error'))
     assert.equal(calls.generations.get(id).status,'running','unconfirmed submission must not blindly fail/restart')
   }

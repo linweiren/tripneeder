@@ -30,6 +30,6 @@ export default async function handler(req: Request, res: Response) {
     if (error) throw error
     res.status(200).json({ generations: data, nextOffset: data.length === 20 ? offset + 20 : null })
   } catch {
-    res.status(503).json({ error: '付款狀態暫時無法確認，請稍後查詢原生成紀錄。' })
+    res.status(503).json({ error: '扣點與生成狀態暫時無法確認，請稍後查詢原生成紀錄。' })
   }
 }

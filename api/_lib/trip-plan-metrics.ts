@@ -1,4 +1,4 @@
-import type { Stop, TripPlan } from '../../src/types/trip.js'
+import type { Stop, TripInput, TripPlan } from '../../src/types/trip.js'
 import { getScheduleCapacityMinutes, type TripWindowInput } from './trip-planning-rules.js'
 
 export function getPlanActualDuration(plan: TripPlan) {
@@ -10,6 +10,14 @@ export function getPlanActualDuration(plan: TripPlan) {
 
 export function estimateTransportTotal(stops: Stop[]) {
   return Math.max(stops.length - 1, 0) * 18
+}
+
+// Existing local-fallback assumptions, shared when final routes need re-estimation.
+// This is not a quote or verified admission/menu/transport pricing.
+export function estimatePlanBudget(stops: Stop[], input: Pick<TripInput, 'people'>) {
+  const base = stops.reduce((total, stop) => total + (stop.type === 'food' ? 350 : 120), 0)
+  const people = input.people ?? 2
+  return Math.max(300, Math.round(base * Math.max(1, people / 2)))
 }
 
 export function getMinimumStopCountForLongTrip(input: TripWindowInput) {

@@ -25,7 +25,7 @@ export function PaidGenerationRecovery() {
       const response = await fetch(`/api/trip-generations?offset=${offset}`, {
         headers: { Authorization: `Bearer ${data.session.access_token}` }, cache: 'no-store',
       })
-      if (!response.ok) throw new Error('暫時無法讀取已付款紀錄，請稍後再試。')
+      if (!response.ok) throw new Error('暫時無法讀取已扣點紀錄，請稍後再試。')
       const result = await response.json() as { generations: PaidRow[]; nextOffset: number | null }
       if (ownerRef.current === owner) setSnapshot({ owner, rows: result.generations, next: result.nextOffset })
     } catch (err) { if (ownerRef.current === owner) setError(err instanceof Error ? err.message : '讀取失敗。') }
@@ -41,12 +41,12 @@ export function PaidGenerationRecovery() {
 
   return <div className="empty-record-panel">
     <button type="button" className="secondary-button" disabled={busy} onClick={() => void load()}>
-      查看已付款行程（可免費恢復）
+      查看已扣點行程（可免費恢復）
     </button>
     {error ? <p role="alert">{error}</p> : null}
-    {busy ? <p role="status">正在確認已付款紀錄…</p> : null}
+    {busy ? <p role="status">正在確認已扣點紀錄…</p> : null}
     {visible ? <>
-      {visible.rows.length === 0 ? <p>目前沒有已付款紀錄。</p> : <ul>
+      {visible.rows.length === 0 ? <p>目前沒有已扣點紀錄。</p> : <ul>
         {visible.rows.map(row => <li key={row.generation_id}>
           <button type="button" disabled={busy} onClick={() => void restore(row.generation_id)}>
             恢復 {new Date(row.completed_at).toLocaleString('zh-TW')} 的行程

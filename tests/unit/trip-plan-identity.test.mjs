@@ -98,10 +98,11 @@ test('canonical identity normalization preserves original activity provenance ac
   assert.equal(getOriginalActivityImpact(normalized, normalized.stops).identityChanges, 1)
 })
 
-test('correct or opaque distinct identities use one AI call and all three pass actual final validation', async t => {
+test('correct identities use one AI call; duplicate final routes are disclosed instead of delivered twice', async t => {
   const { response, events, calls, f } = await generate(t, f => [f.plans[2], f.plans[0], f.plans[1]])
   assert.ok(response, JSON.stringify(events))
-  assertStyles(response.plans)
+  assertStyles(response.plans, ['safe', 'balanced'])
+  assert.match(response.warnings.join(' '), /合併顯示/)
   assert.equal(calls.ai.length, 1)
   assert.equal(calls.points, 1) // Mocked RPC, not a real charge.
   for (const plan of response.plans) {
@@ -114,13 +115,13 @@ test('three Explore aliases refill only Safe and Balanced with their own regener
     f => f.plans.map((p, i) => ({ ...p, id: `explore-${i + 1}`, type: 'explore', title: `old-${i}` })),
     (f, ids) => f.plans.filter(p => ids.includes(p.type)).map(p => ({ ...p, title: `new-${p.type}` })))
   assert.ok(response, JSON.stringify(events))
-  assertStyles(response.plans)
+  assertStyles(response.plans, ['safe', 'balanced'])
   assert.equal(response.plans[0].title, 'new-safe')
   assert.equal(response.plans[1].title, 'new-balanced')
-  assert.equal(response.plans[2].title, 'old-0')
+  assert.ok(!response.plans.some(p => p.title === 'old-0'), 'the identical old Explore route is not relabelled or delivered twice')
   assert.equal(calls.ai.length, 3)
   assert.deepEqual(calls.ai.slice(1).map(c => /需重產的方案 ID：([^\n]*)/.exec(c.messages[0].content)[1]), ['safe', 'balanced'])
-  assertStyles(events.filter(e => e.event === 'plan').map(e => e.plan))
+  assertStyles(events.filter(e => e.event === 'plan').map(e => e.plan), ['safe', 'balanced'])
 })
 
 test('missing type uses bounded refill and is never recovered from its ID', async t => {
@@ -128,7 +129,7 @@ test('missing type uses bounded refill and is never recovered from its ID', asyn
     { ...f.plans[0], type: undefined, title: 'must-not-survive' }, f.plans[1], f.plans[2],
   ])
   assert.ok(response, JSON.stringify(events))
-  assertStyles(response.plans)
+  assertStyles(response.plans, ['safe', 'explore'])
   assert.equal(calls.ai.length, 2)
   assert.ok(response.plans.every(p => p.title !== 'must-not-survive'))
 })
@@ -138,7 +139,7 @@ test('unknown and conflicting identities refill the missing style without displa
     { ...f.plans[0], id: 'safe', type: 'balanced' }, { ...f.plans[1], type: 'custom' }, f.plans[2],
   ])
   assert.ok(response, JSON.stringify(events))
-  assertStyles(response.plans)
+  assertStyles(response.plans, ['safe', 'balanced'])
   assert.equal(calls.ai.length, 3)
 })
 
@@ -168,7 +169,7 @@ test('quality retry requests only invalid styles with the correct item count and
     return plans
   })
   assert.ok(response, JSON.stringify(events))
-  assertStyles(response.plans)
+  assertStyles(response.plans, ['safe', 'balanced'])
   assert.equal(calls.ai.length, 2)
   assert.equal(calls.ai[1].response_format.json_schema.schema.properties.plans.minItems, 1)
   assert.equal(calls.ai[1].response_format.json_schema.schema.properties.plans.maxItems, 1)
@@ -217,8 +218,8 @@ test('SSE trailing buffer also canonicalizes identity before frontend partial de
   const { response, events, calls } = await generate(t, f => f.plans.map(p => ({ ...p, id: `${p.type}-1` })),
     undefined, { streamTail: true })
   assert.ok(response, JSON.stringify(events))
-  assertStyles(response.plans)
-  assertStyles(events.filter(e => e.event === 'plan').map(e => e.plan))
+  assertStyles(response.plans, ['safe', 'balanced'])
+  assertStyles(events.filter(e => e.event === 'plan').map(e => e.plan), ['safe', 'balanced'])
   assert.equal(calls.ai.length, 1)
 })
 

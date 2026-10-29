@@ -33,7 +33,7 @@ const api = process.env.CLASSIFICATION_USE_V1_GROUNDING ? await loadV1Delivery()
 const observations = []
 
 for (const tags of [[], ['food_first']]) {
-  test(`complete mocked generation keeps three cultural plans, tags=${tags}`, async t => {
+  test(`complete mocked generation preserves cultural choices and merges duplicate routes, tags=${tags}`, async t => {
     const f = identityFixture()
     f.input.tags = tags
     const culture = f.candidates.allCandidates[0]
@@ -67,7 +67,8 @@ for (const tags of [[], ['food_first']]) {
       calls: { ai: calls.ai.length, routes: calls.routes.length, ...placesCalls }, warnings: result.response.warnings ?? [] }
     observations.push(row)
     t.diagnostic(JSON.stringify(row))
-    assert.deepEqual(result.response.plans.map(p => p.type), ['safe', 'balanced', 'explore'])
+    assert.deepEqual(result.response.plans.map(p => p.type), ['safe', 'balanced'])
+    assert.match(result.response.warnings.join(' '), /探索方案.*合併顯示/)
     assert.equal(calls.ai.length, 1, 'no AI refill needed')
     assert.deepEqual(placesCalls, { search: 12, details: 0 }, 'same fixed request budget as v1')
     assert.equal(calls.routes.length, 8, 'same fixed route request budget as v1')

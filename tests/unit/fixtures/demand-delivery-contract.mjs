@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { assertHonestDeliveryChoices } from './paid-generation-regression-contract.mjs'
 
 export function assertWorkingTreeHandler(row) {
   assert.equal(row.handlerSourceSha256, createHash('sha256')
@@ -54,14 +55,14 @@ export async function assertDemandDelivery(result, fixture) {
 }
 
 export async function assertIntentDelivery(result, fixture, kind) {
-  assert.deepEqual(result.response.plans.map(plan => plan.type), ['safe', 'balanced', 'explore'])
+  assertHonestDeliveryChoices(result.response)
   const states = await assertDemandDelivery(result, fixture)
   const { resolveVisitRequirements } = await import('../../../api/_lib/candidate-ranking-context.ts')
   const expected = states.map(() => Object.fromEntries(resolveVisitRequirements(fixture.input).map(item => [item.theme, 'satisfied'])))
-  if (kind === 'uncertain') ['unknown', 'unmet', 'unknown'].forEach((value, i) => { expected[i].culture = value })
+  if (kind === 'uncertain') result.response.plans.forEach((plan, i) => { expected[i].culture = plan.type === 'balanced' ? 'unmet' : 'unknown' })
   if (kind === 'illegal-culture') expected.forEach(value => { value.culture = 'unmet' })
-  if (kind === 'unexposed') expected[0].coffee = 'unmet'
-  if (kind === 'three-themes') { expected[0].coffee = 'unmet'; expected[1].coffee = 'unmet' }
+  if (kind === 'unexposed') result.response.plans.forEach((plan, i) => { if (plan.type === 'safe') expected[i].coffee = 'unmet' })
+  if (kind === 'three-themes') result.response.plans.forEach((plan, i) => { if (plan.type !== 'explore') expected[i].coffee = 'unmet' })
   assert.deepEqual(states, expected, `${kind}: fixed bodies have explicit demand outcomes, not blanket permission to differ`)
   if (kind === 'unexposed') assert.match(result.response.warnings.find(value => value.includes('咖啡廳')), /^保守方案：/)
   if (kind === 'three-themes') assert.match(result.response.warnings.find(value => value.includes('咖啡廳')), /^保守方案、平衡方案：/)

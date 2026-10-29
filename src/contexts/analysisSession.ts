@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
 import type { Stop, TransportSegment, TripPlan, TripInput } from '../types/trip'
 import type { PartialTripPlan } from '../services/ai/types'
+import type { GenerationPreview } from '../services/ai/generationPreview.js'
 import type { NearbyPlaceCandidates } from '../../api/_lib/google-places'
 
 export type AnalysisSessionStatus = 'analyzing' | 'success' | 'error'
@@ -9,6 +10,7 @@ export type AnalysisSession = {
   generationId?: string
   userId?: string
   progressStyles?: TripPlan['type'][]
+  previews?: GenerationPreview[]
   status: AnalysisSessionStatus
   input: TripInput
   startedAt: number

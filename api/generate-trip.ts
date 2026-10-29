@@ -7,9 +7,11 @@ import { claimGeneration, createGenerationStore, generationInput, isGenerationId
 import { appendFileSync } from 'node:fs'
 import { buildTripPrompt, buildRetryTripSkeletonPrompt, parseTripPlanSkeletonResponse } from '../src/services/ai/tripPlanPrompt.js'
 import { getTripPlanStyleLabel, normalizeTripPlanIdentity, normalizeTripPlanIdentities } from '../src/services/ai/tripPlanIdentity.js'
+import { createGenerationPreviewProjector } from '../src/services/ai/generationPreview.js'
 import { getMealSuitabilityRank, MEAL_SUITABILITY_PROMPT_RULE } from '../src/services/ai/mealSuitability.js'
 import { compareOriginalActivities, getActivityPurpose } from './_lib/trip-activity-purpose.js'
 import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
+import { finalizeDeliveryChoices } from './_lib/trip-delivery-coherence.js'
 import { buildIntentCandidateGrounding } from './_lib/trip-intent-candidate-grounding.js'
 import { assessVisitRequirements, filterDemandCandidates, getForbiddenVisitIssues,
   getVisitRequirementWarnings, getVisitRequirementContentText, preservesCoreVisitRequirements,
@@ -79,6 +81,7 @@ import {
 } from './_lib/trip-planning-rules.js'
 import {
   estimateTransportTotal,
+  estimatePlanBudget,
   getDefaultStopDuration,
   getMaximumStopDuration,
   getMinimumStopDuration,
@@ -234,7 +237,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
     if (claim.outcome !== 'claimed' || !isGenerationId(claim.attemptToken)) throw new Error('Invalid claim')
     attemptToken = claim.attemptToken
   } catch {
-    res.status(503).json({ error: '付款狀態暫時無法確認，請稍後查詢原生成編號。' })
+    res.status(503).json({ error: '扣點與生成狀態暫時無法確認，請稍後查詢原生成編號。' })
     return
   }
 
@@ -272,7 +275,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
         const saved = await readGeneration(store, auth.userId, generationId)
         if (saved?.status === 'completed' && saved.response) return saved.response
         recordEvidencePoints('rpc_failed', ANALYSIS_COST)
-        throw new Error('付款與保存尚未確認，請使用原生成編號恢復；不會交付未付款行程。')
+        throw new Error('扣點與保存尚未確認，請使用原生成編號恢復；不會交付未扣點行程。')
       }
     })
   } catch {
@@ -394,6 +397,7 @@ async function runTripGeneration(req: VercelRequest, res: VercelResponse, reques
   res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8')
   res.setHeader('X-Accel-Buffering', 'no')
 
+  const projectGenerationPreview = createGenerationPreviewProjector()
   const writeEvent = (event: Record<string, unknown>) => {
     req.signal?.throwIfAborted()
     res.write(`${JSON.stringify(event)}\n`)
@@ -513,7 +517,7 @@ async function runTripGeneration(req: VercelRequest, res: VercelResponse, reques
 
           upsertValidatedPlan(validatedPlans, validatedPlan)
           if (!getForbiddenVisitIssues(validatedPlan, request.input, nearbyPlaceCandidates).length) {
-            writeEvent({ event: 'progress', style: validatedPlan.type, stage: 'validating' })
+            writeEvent({ event: 'progress', style: validatedPlan.type, stage: 'validating', preview: projectGenerationPreview(validatedPlan) })
           }
         }
       }
@@ -565,7 +569,7 @@ async function runTripGeneration(req: VercelRequest, res: VercelResponse, reques
 
           upsertValidatedPlan(validatedPlans, validatedPlan)
           if (!getForbiddenVisitIssues(validatedPlan, request.input, nearbyPlaceCandidates).length) {
-            writeEvent({ event: 'progress', style: validatedPlan.type, stage: 'validating' })
+            writeEvent({ event: 'progress', style: validatedPlan.type, stage: 'validating', preview: projectGenerationPreview(validatedPlan) })
           }
         }
       }
@@ -989,6 +993,12 @@ async function runTripGeneration(req: VercelRequest, res: VercelResponse, reques
       }
 
       finalResponse.plans = normalizeTripPlanIdentities(finalResponse.plans)
+
+      // Run after every existing repair/refill; do not spend more provider calls
+      // or weaken validation merely to fill an indistinguishable style slot.
+      const choices = finalizeDeliveryChoices(finalResponse.plans, request.input, validatedPlans)
+      finalResponse.plans = choices.plans
+      finalResponse.warnings = [...(finalResponse.warnings ?? []), ...choices.warnings]
 
       const finalPlanIds = new Set(finalResponse.plans.map((plan) => plan.id))
       const unresolvedPlanIds = PLAN_IDS.filter((planId) => !finalPlanIds.has(planId))
@@ -2680,9 +2690,7 @@ function getLocalFallbackPlanTitle(planId: string) {
 }
 
 function estimateLocalFallbackBudget(stops: Stop[], input: GenerateTripPlansRequest['input']) {
-  const base = stops.reduce((total, stop) => total + (stop.type === 'food' ? 350 : 120), 0)
-  const people = input.people ?? 2
-  return Math.max(300, Math.round(base * Math.max(1, people / 2)))
+  return estimatePlanBudget(stops, input)
 }
 
 const SOFT_DIVERSITY_SCORE_TOLERANCE = 6

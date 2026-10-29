@@ -1,5 +1,5 @@
 import test from 'node:test'
-import { paidEventsFromLegacy } from './fixtures/paid-generation-regression-contract.mjs'
+import { assertDeliveryData, assertPaidGenerationEvents } from './fixtures/paid-generation-regression-contract.mjs'
 import assert from 'node:assert/strict'
 import https from 'node:https'
 import { execFileSync } from 'node:child_process'
@@ -301,14 +301,14 @@ for (const scenario of ['positioning', 'missing-balanced', 'tail']) test(`12d11c
     ['--import', './tests/unit/register-ts-js-extension-loader.mjs', './tests/unit/fixtures/coverage-v2-replay.mjs', mode, scenario],
     { cwd: process.cwd(), encoding: 'utf8', timeout: 60000, maxBuffer: 4 * 1024 * 1024 })))
   for (const result of [off, on]) {
-    assert.deepEqual(result.response, baseline.response)
-    assert.deepEqual(result.events, paidEventsFromLegacy(baseline.events))
+    assertDeliveryData(result.response, baseline.response)
+    assertPaidGenerationEvents(result.events, baseline.events, result.response)
     assert.deepEqual(result.calls, baseline.calls)
   }
-  assert.equal(on.coverageFinal.length, 3)
+  assert.equal(on.coverageFinal.length, on.response.plans.length)
   assert.ok(on.coverageFinal.every(item => item.shadow !== null))
   assert.ok(on.coverageFinal.every(item => item.shadow.search.length > 0))
-  assert.equal(on.persistedCoverageV2.final.length, 3)
+  assert.equal(on.persistedCoverageV2.final.length, on.response.plans.length)
   assert.equal(on.persistedCoverageV2.projection.incomplete, false,
     JSON.stringify(on.persistedCoverageV2.projection.reasons))
   for (const [index, memory] of on.coverageFinal.entries()) {
