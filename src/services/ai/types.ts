@@ -1,4 +1,5 @@
 import type { TripInput, TripPlan, TransportMode } from '../../types/trip'
+import type { GenerationPreview } from './generationPreview.js'
 
 export type PartialTripPlan = Partial<TripPlan> & {
   type?: TripPlan['type']
@@ -25,6 +26,7 @@ export type GenerateTripPlansRequest = {
   onPlan?: (plan: PartialTripPlan) => void
   onWarning?: (message: string) => void
   onProgress?: (style: TripPlan['type']) => void
+  onPreview?: (preview: GenerationPreview) => void
 }
 
 export type GenerateTripPlansResponse = {

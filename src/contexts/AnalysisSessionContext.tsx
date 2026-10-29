@@ -5,6 +5,7 @@ import { useAuth } from './auth'
 import { getPaidGeneration } from '../services/ai/proxyTripPlanner'
 import { loadAnalysisSession, saveAnalysisSession, clearStoredAnalysisSession, isExpiredSession, getGenerationId } from '../services/ai/generationSessionStorage'
 import { supabase } from '../services/auth/supabaseClient'
+import { upsertGenerationPreview } from '../services/ai/generationPreview.js'
 import {
   saveRecentGeneratedRecords,
   updateStoredTripRecordById,
@@ -89,6 +90,15 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
         input,
         accessToken: token,
         signal: controller.signal,
+        onPreview: (preview) => {
+          if (requestId !== requestIdRef.current) return
+          setSession(current => {
+            if (!current || current.status !== 'analyzing') return current
+            const nextState = { ...current, previews: upsertGenerationPreview(current.previews ?? [], preview), updatedAt: getTimestamp() }
+            saveAnalysisSession(nextState)
+            return nextState
+          })
+        },
         onProgress: (style) => {
           if (requestId !== requestIdRef.current) return
           setSession((current) => {
@@ -201,7 +211,7 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     if (!userId || !accessToken) throw new Error('請先登入。')
     const saved = await getPaidGeneration(id, accessToken)
     if (requestId !== requestIdRef.current) return
-    if (saved.status !== 'completed' || !saved.response || !saved.input) throw new Error('這筆行程尚未付款完成。')
+    if (saved.status !== 'completed' || !saved.response || !saved.input) throw new Error('這筆行程尚未扣點完成。')
     saveGeneratedPlans(saved.response.plans, saved.input, userId)
     setAndStoreSession({ generationId: id, userId, input: saved.input, status: 'success',
       startedAt: getTimestamp(), updatedAt: getTimestamp(), lastRoute: '/results', warnings: saved.response.warnings })

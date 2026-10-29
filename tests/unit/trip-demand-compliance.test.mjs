@@ -4,6 +4,7 @@ import https from 'node:https'
 import { intentGroundingFixture } from './fixtures/intent-candidate-grounding.mjs'
 import { mockGeneration, runHandler } from './fixtures/plan-identity.mjs'
 import { durationQualityFixture, mockDurationQuality } from './fixtures/stop-duration-quality.mjs'
+import { assertHonestDeliveryChoices, deliveryDisclosure } from './fixtures/paid-generation-regression-contract.mjs'
 
 Object.assign(process.env, { NODE_ENV: 'production', TRIP_CANDIDATE_DEBUG: 'false',
   GOOGLE_PLACES_API_KEY: 'unit-test-only', OPENAI_API_KEY: 'unit-test-only',
@@ -99,6 +100,9 @@ async function generate(t, f, preferenceEvents = []) {
   }
   const result = await runHandler(api.default, f)
   assert.ok(result.response, JSON.stringify(result.events))
+  const nightAlternative = f.input.customCategory === '想參觀博物館'
+    && f.candidates.allCandidates.some(candidate => candidate.placeId === 'night-art')
+  assertHonestDeliveryChoices(result.response, nightAlternative ? ['safe'] : ['safe', 'balanced'])
   return { plans: result.response.plans, warnings: result.response.warnings ?? [], calls, events: result.events }
 }
 
@@ -110,10 +114,10 @@ for (const text of ['不喝咖啡', '想去咖啡廳，但不喝咖啡', '如果
   assert.equal(resolveCandidateRankingContext({ ...fixture().input, customCategory: text }).avoidCoffee, false)
 })
 
-test('Q2: existing museum candidates can replace a missing visit in all three lawful styles, without AI retry', async t => {
+test('Q2: existing museum candidates repair lawful choices without AI retry or duplicate delivery', async t => {
   const f = fixture(), original = structuredClone(f.aiPlans)
   const { plans, calls, warnings } = await generate(t, f)
-  assert.deepEqual(plans.map(plan => plan.type), ['safe', 'balanced', 'explore'])
+  assert.deepEqual(plans.map(plan => plan.type), ['safe', 'balanced'])
   for (const plan of plans) {
     assert.deepEqual(demand.assessVisitRequirements(plan, f.input).map(item => [item.label, item.status]),
       [['博物館', 'satisfied'], ['美術展覽', 'satisfied']])
@@ -128,7 +132,7 @@ test('Q2: existing museum candidates can replace a missing visit in all three la
   }
   assert.deepEqual(f.aiPlans, original)
   assert.equal(calls.ai.length, 1)
-  assert.deepEqual(warnings, [])
+  assert.deepEqual(warnings.filter(warning => !deliveryDisclosure(warning)), [])
 })
 
 test('Q2 museum-only: replace the omitted book visit while retaining park, lunch, stays and actual routes', async t => {
@@ -149,12 +153,12 @@ test('Q2 museum-only: replace the omitted book visit while retaining park, lunch
     assert.equal(plan.totalTime, before.totalTime)
     assert.deepEqual(await api.getDeliveryPlanIssues(plan, f.input, 'Q2-one-gap'), [])
   }
-  assert.deepEqual(warnings, [])
+  assert.deepEqual(warnings.filter(warning => !deliveryDisclosure(warning)), [])
 })
 
 test('Q3: all delivered styles exclude confirmed cafes, including diversity replacement and fallback paths', async t => {
   const f = fixture('Q3'), { plans, calls, events } = await generate(t, f)
-  assert.equal(plans.length, 3)
+  assert.equal(plans.length, 2)
   for (const plan of plans) {
     assert.deepEqual(demand.getForbiddenVisitIssues(plan, f.input), [])
     assert.ok(!plan.stops.some(stop => demand.isConfirmedCafe(demand.visitVenue(stop))))
@@ -172,13 +176,13 @@ test('Q3: all delivered styles exclude confirmed cafes, including diversity repl
   assert.equal(calls.ai.length, 1)
 })
 
-test('a cafe visit with no coffee drinking remains available in all three styles', async t => {
+test('a cafe visit with no coffee drinking remains available in the distinct delivered choices', async t => {
   const f = fixture('Q3')
   f.input.customCategory = '想去咖啡廳，但不喝咖啡'
   const { plans, warnings, calls } = await generate(t, f)
-  assert.equal(plans.length, 3)
+  assert.equal(plans.length, 2)
   assert.ok(plans.every(plan => demand.assessVisitRequirements(plan, f.input)[0].status === 'satisfied'))
-  assert.deepEqual(warnings, [])
+  assert.deepEqual(warnings.filter(warning => !deliveryDisclosure(warning)), [])
   assert.equal(calls.ai.length, 1)
 })
 
@@ -191,7 +195,7 @@ test('culture and cafe repair protects lunch and the already fulfilled theme, de
     assert.ok(plan.stops.some(stop => stop.googleTypes?.includes('restaurant')))
     assert.deepEqual(await api.getDeliveryPlanIssues(plan, f.input, 'mixed-final'), [])
   }
-  assert.deepEqual(warnings, [])
+  assert.deepEqual(warnings.filter(warning => !deliveryDisclosure(warning)), [])
 })
 
 test('museum and art exhibition clauses are checked separately; a museum alone is partial fulfillment', () => {
@@ -228,7 +232,7 @@ test('an impossible confirmed prohibition is not cancelled by repair fallback', 
 
 test('Q6: missing cultural evidence keeps lawful night alternatives and truthful warnings', async t => {
   const f = fixture('Q6'), { plans, warnings, calls } = await generate(t, f)
-  assert.equal(plans.length, 3)
+  assert.equal(plans.length, 2)
   for (const plan of plans) {
     const assessment = demand.assessVisitRequirements(plan, f.input)[0]
     assert.equal(assessment.status, 'unmet')
@@ -237,14 +241,14 @@ test('Q6: missing cultural evidence keeps lawful night alternatives and truthful
     assert.ok(plan.stops.every(stop => !stop.googleTypes?.includes('museum')))
     assert.deepEqual(await api.getDeliveryPlanIssues(plan, f.input, 'Q6-final'), [])
   }
-  assert.deepEqual(warnings, ['所有方案：未安排可確認符合「博物館」需求的活動；已保留其他可用活動，目前無法確認是否另有合適地點。'])
+  assert.deepEqual(warnings.filter(warning => !deliveryDisclosure(warning)), ['所有方案：未安排可確認符合「博物館」需求的活動；已保留其他可用活動，目前無法確認是否另有合適地點。'])
   assert.equal(calls.ai.length, 1)
 })
 
 test('Q6: a verified cultural-space alternative is distinct from a museum visit', async t => {
   const f = fixture('Q6-related'), { plans, warnings, calls } = await generate(t, f)
   for (const plan of plans) assert.equal(demand.assessVisitRequirements(plan, f.input)[0].status, 'alternative')
-  assert.ok(warnings.every(warning => warning.includes('替代')))
+  assert.ok(warnings.filter(warning => !deliveryDisclosure(warning)).every(warning => warning.includes('替代')))
   assert.equal(calls.ai.length, 1)
 })
 

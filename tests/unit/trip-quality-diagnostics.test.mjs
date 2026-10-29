@@ -177,7 +177,8 @@ test(`fixed full generation (${scenario}): diagnostics off/on preserve delivery 
     ['--import', './tests/unit/register-ts-js-extension-loader.mjs', './tests/unit/fixtures/quality-diagnostics-replay.mjs', mode, scenario],
     { cwd: process.cwd(), encoding: 'utf8', timeout: 60000, maxBuffer: 4 * 1024 * 1024 })))
   const [off, on] = outcomes
-  assert.equal(on.response.plans.length, 3)
+  assert.equal(on.response.plans.length, scenario === 'missing-balanced' ? 2 : 3)
+  if (scenario === 'missing-balanced') assert.ok(on.response.warnings.some(warning => warning.includes('合併顯示')))
   assert.deepEqual(on.response, off.response)
   assert.deepEqual(on.events, off.events)
   assert.deepEqual(on.calls, off.calls)

@@ -24,6 +24,7 @@ import {
   type UserProfile,
 } from '../services/points/pointsService'
 import { AppSelect, type AppSelectOption } from '../components/ui/AppSelect'
+import { GenerationPreviewContent } from '../components/GenerationPreviewContent'
 import mascotError from '../assets/mascot/mascot-error.webp'
 import mascotMapReference from '../assets/mascot/mascot-map-reference.webp'
 import homeDurationTitleArt from '../assets/mascot/home-duration-title-art.png'
@@ -680,7 +681,7 @@ export function HomePage() {
   async function handleCancelAnalysis() {
     const confirmed = await dialog.confirm({
       title: '取消分析',
-      message: '確定取消等待嗎？若付款已完成，仍可從最近生成免費恢復行程。',
+      message: '確定取消等待嗎？若行程已完成並扣點，仍可從最近生成恢復，不會再次扣點。',
       confirmLabel: '確認取消',
     })
 
@@ -747,7 +748,7 @@ export function HomePage() {
                 />
                 <div className="analysis-progress-panel">
                   <div className="analysis-progress-meta">
-                    <span>已整理 {completedCount} / {totalCount} 個方案，正在驗證與確認付款</span>
+                    <span>已整理 {completedCount} / {totalCount} 個初步方案，正在檢查站點與路線</span>
                     <strong>{percent}%</strong>
                   </div>
                   <div className="analysis-progress-track">
@@ -762,6 +763,7 @@ export function HomePage() {
               <ul className="analysis-plan-list">
                 {planSlotLabels.map((slotLabel, index) => {
                   const isReady = progressStyles.includes((['safe', 'balanced', 'explore'] as const)[index])
+                  const preview = session?.previews?.find(value => value.type === (['safe', 'balanced', 'explore'] as const)[index])
                   const isGenerating = !isReady && index === completedCount
 
                   return (
@@ -796,9 +798,7 @@ export function HomePage() {
                       </div>
 
                       {isReady ? (
-                        <div className="analysis-plan-content">
-                          <p>方案整理中，完成驗證及付款後即可查看完整行程。</p>
-                        </div>
+                        <GenerationPreviewContent preview={preview} />
                       ) : (
                         <div className="analysis-plan-skeleton" aria-hidden="true">
                           <span className="analysis-skeleton-dot" />
@@ -825,7 +825,7 @@ export function HomePage() {
           )}
 
           {analysisError ? (
-            <p className="analysis-no-charge-note">請重試原生成紀錄以確認付款狀態；已付款行程可從最近生成恢復。</p>
+            <p className="analysis-no-charge-note">請重試原生成紀錄以確認扣點與生成狀態；已扣點行程可從最近生成恢復，不會再次扣點。</p>
           ) : null}
 
           {analysisError ? (

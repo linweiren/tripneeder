@@ -108,6 +108,7 @@ export type TripPlan = {
   summary: string
   totalTime: number
   budget: number
+  budgetEstimateNote?: string
   transportMode: TransportMode
   stops: Stop[]
   transportSegments: TransportSegment[]

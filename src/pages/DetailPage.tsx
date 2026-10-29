@@ -930,7 +930,7 @@ export function DetailPage() {
             <Wallet />
           </span>
           <div className="detail-metric-spacer" aria-hidden="true" />
-          <dd>約 NT$ {selectedPlan.budget.toLocaleString('zh-TW')}</dd>
+          <dd>約 NT$ {selectedPlan.budget.toLocaleString('zh-TW')}{selectedPlan.budgetEstimateNote ? <small style={{ display: 'block' }}>{selectedPlan.budgetEstimateNote}</small> : null}</dd>
         </div>
         <div className="detail-metric-card metric-transport-card">
           <dt>交通方式</dt>

@@ -109,7 +109,7 @@ function PlanCard({
     {
       icon: <Clock aria-hidden="true" />,
       label: '總時間',
-      value: formatMinutes(actualDuration),
+      value: `${formatMinutes(actualDuration)}${plan.scheduleStartTime ? `（${plan.scheduleStartTime} 出發）` : ''}`,
     },
     {
       icon: <Wallet aria-hidden="true" />,
@@ -157,7 +157,7 @@ function PlanCard({
               {previewStops.map((stop, index) => (
                 <li key={`${plan.id}-${stop.id || stop.name}`}>
                   <span className="stop-preview-index">{index + 1}</span>
-                  <span>{stop.name}</span>
+                  <span>{stop.name}（停留 {stop.duration} 分鐘）</span>
                 </li>
               ))}
             </ol>
@@ -176,6 +176,7 @@ function PlanCard({
               </div>
             ))}
           </dl>
+          {plan.budgetEstimateNote ? <small style={{ display: 'block' }}>{plan.budgetEstimateNote}</small> : null}
         </div>
       </div>
     </article>

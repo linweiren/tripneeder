@@ -123,7 +123,7 @@ export function TripRecordList({
             <div className="history-info-item">
               <MetricIcon type="wallet" />
               <dt>預算</dt>
-              <dd>約 NT$ {record.plan.budget.toLocaleString('zh-TW')}</dd>
+              <dd>約 NT$ {record.plan.budget.toLocaleString('zh-TW')}{record.plan.budgetEstimateNote ? <small style={{ display: 'block' }}>{record.plan.budgetEstimateNote}</small> : null}</dd>
             </div>
             <div className="history-info-item">
               <MetricIcon type="vehicle" />

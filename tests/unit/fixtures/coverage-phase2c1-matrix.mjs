@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { CASES, HANDLER_CASES } from './coverage-experiment-cases.mjs'
-import { paidEventsFromLegacy } from './paid-generation-regression-contract.mjs'
+import { assertDeliveryData, assertPaidGenerationEvents } from './paid-generation-regression-contract.mjs'
 
 const canonical = value => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])) : value
@@ -51,14 +51,16 @@ export function runCoverageMatrix({writeReport=false,progress=false,contractFile
     const expected=contract.handlers.find(row=>row.kind===kind&&row.mode===mode)
     assert.ok(expected,`Required handler contract missing: ${kind}/${mode}`)
     // Keep the frozen research contract intact. Compare a read-only pre-change
-    // handler to it, then permit ONLY the explicitly approved payment event delta.
+    // handler to it, then permit only the explicit paid/safe-preview/final-choice delta.
     const beforePaid = replay(mode,kind,'explore','handler-before-paid')
     assert.equal(contractHash(beforePaid,contract.handlerFields),expected.formalSha256,
       `Frozen pre-payment handler drift ${kind}/${mode}`)
     for (const field of contract.handlerFields.filter(field=>field!=='events')) {
-      assert.deepEqual(fresh[field],beforePaid[field],`Handler quality/provider drift ${field}/${kind}/${mode}`)
+      if (field === 'response') assertDeliveryData(fresh[field], beforePaid[field])
+      else if (field === 'delivered') assert.deepEqual(fresh.delivered, fresh.response?.plans.map(plan=>plan.type) ?? [])
+      else assert.deepEqual(fresh[field],beforePaid[field],`Handler quality/provider drift ${field}/${kind}/${mode}`)
     }
-    assert.deepEqual(fresh.events,paidEventsFromLegacy(beforePaid.events),`Paid event boundary drift ${kind}/${mode}`)
+    assertPaidGenerationEvents(fresh.events, beforePaid.events, fresh.response)
     handlers.push({kind,mode,matched:true,responseSha256:hash(JSON.stringify(fresh.response)),
       eventsSha256:hash(JSON.stringify(fresh.events)),delivered:fresh.delivered,
       aiCalls:fresh.aiCalls,routes:fresh.routes,places:fresh.places,retry:fresh.retry,refill:fresh.refill})
