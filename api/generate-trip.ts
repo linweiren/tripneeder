@@ -3855,8 +3855,8 @@ export function selectSupplementalCandidate(
   candidatePool: VerifiedPlaceCandidate[],
   usedPlaceIds: Set<string>,
   estimatedArrivalMinutes: number,
-  _rotationOffset = 0,
-  crossPlanUsedPlaceIds: Set<string> = new Set(),
+  // Preserve the legacy fourth argument slot; diversity still uses the fifth.
+  ...[, crossPlanUsedPlaceIds = new Set<string>()]: [rotationOffset?: number, crossPlanUsedPlaceIds?: Set<string>]
 ) {
   const unusedCandidates = candidatePool.filter((candidate) => {
     if (usedPlaceIds.has(candidate.placeId)) return false

@@ -12,6 +12,12 @@ type Attempt = { id: number; stage: Stage; targets: string[]; httpStatus: number
   usage: Record<string, number> | 'unknown' }
 type ResponseSink = { write: (chunk: string) => void; json: (body: unknown) => void;
   status: (status: number) => unknown; end: () => void }
+// Shape consumed by the projections; provider values retain the runtime checks below.
+type EvidenceObject = Record<string, unknown> & {
+  id?: string; type?: string; duration?: number;
+  messages?: Array<{ content?: unknown }>;
+  plans?: EvidenceObject[]; stops?: unknown[]; rainBackup?: unknown[]; results?: unknown[];
+}
 type Context = { id: string; startedAt: string; manifest: object; prompts: object[]; attempts: Attempt[];
   responses: WeakMap<object, number>; versions: WeakMap<object, Version>; latestAttempt: number | null;
   decisions: object[]; final: unknown; finalVersions: Array<Version & { rawPlanIndex: number | null }>;
@@ -22,7 +28,7 @@ const scope = new AsyncLocalStorage<Context>()
 const types = ['safe', 'balanced', 'explore']
 const LIMIT = { attempts: 12, calls: 512, decisions: 256, plans: 12, stops: 40, text: 262144, file: 2 * 1024 * 1024 }
 const hash = (text: string) => createHash('sha256').update(text).digest('hex')
-const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+const object = (value: unknown): EvidenceObject => value && typeof value === 'object' && !Array.isArray(value) ? value as EvidenceObject : {}
 const id = (value: unknown) => typeof value === 'string' && /^[\w-]{1,200}$/.test(value) ? value : null
 const short = (value: unknown, max = 240) => typeof value === 'string' ? value.slice(0, max) : null
 const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null
@@ -135,14 +141,14 @@ export async function evidenceAiFetch(stage: Stage, targets: readonly string[], 
 function attemptFor(c: Context, response: object) { return c.attempts.find(a => a.id === c.responses.get(response)) }
 function projectRawPlan(value: unknown, index: number) {
   const plan = object(value), reasons: string[] = []
-  if (typeof plan.id !== 'string' || !plan.id.trim() || !types.includes(plan.type) || types.includes(plan.id) && plan.id !== plan.type) reasons.push('invalid_identity')
+  if (typeof plan.id !== 'string' || !plan.id.trim() || !types.includes(plan.type ?? '') || types.includes(plan.id) && plan.id !== plan.type) reasons.push('invalid_identity')
   else if (!id(plan.id)) reasons.push('identity_projection_omitted')
   if (!Array.isArray(plan.stops) || !plan.stops.length) reasons.push('missing_stops')
   const seen = new Set<string>()
   const stops = (Array.isArray(plan.stops) ? plan.stops : []).slice(0, LIMIT.stops).map((value: unknown, order: number) => {
-    const stop = object(value), stopId = id(stop.id)
+    const stop = object(value), stopId = id(stop.id), duration = number(stop.duration)
     if (typeof stop.id !== 'string' || !stop.id.trim() || typeof stop.placeId !== 'string' || !stop.placeId.trim()
-      || number(stop.duration) === null || stop.duration <= 0) reasons.push('invalid_stop')
+      || duration === null || duration <= 0) reasons.push('invalid_stop')
     if ((typeof stop.id === 'string' && !stopId) || (typeof stop.placeId === 'string' && !id(stop.placeId))) reasons.push('identity_projection_omitted')
     if (stopId && seen.has(stopId)) reasons.push('duplicate_stop_id')
     if (stopId) seen.add(stopId)
@@ -157,7 +163,7 @@ export function recordRawAiPlan(response: object, value: unknown) {
   observe(c => {
     const attempt = attemptFor(c, response)
     if (!attempt) return
-    if (object(value).stops?.length > LIMIT.stops) c.incomplete.add('raw_projection_truncated')
+    if ((object(value).stops?.length ?? 0) > LIMIT.stops) c.incomplete.add('raw_projection_truncated')
     if (attempt.plans.length < LIMIT.plans) {
       const projected = projectRawPlan(value, attempt.plans.length)
       attempt.plans.push(projected)
@@ -172,12 +178,12 @@ export function recordAiModelText(response: object, text: unknown) {
     if (!attempt) return
     if (typeof text !== 'string') { attempt.parseStatus = 'failed'; attempt.reasons.push('invalid_model_envelope'); return }
     if (Buffer.byteLength(text) > LIMIT.text) { attempt.parseStatus = 'not_captured'; c.incomplete.add('model_content_limit'); return }
-    let raw: Record<string, any>
+    let raw: EvidenceObject
     try { raw = object(JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1))) }
     catch { attempt.parseStatus = 'failed'; attempt.reasons.push('invalid_json'); return }
     attempt.parseStatus = Array.isArray(raw.plans) ? 'parsed' : 'failed'
     if (!Array.isArray(raw.plans)) { attempt.reasons.push('invalid_format'); return }
-    if (raw.plans.length > LIMIT.plans || raw.plans.some((p: any) => p?.stops?.length > LIMIT.stops)) c.incomplete.add('raw_projection_truncated')
+    if (raw.plans.length > LIMIT.plans || raw.plans.some((p: EvidenceObject) => (p?.stops?.length ?? 0) > LIMIT.stops)) c.incomplete.add('raw_projection_truncated')
     attempt.plans = raw.plans.slice(0, LIMIT.plans).map(projectRawPlan)
     if (attempt.plans.some(p => p.reasons.includes('identity_projection_omitted'))) c.incomplete.add('identity_projection_omitted')
     const seen = new Set<string>()
@@ -192,8 +198,11 @@ export function recordAiUsage(response: object, data: unknown) {
   observe(c => {
     const attempt = attemptFor(c, response), raw = object(object(data).usage)
     if (!attempt) return
-    const usage = Object.fromEntries(['prompt_tokens', 'completion_tokens', 'total_tokens', 'input_tokens', 'output_tokens']
-      .filter(key => number(raw[key]) !== null && raw[key] >= 0).map(key => [key, raw[key]]))
+    const usage: Record<string, number> = {}
+    for (const key of ['prompt_tokens', 'completion_tokens', 'total_tokens', 'input_tokens', 'output_tokens']) {
+      const count = number(raw[key])
+      if (count !== null && count >= 0) usage[key] = count
+    }
     if (Object.keys(usage).length) attempt.usage = usage // Numeric counts only; never token strings or credentials.
   })
 }
@@ -205,14 +214,14 @@ export function recordAiStreamUsage(response: object, event: string) {
 }
 export function bindEvidencePlan(response: object, plan: object) {
   observe(c => { const attempt = attemptFor(c, response), type = object(plan).type
-    if (attempt && types.includes(type)) c.versions.set(plan, { attempt: attempt.id, type }) })
+    if (attempt && typeof type === 'string' && types.includes(type)) c.versions.set(plan, { attempt: attempt.id, type }) })
 }
 export function carryEvidencePlan(source: object, target: object) {
   observe(c => { const version = c.versions.get(source); if (version && !c.versions.has(target)) c.versions.set(target, version) })
 }
 export function getEvidencePlanVersion(plan: object) { return scope.getStore()?.versions.get(plan) ?? null }
-export function bindLocalEvidencePlan(plan: object) {
-  observe(c => { c.versions.set(plan, { attempt: 0, type: object(plan).type }) })
+export function bindLocalEvidencePlan(plan: { type: string }) {
+  observe(c => { c.versions.set(plan, { attempt: 0, type: object(plan).type! }) })
 }
 export function recordEvidencePlanDecision(plan: object, decision: string, reasons: string[] = []) {
   observe(c => {
@@ -222,7 +231,7 @@ export function recordEvidencePlanDecision(plan: object, decision: string, reaso
     c.latestAttempt = previous
   })
 }
-export function recordEvidenceDecision(planId: string, decision: string, reasons: string[] = []) {
+export function recordEvidenceDecision(planId: unknown, decision: string, reasons: string[] = []) {
   observe(c => {
     if (c.decisions.length >= LIMIT.decisions) { c.incomplete.add('decisions_truncated'); return }
     c.decisions.push({ sequence: ++c.sequence, attemptId: c.latestAttempt, planId: id(planId), decision,
@@ -244,7 +253,7 @@ export function captureAcceptanceDiagnostics(report: unknown) {
   // root fields. There is no second stage collector.
   observe(c => {
     const raw = object(report), queries = object(raw.queryLayer), quality = object(raw.qualityDiagnostics)
-    const pick = (value: Record<string, any>, keys: string[]) => Object.fromEntries(keys
+    const pick = (value: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys
       .filter(key => value[key] !== undefined).map(key => [key, value[key]]))
     const coverageV2 = raw.coverageV2 === undefined ? undefined : projectCoverageDiagnostics(raw.coverageV2)
     if (coverageV2?.projection.incomplete) c.incomplete.add('coverage_v2_projection_incomplete')
@@ -287,7 +296,7 @@ function projectFinal(response: unknown) {
   const legs = (value: unknown) => (Array.isArray(value) ? value : []).slice(0, LIMIT.stops)
     .map(leg => pick(leg, ['fromStopId', 'toStopId', 'mode', 'duration', 'publicTransitType']))
   return { sha256: hash(JSON.stringify(response)), representation: 'public_plan_allowlist',
-    plans: (Array.isArray(raw.plans) ? raw.plans : []).slice(0, LIMIT.plans).map((p: any) => ({
+    plans: (Array.isArray(raw.plans) ? raw.plans : []).slice(0, LIMIT.plans).map((p: EvidenceObject) => ({
       ...pick(p, ['id', 'type', 'title', 'subtitle', 'summary', 'totalTime', 'budget', 'transportMode', 'scheduleStartTime']),
       stops: stops(p.stops), transportSegments: legs(p.transportSegments), rainBackup: stops(p.rainBackup), rainTransportSegments: legs(p.rainTransportSegments),
     })) }
@@ -297,7 +306,7 @@ export function recordEvidenceDelivery(value: unknown) {
     const event = object(value)
     if (event.event !== 'done') return
     const plans = object(event.response).plans
-    if (Array.isArray(plans) && (plans.length > LIMIT.plans || plans.some(p => p?.stops?.length > LIMIT.stops || p?.rainBackup?.length > LIMIT.stops))) c.incomplete.add('final_projection_truncated')
+    if (Array.isArray(plans) && (plans.length > LIMIT.plans || plans.some(p => (p?.stops?.length ?? 0) > LIMIT.stops || (p?.rainBackup?.length ?? 0) > LIMIT.stops))) c.incomplete.add('final_projection_truncated')
     c.final = projectFinal(event.response)
     for (const plan of object(event.response).plans ?? []) {
       const version = c.versions.get(plan)
