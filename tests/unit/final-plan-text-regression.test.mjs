@@ -77,7 +77,9 @@ test('HEAD comparison: only proven stale text changes; itinerary data and non-in
     const authCalls = row.calls.filter(call => call.url === 'https://unit-test.supabase.co/auth/v1/user')
     assert.equal(authCalls.length, 1, 'Details now verify the session once before any paid call')
     assert.equal(authCalls[0].init.method, 'GET')
-    assert.deepEqual(row.calls.filter(call => call.url !== 'https://unit-test.supabase.co/auth/v1/user'), old.calls)
+    const rateCalls = row.calls.filter(call => call.url.endsWith('/consume_api_rate_limit'))
+    assert.equal(rateCalls.length, 2, 'Only the explicit IP/user quota checks are added')
+    assert.deepEqual(row.calls.filter(call => call.url !== 'https://unit-test.supabase.co/auth/v1/user' && !call.url.endsWith('/consume_api_rate_limit')), old.calls)
     assert.deepEqual(textless(row.plan), textless(old.plan))
     if (row.kind === 'merged-main') assert.deepEqual(row.plan, old.plan)
     else {

@@ -163,6 +163,7 @@ export function FavoritesPage() {
             emptyTitle="還沒有收藏任何方案呢"
             source="favorites"
             onRemove={(recordId) => void handleRemove(recordId)}
+            onShare
           />
         ) : null}
       </div>

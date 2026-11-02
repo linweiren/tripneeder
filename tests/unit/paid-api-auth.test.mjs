@@ -138,7 +138,7 @@ for (const name of ['get-candidates', 'geocode', 'recompute-routes']) test(`${na
   if (name === 'get-candidates') assert.ok(res.body.allCandidates.length > 0)
   if (name === 'geocode') {
     assert.equal(geocodingCalls, 1)
-    assert.deepEqual(res.body, { name: '高雄市新興區', address: 'fixture address', country: 'TW' })
+    assert.deepEqual(res.body, { name: '高雄市新興區', address: 'fixture address', country: 'TW', city: '高雄市', lat: undefined, lng: undefined })
   }
   if (name === 'recompute-routes') {
     assert.equal(res.body.transportSegments.length, f.plan.stops.length - 1)

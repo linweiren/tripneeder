@@ -1,0 +1,21 @@
+{
+  "de069c6": {
+    "011_community_trip_sharing.sql": "339050d4063722fbad01a0176827dab6431afe50d8d4395b0db2495c32362766.sql",
+    "012_community_discussions_and_filters.sql": "b551cf295fd0e49830d0a3ca31026d85b4710e7c55223c9b73509ed6b27190e8.sql",
+    "013_community_privacy_controls.sql": "518a2cf8de4c52cf32f27010600a76d63a7a1c91b130ba14ee639a5536d27a4f.sql",
+    "014_shared_trip_access_and_privacy.sql": "b1eeb168e241b9859eb6bdeb0b7f401bac127eda25e584a61febaacbd3d284e7.sql",
+    "015_api_rate_limits.sql": "86ffe702ef9499ee5b7124d493684df60de19df97d73d68ef672f555256845ef.sql",
+    "016_community_hardening_and_pagination.sql": "c02e290472be2176dbe4c6396ba3ef323b720be724ce0a2b2bc030e220b0fec5.sql",
+    "017_shared_trip_validation_and_completion.sql": "6c46f7319b523554a2bfab1ff2ab65e69d9f2c0cdb4bbbdd5676574d5d369316.sql"
+  },
+  "a8ce99c": {
+    "011_community_trip_sharing.sql": "bf54453b365865b9f41f2ce953482a5d428f975771b610044233660ef09c349a.sql",
+    "012_community_discussions_and_filters.sql": "935226a6d9ac7979bae0ceb74d8df687f0cf59fe90df08d7a3c89b1dc7286b19.sql",
+    "013_community_privacy_controls.sql": "9c5340d63b4615cb431291e8cee9ea45da96197dbde5903b19a86af6fc050f27.sql",
+    "014_shared_trip_access_and_privacy.sql": "b1eeb168e241b9859eb6bdeb0b7f401bac127eda25e584a61febaacbd3d284e7.sql",
+    "015_api_rate_limits.sql": "86ffe702ef9499ee5b7124d493684df60de19df97d73d68ef672f555256845ef.sql",
+    "016_community_hardening_and_pagination.sql": "9037a73a4a82b2a6d4b431a17c8f2306880c8c563984a48ddb1cfb3eff612970.sql",
+    "017_shared_trip_validation_and_completion.sql": "6c46f7319b523554a2bfab1ff2ab65e69d9f2c0cdb4bbbdd5676574d5d369316.sql",
+    "018_preserve_shared_interactions_and_transport.sql": "9c8feed39d29622c9868ee7a780fb560b94c793fdf6356791a904c72287dc402.sql"
+  }
+}

@@ -29,10 +29,12 @@ export function paidEventsFromLegacy(events) {
 }
 
 export function withoutPaymentPersistence(calls) {
+  // Auth, fenced persistence and IP/user quota checks are infrastructure. Exact
+  // provider/itinerary comparisons remain intact; quota/recovery has its own test.
   return calls.filter(call => {
     const url = new URL(call.url)
     return !(url.hostname === 'unit-test.supabase.co' && (url.pathname === '/auth/v1/user'
-      || /\/(claim_trip_generation|complete_paid_trip_generation|fail_trip_generation|consume_points_for_analysis|trip_generations)$/.test(url.pathname)))
+      || /\/(claim_trip_generation|complete_paid_trip_generation|fail_trip_generation|consume_points_for_analysis|consume_api_rate_limit|trip_generations)$/.test(url.pathname)))
   }).map(call => {
     if (!call.init) return call
     const { signal: _cancellationSignal, ...init } = call.init

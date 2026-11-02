@@ -113,7 +113,8 @@ test('actual results page announces and renders exactly the delivered number of 
       if (specifier === '../contexts/analysisSession') return { useAnalysisSession: () => ({
         session: { status: 'success', warnings: count < 3 ? ['重複路線已合併顯示'] : [] },
       }) }
-      if (specifier === '../utils/tripPlanStorage') return { loadGeneratedPlans: () => allPlans.slice(0, count) }
+      if (specifier === '../utils/tripPlanStorage') return { loadGeneratedPlans: () => allPlans.slice(0, count), loadLastTripInput: () => null }
+      if (specifier === '../components/community/ShareTripButton') return { ShareTripButton: () => null }
       if (specifier === '../utils/tripTiming') return timing
       if (specifier === '../services/ai/tripPlanIdentity') return identity
       if (specifier.endsWith('.webp')) return 'fixture-image.webp'

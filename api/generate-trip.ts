@@ -60,6 +60,7 @@ import { chooseSupplementalInsertion, createSupplementRouteContext, createRepair
   resolveMealComparisonRoutes, SUPPLEMENT_SIMILAR_SCORE_TOLERANCE,
   hasReusableStaticRouteTimings,
   type SupplementRouteContext } from './_lib/trip-supplement-quality.js'
+import { consumeApiRateLimit, getCoordinateBias, getRequestClientKey, hasValidCoordinatePair, isFiniteCoordinate, isJsonWithinLimit, isRecord, isValidTripLocation } from './_lib/request-guards.js'
 import {
   PLAN_IDS,
   TIMELINE_START_GRANULARITY_MINUTES,
@@ -112,6 +113,8 @@ type VercelRequest = {
   body?: unknown
   headers?: {
     authorization?: string
+    'x-real-ip'?: string
+    'x-forwarded-for'?: string
   }
   signal?: AbortSignal
 }
@@ -248,6 +251,13 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
   res.on?.('close', () => { if (!res.writableEnded) controller.abort() })
   let commitStarted = false
   try {
+    // Completed/running generation recovery returns above without consuming a new quota.
+    // A rejected new attempt releases its fenced lease in the existing finally block.
+    if (await consumeApiRateLimit(`trip-generation:ip:${getRequestClientKey(req)}`, 3, 60_000) !== 'allowed' ||
+      await consumeApiRateLimit(`trip-generation:user:${auth.userId}`, 6, 60_000) !== 'allowed') {
+      res.status(429).json({ error: '行程分析請求過於頻繁，請稍後使用原生成編號重試。' })
+      return
+    }
     const apiKey = process.env.OPENAI_API_KEY
     if (!apiKey) { res.status(500).json({ error: '行程生成服務設定不完整。' }); return }
     const supabase = createUserScopedSupabaseClient(auth.accessToken)
@@ -295,7 +305,7 @@ async function runTripGeneration(req: VercelRequest, res: VercelResponse, reques
   // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
   let locationWarning = ''
   if (
-    (!request.input.location.lat || !request.input.location.lng) &&
+    !hasValidCoordinatePair(request.input.location.lat, request.input.location.lng) &&
     request.input.location.name
   ) {
     console.debug('[trip-location-source]', {
@@ -323,7 +333,7 @@ async function runTripGeneration(req: VercelRequest, res: VercelResponse, reques
   recordEvidenceProfile(persona.stamina, preferenceProfile.sampleCount, (preferenceProfile.foodSubtypeScores.cafe ?? 0) > 0)
 
   // 9D-7: 智慧前置搜尋 (Search-Inject)
-  if (!request.input.location.lat || !request.input.location.lng) {
+  if (!hasValidCoordinatePair(request.input.location.lat, request.input.location.lng)) {
     console.debug('[trip-location-source]', {
       at: new Date().toISOString(),
       source: 'fallback blocked',
@@ -367,8 +377,7 @@ async function runTripGeneration(req: VercelRequest, res: VercelResponse, reques
     return
   }
   if (
-    request.input.location.lat &&
-    request.input.location.lng &&
+    hasValidCoordinatePair(request.input.location.lat, request.input.location.lng) &&
     nearbyPlaceCandidates.firstStopCandidates.length === 0
   ) {
     const message = '目前起點 2 公里內沒有可驗證且營業時間已知的第一站候選，系統不會改用遠方地點硬湊方案。請調整起點、開始時間或拉長行程後再試。'
@@ -610,9 +619,7 @@ async function runTripGeneration(req: VercelRequest, res: VercelResponse, reques
       candidateDebugSession?.recordAiOutput(finalResponse.plans, initialDiagnosticPhase)
 
       for (const plan of finalResponse.plans) {
-        const bias = request.input.location.lat && request.input.location.lng
-          ? { lat: request.input.location.lat, lng: request.input.location.lng }
-          : undefined
+        const bias = getCoordinateBias(request.input.location.lat, request.input.location.lng)
         const groundedPlan = applyCandidateGroundingToPlan(
           plan as TripPlan,
           nearbyPlaceCandidates,
@@ -691,9 +698,7 @@ async function runTripGeneration(req: VercelRequest, res: VercelResponse, reques
 
             for (const plan of retryParsed.plans) {
               if (invalidPlanIds.includes(plan.id)) {
-                const bias = request.input.location.lat && request.input.location.lng
-                  ? { lat: request.input.location.lat, lng: request.input.location.lng }
-                  : undefined
+                const bias = getCoordinateBias(request.input.location.lat, request.input.location.lng)
                 const groundedPlan = applyCandidateGroundingToPlan(
                   plan as TripPlan,
                   nearbyPlaceCandidates,
@@ -840,9 +845,7 @@ async function runTripGeneration(req: VercelRequest, res: VercelResponse, reques
                 )
                 carryEvidencePlan(plan, normalizedRetryPlan)
 
-                const bias = request.input.location.lat && request.input.location.lng
-                  ? { lat: request.input.location.lat, lng: request.input.location.lng }
-                  : undefined
+                const bias = getCoordinateBias(request.input.location.lat, request.input.location.lng)
                 const groundedPlan = applyCandidateGroundingToPlan(
                   normalizedRetryPlan,
                   nearbyPlaceCandidates,
@@ -4691,9 +4694,18 @@ function createNodeHttpsFetch(): typeof fetch {
 }
 
 function parseRequestBody(body: unknown): GenerateTripPlansRequest | null {
-  if (!isRecord(body) || !isRecord(body.input)) {
+  if (!isRecord(body) || !isJsonWithinLimit(body, 16_000) || !isRecord(body.input)) {
     return null
   }
+
+  const input = body.input
+  const location = input.location
+  if (!isValidTripLocation(location) ||
+    typeof input.startTime !== 'string' || input.startTime.length > 10 ||
+    typeof input.endTime !== 'string' || input.endTime.length > 10 ||
+    !Array.isArray(input.tags) || input.tags.length > 10 || !input.tags.every((tag) => typeof tag === 'string' && tag.length <= 40) ||
+    (location.lat !== undefined && !isFiniteCoordinate(location.lat, -90, 90)) ||
+    (location.lng !== undefined && !isFiniteCoordinate(location.lng, -180, 180))) return null
 
   return body as GenerateTripPlansRequest
 }
@@ -4780,10 +4792,6 @@ async function getMergedPersona(
     transportMode: input.transportMode || dbPersona.persona_transport_mode || undefined,
     people: input.people || dbPersona.persona_people || 2,
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
 }
 
 type OpenAiErrorResponse = {

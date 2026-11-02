@@ -1,0 +1,59 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev, weather]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, build, and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: weather_test_admin
+          POSTGRES_PASSWORD: local-test-only
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Run unit and PostgreSQL compatibility tests
+        run: npm run test:unit
+
+      - name: Run complete native PostgreSQL upgrade matrix
+        run: npm run test:sql:native
+        env:
+          WEATHER_TEST_PG_PORT: 5432
+          WEATHER_TEST_PG_PASSWORD: local-test-only

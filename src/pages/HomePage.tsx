@@ -33,6 +33,7 @@ import duration3hIcon from '../assets/mascot/3h.webp'
 import duration6hIcon from '../assets/mascot/6h.webp'
 import duration10hIcon from '../assets/mascot/10h.webp'
 import calendarIcon from '../assets/mascot/日曆.png'
+import CurrentWeatherDashboard from '../components/CurrentWeatherDashboard'
 
 const categoryOptions: Array<{ value: TripCategory; label: string }> = [
   { value: 'date', label: '約會' },
@@ -422,6 +423,7 @@ export function HomePage() {
         ...current,
         location: {
           ...current.location,
+          name: '',
           lat,
           lng,
         },
@@ -876,6 +878,7 @@ export function HomePage() {
   }
 
   return (
+    <div className={`home-page-layout${showAdvanced ? ' home-page-layout--advanced' : ''}`}>
     <section className={`page home-page${showAdvanced ? ' home-page--advanced' : ''}`}>
       <form className="trip-form home-trip-form" onSubmit={handleSubmit}>
         <div className="home-top-panel">
@@ -1238,6 +1241,8 @@ export function HomePage() {
         )}
       </form>
     </section>
+    {user ? <aside className="home-weather-sidebar"><CurrentWeatherDashboard key={user.id} userId={user.id} /></aside> : null}
+    </div>
   )
 }
 

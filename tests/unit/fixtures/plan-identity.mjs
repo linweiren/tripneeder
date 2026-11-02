@@ -89,6 +89,7 @@ export function mockGeneration(t, f, initial, refill = (ids) => f.plans.filter(p
     if (target.hostname === 'unit-test.supabase.co') {
       const value = init?.body ? JSON.parse(init.body) : {}
       if (target.pathname === '/auth/v1/user') return Response.json({ id: '11111111-1111-4111-8111-111111111111', role: 'authenticated' })
+      if (target.pathname.endsWith('/consume_api_rate_limit')) return Response.json(true)
       const id = value.p_generation_id
       if (target.pathname.endsWith('/claim_trip_generation')) {
         let row = calls.generations.get(id)
