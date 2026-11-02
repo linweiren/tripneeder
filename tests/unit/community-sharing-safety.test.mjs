@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { deduplicateAndValidateSharedTrips, getSharedPlanSignature, isShareablePlan, sanitizeSharedPlan } from '../../src/services/community/communityData.js'
+import { deduplicateAndValidateSharedTrips, getSharedPlanSignature, isShareablePlan, sanitizeSharedPlan, validateSharedTripComments } from '../../src/services/community/communityData.js'
 import { loadPlanForDetail, savePlanForDetail } from '../../src/utils/tripPlanStorage.js'
 
 const plan = {
@@ -9,6 +9,14 @@ const plan = {
   budget: 1000, transportMode: 'car', stops: [{ id: 's1', name: 'Cafe', type: 'food', description: '', address: '1 Private Road', googleMapsUrl: 'https://maps.example/place/1', placeId: 'private-place-id', duration: 60, lat: 25, lng: 121 }],
   transportSegments: [], rainBackup: [{ id: 'r1', address: '2 Private Road', googleMapsUrl: 'https://maps.example/place/2', placeId: 'private-rain-place', lat: 25, lng: 121 }], rainTransportSegments: [],
 }
+
+test('malformed comment JSON cannot reach the renderer', () => {
+  const row = { id: 'comment', body: 'hello', author_display_name: 'Reader', created_at: '2026-11-02', is_mine: false }
+  assert.deepEqual(validateSharedTripComments([row,row,{...row,id:'bad',body:{private:'text'}},null,[]]),[row])
+  for (const field of ['body','author_display_name','created_at','id']) {
+    for (const value of [null,{},[],true,12]) assert.deepEqual(validateSharedTripComments([{...row,[field]:value}]),[])
+  }
+})
 
 test('public plan uses an explicit allowlist and removes private coordinates, text, and unknown fields', () => {
   const safe = sanitizeSharedPlan({ ...plan, privatePreference: 'secret', summary: 'private profile', stops: [{ ...plan.stops[0], description: 'my private note', secret: 'hidden' }] })
@@ -96,11 +104,21 @@ test('shared detail cache is keyed by both share id and plan id', () => {
     key: (index) => [...values.keys()][index] ?? null,
   }
   try {
-    savePlanForDetail({ ...plan, title: 'Share A' }, null, 'share-a')
-    savePlanForDetail({ ...plan, title: 'Share B' }, null, 'share-b')
+    const completed = { ...plan, isDetailComplete: true, rainBackup: [] }
+    savePlanForDetail({ ...completed, title: 'Share A' }, null, 'share-a')
+    savePlanForDetail({ ...completed, title: 'Share B' }, null, 'share-b')
     assert.equal(loadPlanForDetail('plan-1', 'share-a')?.title, 'Share A')
     assert.equal(loadPlanForDetail('plan-1', 'share-b')?.title, 'Share B')
     assert.equal(loadPlanForDetail('different-plan-id', 'share-a'), null)
+    for (const scheduleStartTime of [['10:00'], {}, 10, true, '24:00', '10:99']) {
+      savePlanForDetail({ ...completed, scheduleStartTime }, null, 'share-bad')
+      assert.equal(loadPlanForDetail('plan-1','share-bad'),null)
+    }
+    for (const scheduleStartTime of [undefined, null, '10:30']) {
+      const candidate = { ...completed, scheduleStartTime }
+      assert.equal(isShareablePlan(candidate), true)
+      assert.doesNotThrow(()=>getSharedPlanSignature(candidate))
+    }
   } finally {
     if (originalStorage === undefined) delete globalThis.sessionStorage
     else globalThis.sessionStorage = originalStorage

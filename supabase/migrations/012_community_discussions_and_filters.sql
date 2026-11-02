@@ -215,3 +215,35 @@ end;
 $$;
 revoke all on function public.record_shared_trip_view(uuid) from public;
 grant execute on function public.record_shared_trip_view(uuid) to authenticated;
+
+drop function if exists public.toggle_shared_trip_like(uuid);
+create or replace function public.toggle_shared_trip_like(p_trip_id uuid)
+returns table (liked boolean, like_count integer)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  trip_owner_id uuid;
+  did_like boolean;
+  current_like_count integer;
+begin
+  if current_user_id is null then raise exception 'Not authenticated'; end if;
+  perform public.initialize_user_profile();
+  select owner_id into trip_owner_id from public.shared_trips where id = p_trip_id for update;
+  if trip_owner_id is null then raise exception 'Shared trip not found'; end if;
+  if trip_owner_id = current_user_id then raise exception 'Cannot like your own shared trip'; end if;
+  delete from public.shared_trip_likes where shared_trip_id = p_trip_id and user_id = current_user_id;
+  if found then did_like := false;
+  else
+    insert into public.shared_trip_likes (shared_trip_id, user_id) values (p_trip_id, current_user_id) on conflict do nothing;
+    did_like := found;
+  end if;
+  select count(*)::integer into current_like_count from public.shared_trip_likes where shared_trip_id = p_trip_id;
+  update public.shared_trips st set like_count = current_like_count where st.id = p_trip_id;
+  return query select did_like, current_like_count;
+end;
+$$;
+revoke all on function public.toggle_shared_trip_like(uuid) from public;
+grant execute on function public.toggle_shared_trip_like(uuid) to authenticated;

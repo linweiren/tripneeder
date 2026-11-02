@@ -18,6 +18,18 @@ jobs:
     name: Lint, build, and unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: weather_test_admin
+          POSTGRES_PASSWORD: local-test-only
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -39,3 +51,9 @@ jobs:
 
       - name: Run unit and PostgreSQL compatibility tests
         run: npm run test:unit
+
+      - name: Run complete native PostgreSQL upgrade matrix
+        run: npm run test:sql:native
+        env:
+          WEATHER_TEST_PG_PORT: 5432
+          WEATHER_TEST_PG_PASSWORD: local-test-only

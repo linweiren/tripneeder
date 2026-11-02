@@ -1,6 +1,7 @@
 import { supabase } from '../auth/supabaseClient'
 import type { TripInput, TripPlan } from '../../types/trip'
-import { deduplicateAndValidateSharedTrips, getSharedPlanSignature, isShareablePlan, sanitizeSharedPlan } from './communityData'
+import { deduplicateAndValidateSharedTrips, getSharedPlanSignature, isShareablePlan, sanitizeSharedPlan, validateSharedTripComments } from './communityData'
+export type { SharedTripComment } from './communityData'
 export { deduplicateAndValidateSharedTrips, getSharedPlanSignature, isShareablePlan, sanitizeSharedPlan } from './communityData'
 
 export const COMMUNITY_TAG_LIMIT = 2
@@ -85,14 +86,6 @@ export async function unshareTrip(tripId: string) {
   ownSharedPlanSignaturesRequest = null
 }
 
-export type SharedTripComment = {
-  id: string
-  author_display_name: string
-  body: string
-  created_at: string
-  is_mine: boolean
-}
-
 export async function loadSharedTripComments(tripId: string, offset = 0) {
   if (!supabase) throw new Error('分享平台尚未連接 Supabase。')
   const { data, error } = await supabase.rpc('shared_trip_comments_feed', {
@@ -101,8 +94,8 @@ export async function loadSharedTripComments(tripId: string, offset = 0) {
     p_offset: Math.max(0, offset),
   })
   if (error) throw error
-  const rows = Array.isArray(data) ? data as SharedTripComment[] : []
-  return { comments: rows.slice(0, COMMUNITY_COMMENT_PAGE_SIZE), hasMore: rows.length > COMMUNITY_COMMENT_PAGE_SIZE }
+  const rows = Array.isArray(data) ? data : []
+  return { comments: validateSharedTripComments(rows.slice(0, COMMUNITY_COMMENT_PAGE_SIZE)), hasMore: rows.length > COMMUNITY_COMMENT_PAGE_SIZE }
 }
 
 export async function reportSharedTripComment(commentId: string, reason: 'spam' | 'harassment' | 'private_info' | 'other') {

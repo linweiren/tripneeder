@@ -14,6 +14,29 @@ export type SharedTripFeedRow = {
   is_owner: boolean
 }
 
+export type SharedTripComment = {
+  id: string
+  author_display_name: string
+  body: string
+  created_at: string
+  is_mine: boolean
+}
+
+export function validateSharedTripComments(value: unknown): SharedTripComment[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  return value.slice(0, 101).flatMap((item: unknown) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const row = item as Record<string, unknown>
+    if (typeof row.id !== 'string' || !row.id || row.id.length > 100 || seen.has(row.id) ||
+      typeof row.body !== 'string' || !row.body.trim() || row.body.length > 500 ||
+      typeof row.author_display_name !== 'string' || row.author_display_name.length > 80 ||
+      typeof row.created_at !== 'string' || Number.isNaN(Date.parse(row.created_at))) return []
+    seen.add(row.id)
+    return [{ id: row.id, body: row.body, author_display_name: row.author_display_name, created_at: row.created_at, is_mine: row.is_mine === true }]
+  })
+}
+
 export function deduplicateAndValidateSharedTrips(value: unknown): SharedTripFeedRow[] {
   if (!Array.isArray(value)) return []
   const seen = new Set<string>()
@@ -51,9 +74,9 @@ function isSafeCount(value: unknown): value is number {
 }
 
 function isSafeFeedStop(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const stop = value as Record<string, unknown>
-  return typeof stop.id === 'string' && stop.id.length <= 100 && typeof stop.name === 'string' && stop.name.trim().length > 0 && stop.name.length <= 200 &&
+  return typeof stop.id === 'string' && stop.id.trim().length > 0 && stop.id.length <= 100 && typeof stop.name === 'string' && stop.name.trim().length > 0 && stop.name.length <= 120 &&
     ['main_activity', 'food', 'ending_or_transition'].includes(typeof stop.type === 'string' ? stop.type : '') &&
     typeof stop.duration === 'number' && Number.isFinite(stop.duration) && stop.duration >= 0 && stop.duration <= 1440 &&
     (stop.googleTypes === undefined || (Array.isArray(stop.googleTypes) && stop.googleTypes.length <= 12 && stop.googleTypes.every((type) => typeof type === 'string' && /^[a-z0-9_]{1,50}$/i.test(type)))) &&
@@ -75,13 +98,13 @@ function isSafeFeedTransportSegment(value: unknown, stops: TripPlan['stops']): b
 export function sanitizeSharedPlan(plan: TripPlan): TripPlan {
   const sanitizeStop = (stop: TripPlan['stops'][number], prefix: 'main' | 'rain', index: number) => ({
     id: `shared-${prefix}-${index + 1}`,
-    name: (typeof stop.name === 'string' ? stop.name : '景點').slice(0, 120),
+    name: (typeof stop.name === 'string' ? stop.name.replace(/^ +| +$/g, '') : '景點').slice(0, 120),
     type: ['main_activity', 'food', 'ending_or_transition'].includes(stop.type) ? stop.type : 'main_activity',
     description: '',
     address: '',
     duration: Math.max(0, Math.min(1440, Math.round(Number.isFinite(stop.duration) ? stop.duration : 0))),
     transport: undefined,
-    googleTypes: Array.isArray(stop.googleTypes) ? stop.googleTypes.filter((type) => typeof type === 'string' && /^[a-z0-9_]{1,50}$/i.test(type)).slice(0, 12) : undefined,
+    googleTypes: Array.isArray(stop.googleTypes) ? stop.googleTypes.filter((type) => typeof type === 'string' && /^[a-z0-9_]{1,50}$/i.test(type)).slice(0, 12) : [],
     candidateRole: ['food', 'main_activity', 'open_space', 'shopping', 'short_visit'].includes(stop.candidateRole ?? '') ? stop.candidateRole : undefined,
     foodSubtype: ['cafe', 'dessert', 'restaurant', 'snack'].includes(stop.foodSubtype ?? '') ? stop.foodSubtype : undefined,
   })
@@ -103,7 +126,7 @@ export function sanitizeSharedPlan(plan: TripPlan): TripPlan {
   return {
     id: plan.id.slice(0, 80),
     type: plan.type,
-    title: plan.title.slice(0, 120),
+    title: plan.title.replace(/^ +| +$/g, '').slice(0, 120),
     subtitle: '',
     summary: '',
     totalTime: Math.max(0, Math.min(10080, Math.round(plan.totalTime))),
@@ -113,7 +136,7 @@ export function sanitizeSharedPlan(plan: TripPlan): TripPlan {
     transportSegments: safeSegments(plan.transportSegments, plan.stops.slice(0, 30), 'main'),
     rainBackup: plan.rainBackup.slice(0, 20).map((stop, index) => sanitizeStop(stop, 'rain', index)),
     rainTransportSegments: safeSegments(plan.rainTransportSegments, plan.rainBackup.slice(0, 20), 'rain'),
-    scheduleStartTime: plan.scheduleStartTime,
+    scheduleStartTime: typeof plan.scheduleStartTime === 'string' && /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(plan.scheduleStartTime) ? plan.scheduleStartTime : undefined,
     isDetailComplete: plan.isDetailComplete,
   }
 }
@@ -135,7 +158,7 @@ export function getSharedPlanSignature(plan: TripPlan): string {
 }
 
 export function isShareablePlan(value: unknown): value is TripPlan {
-  if (!value || typeof value !== 'object') return false
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const plan = value as Partial<TripPlan>
   return plan.isDetailComplete === true && typeof plan.id === 'string' && plan.id.length > 0 && plan.id.length <= 80 &&
     typeof plan.title === 'string' && plan.title.trim().length > 0 && plan.title.length <= 120 &&
@@ -143,8 +166,9 @@ export function isShareablePlan(value: unknown): value is TripPlan {
     ['scooter', 'car', 'public_transit'].includes(plan.transportMode ?? '') &&
     typeof plan.totalTime === 'number' && Number.isFinite(plan.totalTime) && plan.totalTime >= 0 && plan.totalTime <= 10080 &&
     typeof plan.budget === 'number' && Number.isFinite(plan.budget) && plan.budget >= 0 && plan.budget <= 100_000_000 &&
-    Array.isArray(plan.stops) && plan.stops.length >= 1 && plan.stops.length <= 30 && plan.stops.every(isSafeFeedStop) &&
-    Array.isArray(plan.rainBackup) && plan.rainBackup.length <= 20 && plan.rainBackup.every(isSafeFeedStop) &&
+    (plan.scheduleStartTime == null || (typeof plan.scheduleStartTime === 'string' && /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(plan.scheduleStartTime))) &&
+    Array.isArray(plan.stops) && plan.stops.length >= 1 && plan.stops.length <= 30 && plan.stops.every(isSafeFeedStop) && new Set(plan.stops.map((stop) => stop.id)).size === plan.stops.length &&
+    Array.isArray(plan.rainBackup) && plan.rainBackup.length <= 20 && plan.rainBackup.every(isSafeFeedStop) && new Set(plan.rainBackup.map((stop) => stop.id)).size === plan.rainBackup.length &&
     Array.isArray(plan.transportSegments) && plan.transportSegments.length <= 30 && plan.transportSegments.every((segment) => isSafeFeedTransportSegment(segment, plan.stops ?? [])) &&
     Array.isArray(plan.rainTransportSegments) && plan.rainTransportSegments.length <= 30 && plan.rainTransportSegments.every((segment) => isSafeFeedTransportSegment(segment, plan.rainBackup ?? []))
 }

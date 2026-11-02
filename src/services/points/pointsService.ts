@@ -27,7 +27,8 @@ export type PointTransaction = {
   created_at: string
 }
 
-export type PointTransactionType = 'initial' | 'consume' | 'admin_adjust' | 'refund'
+// Read-only compatibility for historical ledger entries; sharing never issues points.
+export type PointTransactionType = 'initial' | 'consume' | 'admin_adjust' | 'refund' | 'share_reward'
 
 export type PointsSnapshot = {
   profile: UserProfile
@@ -144,6 +145,7 @@ export function getTransactionTypeLabel(type: PointTransactionType) {
     consume: '分析扣點',
     admin_adjust: '管理調整',
     refund: '退回點數',
+    share_reward: '歷史分享獎勵',
   }
   return labels[type]
 }

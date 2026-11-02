@@ -1,4 +1,5 @@
 import type { TripInput, TripPlan } from '../types/trip'
+import { isShareablePlan, sanitizeSharedPlan } from '../services/community/communityData.js'
 
 // Session Storage Keys (當前分析流程)
 const TRIP_PLANS_STORAGE_KEY = 'tripneeder.generatedPlans'
@@ -78,7 +79,8 @@ export function updateDetailPlan(nextPlan: TripPlan, shareId?: string) {
 export function loadPlanForDetail(planId?: string, shareId?: string): TripPlan | null {
   const raw = sessionStorage.getItem(detailPlanStorageKey(shareId))
   try {
-    const plan = raw ? JSON.parse(raw) as TripPlan : null
+    const parsed: unknown = raw ? JSON.parse(raw) : null
+    const plan = shareId ? (isShareablePlan(parsed) ? sanitizeSharedPlan(parsed) : null) : parsed as TripPlan | null
     return !planId || plan?.id === planId ? plan : null
   } catch { return null }
 }
