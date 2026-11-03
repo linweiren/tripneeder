@@ -77,6 +77,8 @@ import type { PlanDetailSource } from '../contexts/analysisSession'
 import { useAuth } from '../contexts/auth'
 import { useDialog, type DialogContextValue } from '../contexts/dialog'
 import * as pointsService from '../services/points/pointsService'
+import { compareTripPlanStyles } from '../services/ai/tripPlanIdentity'
+import { getTripPlanDisplayLabel, getTripPlanDisplayTitle } from '../utils/tripPlanDisplay'
 import WeatherCard from '../components/WeatherCard'
 import { ShareTripButton } from '../components/community/ShareTripButton'
 import { SharedTripDiscussion } from '../components/community/SharedTripDiscussion'
@@ -945,6 +947,9 @@ export function DetailPage() {
     )
   }
 
+  const displayLabel = getTripPlanDisplayLabel(hasLocalDetailPlan ? 0 : Math.max(0,
+    plans.toSorted(compareTripPlanStyles).findIndex(plan => plan.id === selectedPlan.id)))
+
   return (
     <section className="page detail-page">
       {isCommunityShared ? <Link className="back-link back-icon-button" to={communityReturnPath} aria-label={communityReturnLabel}><ArrowLeft aria-hidden="true" /></Link> : (
@@ -957,7 +962,7 @@ export function DetailPage() {
 
       <div className="detail-hero">
         <p className="page-kicker">{isCommunityShared ? '旅人分享' : isRainMode ? '雨天備案' : '一般行程'}</p>
-        <h1 className="page-title">{selectedPlan.title}</h1>
+        <h1 className="page-title">{getTripPlanDisplayTitle(selectedPlan.title, displayLabel)}</h1>
         <p className="page-copy">{selectedPlan.summary}</p>
         {!isCommunityShared ? <ShareTripButton
           className="community-detail-share-button"

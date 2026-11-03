@@ -10,6 +10,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import * as identity from '../../src/services/ai/tripPlanIdentity.ts'
 import * as timing from '../../src/utils/tripTiming.ts'
+import * as display from '../../src/utils/tripPlanDisplay.ts'
 
 const input = { location: { name: '固定起點' }, tags: [], startTime: '18:00', endTime: '20:00', people: 2 }
 const stop = (name, placeId, type, duration) => ({ id: placeId, name, placeId, type, duration, address: '固定地址', description: '' })
@@ -116,6 +117,7 @@ test('actual results page announces and renders exactly the delivered number of 
       if (specifier === '../utils/tripPlanStorage') return { loadGeneratedPlans: () => allPlans.slice(0, count), loadLastTripInput: () => null }
       if (specifier === '../components/community/ShareTripButton') return { ShareTripButton: () => null }
       if (specifier === '../utils/tripTiming') return timing
+      if (specifier === '../utils/tripPlanDisplay') return display
       if (specifier === '../services/ai/tripPlanIdentity') return identity
       if (specifier.endsWith('.webp')) return 'fixture-image.webp'
       return require(specifier)

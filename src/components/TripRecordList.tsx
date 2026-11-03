@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useDialog } from '../contexts/dialog'
 import type { TransportMode } from '../types/trip'
 import { getPlanActualDuration } from '../utils/tripTiming'
+import { getTripPlanDisplayTitle } from '../utils/tripPlanDisplay'
 import {
   savePlanForDetail,
   type StoredTripRecord,
@@ -114,7 +115,7 @@ export function TripRecordList({
           </div>
 
           <div className="stored-trip-main history-card-main">
-            <h2>{record.plan.title}</h2>
+            <h2>{getTripPlanDisplayTitle(record.plan.title)}</h2>
           </div>
 
           <dl className="stored-trip-metrics history-info-grid">

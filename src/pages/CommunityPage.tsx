@@ -11,6 +11,7 @@ import {
   type SharedTrip,
 } from '../services/community/communityService'
 import { getPlanActualDuration } from '../utils/tripTiming'
+import { getTripPlanDisplayTitle } from '../utils/tripPlanDisplay'
 import { savePlanForDetail } from '../utils/tripPlanStorage'
 
 export function CommunityPage() {
@@ -240,7 +241,7 @@ function MySharedTripCard({ trip, onOpen, onUnshare }: { trip: SharedTrip; onOpe
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen() }
     }}>
       <div className="history-card-head"><span className="plan-type history-card-tag">我的分享</span><span className="history-view-link">行程與討論</span></div>
-      <div className="stored-trip-main history-card-main"><h2>{plan.title}</h2><p className="community-my-share-author">分享人・{trip.author_display_name}{(trip.tags ?? []).length ? ` · ${trip.tags.map((tag) => `#${tag}`).join(' ')}` : ''}</p></div>
+      <div className="stored-trip-main history-card-main"><h2>{getTripPlanDisplayTitle(plan.title)}</h2><p className="community-my-share-author">分享人・{trip.author_display_name}{(trip.tags ?? []).length ? ` · ${trip.tags.map((tag) => `#${tag}`).join(' ')}` : ''}</p></div>
       <dl className="stored-trip-metrics history-info-grid community-my-share-metrics">
         <div className="history-info-item"><span className="history-info-icon"><CalendarDays aria-hidden="true" /></span><dt>分享日期</dt><dd>{date}</dd></div>
         <div className="history-info-item"><span className="history-info-icon"><Clock3 aria-hidden="true" /></span><dt>總時間</dt><dd>{formatCommunityDuration(getPlanActualDuration(plan))}</dd></div>
@@ -279,7 +280,7 @@ function SharedTripCard({ trip, onLike, pending, onOpen }: {
         <time className="community-trip-date">{date}</time>
       </div>
       <div className="stored-trip-main history-card-main">
-        <h2>{plan.title}</h2>
+        <h2>{getTripPlanDisplayTitle(plan.title)}</h2>
         {plan.subtitle || plan.summary ? <p className="community-trip-subtitle">{plan.subtitle || plan.summary}</p> : null}
         <p className="community-author-row">分享人 <strong>{trip.author_display_name}</strong></p>
       </div>
