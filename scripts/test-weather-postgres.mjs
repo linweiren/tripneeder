@@ -1,7 +1,7 @@
 // Local isolated test databases only. Does not read .env, DATABASE_URL, or Supabase.
 import assert from 'node:assert/strict'
 import pg from 'pg'
-import { runWeatherUpgradeCases, migrations, bootstrap, apply, auth, plan } from '../tests/fixtures/weather-upgrade-cases.mjs'
+import { runWeatherUpgradeCases, migrations, rpcAclRepair, bootstrap, apply, auth, plan } from '../tests/fixtures/weather-upgrade-cases.mjs'
 
 const port=Number(process.env.WEATHER_TEST_PG_PORT || 56589)
 assert.ok(Number.isInteger(port) && port>=1024 && port<=65535)
@@ -31,6 +31,7 @@ try {
     try {
       await first.query(bootstrap)
       for(const f of migrations) await apply(first,f.sql)
+      await apply(first,rpcAclRepair.sql)
       const owner='00000000-0000-4000-8000-000000000001'
       await first.query('insert into auth.users values($1)',[owner])
       await auth(first,owner,'select initialize_user_profile()')

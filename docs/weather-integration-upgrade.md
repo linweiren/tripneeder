@@ -47,3 +47,23 @@ The native matrix covers clean 001–019; corrected prefixes 011–018; historic
 The subsequent `codex/integrate-weather-community` branch merges the repaired weather branch on top of committed dev `6a4798f`. Its conflict resolutions retain dev's generationId, recovery and atomic paid delivery; authenticated geocoding now accepts coordinates and addresses. Complete local SQL ordering, API compatibility and browser stories are documented in [the integration report](weather-dev-integration-report.zh-TW.md). The original worktree's uncommitted display changes are protected and are not included in this integration.
 
 The historical CWA credential revocation status remains unverified. No key was displayed, tested or changed. Live OAuth, CWA and Supabase integration were not tested. No paid API, production database, push or deployment was used.
+## 2026-11-04: append-only RPC privilege repair (required)
+
+The backup-based rehearsal found explicit function EXECUTE defaults for `anon`,
+`authenticated` and `service_role`. Revoking PUBLIC alone does not remove those grants.
+Existing migration files remain unchanged. All upgrade routes above must finish with
+`20261104075000_weather_rpc_execute_acl.sql` after 019. Seven browser writes allow only
+`authenticated`; the persistent rate limiter allows only `service_role`. Public feeds,
+existing points/LINE RPCs, role memberships and default privileges retain their contracts.
+
+For the confirmed 001–010 plus three timestamp migration baseline, run pending 011–019
+and this repair in **one transaction**, with migration-history recording and effective ACL
+verification before commit. Do not commit or expose 015/019 before the repair. Already
+applied files must not be replayed. Unknown schemas, extra grants or inherited execution
+cause the repair to stop for review. Do not change shared roles to force it through.
+
+Tests now reproduce the broad function defaults and execute the append-only repair,
+including incomplete-schema rejection, inherited-grant rollback and repeat execution.
+Native SQL verification passed, but full Auth/PostgREST/Vault restore and the production
+execution tool/transaction boundaries remain release gates. See [the privilege repair
+report](weather-rpc-acl-fix.zh-TW.md) for measured results and the remaining requirements.

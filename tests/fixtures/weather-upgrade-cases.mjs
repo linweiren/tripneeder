@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
+import { runRpcAclCases } from './community-rpc-acl-cases.mjs'
 import { readFileSync, readdirSync } from 'node:fs'
 import { deduplicateAndValidateSharedTrips, getSharedPlanSignature, isShareablePlan, sanitizeSharedPlan } from '../../src/services/community/communityData.js'
 
 const migrationRoot = new URL('../../supabase/migrations/', import.meta.url)
 export const allMigrations = readdirSync(migrationRoot).filter(x => /^\d.*\.sql$/.test(x)).sort().map(name => ({name, sql: readFileSync(new URL(name, migrationRoot), 'utf8')}))
 export const migrations = allMigrations.filter(x => /^0\d\d_/.test(x.name))
+export const rpcAclRepair = allMigrations.find(x => x.name.endsWith('_weather_rpc_execute_acl.sql'))
 const legacyManifest = JSON.parse(readFileSync(new URL('./weather-legacy/manifest.json', import.meta.url), 'utf8'))
 const oldSql = (ref, name) => readFileSync(new URL(`./weather-legacy/${legacyManifest[ref][name]}`, import.meta.url), 'utf8')
 const uid = n => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
@@ -12,7 +14,8 @@ export const bootstrap = `create schema auth; create table auth.users(id uuid pr
 create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb $$;
 create function auth.uid() returns uuid language sql stable as $$ select (auth.jwt()->>'sub')::uuid $$;
 grant usage on schema public,auth to anon,authenticated,service_role;
-alter default privileges in schema public grant all on tables to anon,authenticated,service_role;`
+alter default privileges in schema public grant all on tables to anon,authenticated,service_role;
+alter default privileges in schema public grant execute on functions to public,anon,authenticated,service_role;`
 export const plan = (extra={}) => ({id:'same-plan',type:'balanced',title:'台北行程',subtitle:'',summary:'',totalTime:100,budget:500,transportMode:'car',isDetailComplete:true,
   stops:[{id:'s1',name:'Cafe',type:'food',duration:35,lat:25,lng:121,address:'private-a'}, {id:'s2',name:'Park',type:'main_activity',duration:45}],
   transportSegments:[{fromStopId:'s1',toStopId:'s2',mode:'car',duration:20,label:'Driving'}],
@@ -26,6 +29,7 @@ export async function apply(db, sql) {
 async function setup(db, through=19, ref) {
   await db.query(bootstrap)
   for(const f of migrations.slice(0,through)) await apply(db, ref && /^01[1-8]_/.test(f.name) ? oldSql(ref,f.name) : f.sql)
+  if(through===19) await apply(db,rpcAclRepair.sql)
 }
 export async function auth(db,id,sql,params=[]) {
   await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:id,email:'fixture@example.invalid'})])
@@ -69,6 +73,7 @@ const legacyPlans=()=>[
 
 // Both adapters execute entire migration files, never extracted or patched SQL.
 export async function runWeatherUpgradeCases(run, fresh) {
+  await runRpcAclCases(run,fresh,{allMigrations,migrations,bootstrap,apply,auth,plan})
   await run('complete integrated checkout 001-019 plus all dev timestamp migrations',async()=>{
     const db=await fresh()
     try {
@@ -112,7 +117,7 @@ export async function runWeatherUpgradeCases(run, fresh) {
       await auth(db,uid(1),"select consume_points_for_analysis(20,'regression')")
       assert.equal((await db.query('select points_balance from profiles where id=$1',[uid(1)])).rows[0].points_balance,80)
       const beforeRepair=await snapshot(db)
-      await apply(db,migrations[18].sql); await apply(db,migrations[18].sql)
+      await apply(db,migrations[18].sql); await apply(db,rpcAclRepair.sql); await apply(db,migrations[18].sql); await apply(db,rpcAclRepair.sql)
       assert.deepEqual(await snapshot(db),beforeRepair)
       await auth(db,uid(1),'select unshare_trip($1)',[share])
       assert.equal((await db.query('select * from shared_trip_comments')).rows.length,0)
@@ -120,7 +125,7 @@ export async function runWeatherUpgradeCases(run, fresh) {
   })
   for(const ref of ['corrected','de069c6','a8ce99c']) {
     const stages=ref==='corrected' ? [11,12,13,14,15,16,17,18] : ref==='de069c6' ? [11,12,13,14,15,16,17] : [18]
-    for(const stage of stages) await run(`${ref} ${stage} -> 019: retain raw shares, interactions, transport and ledger`,async()=>{
+    for(const stage of stages) await run(`${ref} ${stage} -> 019 + ACL repair: retain raw shares, interactions, transport and ledger`,async()=>{
       const db=await fresh()
       try {
         await setup(db,stage,ref==='corrected'?undefined:ref)
@@ -134,6 +139,7 @@ export async function runWeatherUpgradeCases(run, fresh) {
           await apply(db,f.sql)
           assert.deepEqual(await snapshot(db,stage),before,`data changed during ${f.name}`)
         }
+        await apply(db,rpcAclRepair.sql)
         const feed=(await db.query('select * from shared_trip_feed()')).rows
         assert.equal(feed.length,4)
         assert.equal(deduplicateAndValidateSharedTrips(JSON.parse(JSON.stringify(feed))).length,4)
@@ -158,12 +164,12 @@ export async function runWeatherUpgradeCases(run, fresh) {
       }
     } finally {await db.end()}
   })
-  for(const stage of [16,17]) await run(`historical ${stage} -> 019 directly: no replay and no new rewards`,async()=>{
+  for(const stage of [16,17]) await run(`historical ${stage} -> 019 + ACL repair directly: no replay and no new rewards`,async()=>{
     const db=await fresh()
     try {
       await setup(db,stage,'de069c6'); await seed(db,legacyPlans(),stage)
       const before=await snapshot(db,stage)
-      await apply(db,migrations[18].sql)
+      await apply(db,migrations[18].sql); await apply(db,rpcAclRepair.sql)
       assert.deepEqual(await snapshot(db,stage),before)
       for(let i=3;i<=12;i++) {
         await db.query('insert into auth.users values($1)',[uid(i)])
@@ -190,6 +196,7 @@ export async function runWeatherUpgradeCases(run, fresh) {
       for(const f of order==='dev-first'?migrations.slice(10):[migrations[18]]) await apply(db,f.sql)
       assert.deepEqual((await db.query('select * from profiles order by id')).rows,balances)
       assert.deepEqual((await db.query('select * from point_transactions order by id')).rows,ledger)
+      await apply(db,rpcAclRepair.sql)
       await assert.rejects(auth(db,uid(1),'update profiles set points_balance=9999 where id=$1',[uid(1)]),e=>e.code==='42501')
       await auth(db,uid(1),"select consume_points_for_analysis(2,'after-weather')")
       assert.equal((await db.query('select points_balance from profiles where id=$1',[uid(1)])).rows[0].points_balance,78)
