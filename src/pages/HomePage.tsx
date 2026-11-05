@@ -25,6 +25,7 @@ import {
 } from '../services/points/pointsService'
 import { AppSelect, type AppSelectOption } from '../components/ui/AppSelect'
 import { GenerationPreviewContent } from '../components/GenerationPreviewContent'
+import { getGenerationDisplayStyles, getTripPlanDisplayLabel, getTripPlanDisplayWarning } from '../utils/tripPlanDisplay'
 import mascotError from '../assets/mascot/mascot-error.webp'
 import mascotMapReference from '../assets/mascot/mascot-map-reference.webp'
 import homeDurationTitleArt from '../assets/mascot/home-duration-title-art.png'
@@ -33,6 +34,7 @@ import duration3hIcon from '../assets/mascot/3h.webp'
 import duration6hIcon from '../assets/mascot/6h.webp'
 import duration10hIcon from '../assets/mascot/10h.webp'
 import calendarIcon from '../assets/mascot/日曆.png'
+import CurrentWeatherDashboard from '../components/CurrentWeatherDashboard'
 
 const categoryOptions: Array<{ value: TripCategory; label: string }> = [
   { value: 'date', label: '約會' },
@@ -98,8 +100,6 @@ const initialInput: TripInput = {
     name: '',
   },
 }
-
-const planSlotLabels = ['方案一', '方案二', '方案三']
 
 const hourOptions = Array.from({ length: 24 }, (_, index) =>
   String(index).padStart(2, '0'),
@@ -422,6 +422,7 @@ export function HomePage() {
         ...current,
         location: {
           ...current.location,
+          name: '',
           lat,
           lng,
         },
@@ -700,6 +701,7 @@ export function HomePage() {
   // 只有在還沒成功，且正在分析中或有錯誤時才顯示載入/錯誤畫面
   if (isAnalysisInProgress || analysisError) {
     const progressStyles = session?.progressStyles ?? []
+    const displayStyles = getGenerationDisplayStyles(progressStyles)
     const completedCount = Math.min(progressStyles.length, 3)
     const totalCount = 3
     const percent = Math.round((completedCount / totalCount) * 100)
@@ -761,9 +763,11 @@ export function HomePage() {
               </div>
 
               <ul className="analysis-plan-list">
-                {planSlotLabels.map((slotLabel, index) => {
-                  const isReady = progressStyles.includes((['safe', 'balanced', 'explore'] as const)[index])
-                  const preview = session?.previews?.find(value => value.type === (['safe', 'balanced', 'explore'] as const)[index])
+                {[0, 1, 2].map((index) => {
+                  const slotLabel = getTripPlanDisplayLabel(index)
+                  const style = displayStyles[index]
+                  const isReady = !!style
+                  const preview = session?.previews?.find(value => value.type === style)
                   const isGenerating = !isReady && index === completedCount
 
                   return (
@@ -867,7 +871,7 @@ export function HomePage() {
               wordBreak: 'break-all',
               margin: 0
             }}>
-              {analysisError}
+              {getTripPlanDisplayWarning(analysisError, [])}
             </pre>
           </div>
         ) : null}
@@ -876,6 +880,7 @@ export function HomePage() {
   }
 
   return (
+    <div className={`home-page-layout${showAdvanced ? ' home-page-layout--advanced' : ''}`}>
     <section className={`page home-page${showAdvanced ? ' home-page--advanced' : ''}`}>
       <form className="trip-form home-trip-form" onSubmit={handleSubmit}>
         <div className="home-top-panel">
@@ -1238,6 +1243,8 @@ export function HomePage() {
         )}
       </form>
     </section>
+    {user ? <aside className="home-weather-sidebar"><CurrentWeatherDashboard key={user.id} userId={user.id} /></aside> : null}
+    </div>
   )
 }
 

@@ -1,11 +1,16 @@
 import { repairTransportSegments } from './_lib/google-routes.js'
 import { handleApiOptions, requireAuthenticatedUser } from './_lib/authenticated-user.js'
+import { consumeApiRateLimit, getRequestClientKey, isFiniteCoordinate, isJsonWithinLimit, isRecord } from './_lib/request-guards.js'
 import type { Stop, TransportMode, TransportSegment } from '../src/types/trip.js'
 
 type VercelRequest = {
   method?: string
   body?: unknown
-  headers?: { authorization?: string }
+  headers?: {
+    authorization?: string
+    'x-real-ip'?: string
+    'x-forwarded-for'?: string
+  }
 }
 
 type VercelResponse = {
@@ -22,17 +27,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  if (!await requireAuthenticatedUser(req.headers?.authorization, res)) return
-  const { stops, transportSegments, transportMode } = req.body as {
-    stops: Stop[]
-    transportSegments: TransportSegment[]
-    transportMode: TransportMode
-  }
-
-  if (!stops || !transportMode) {
-    res.status(400).json({ error: 'Missing stops or transportMode' })
+  const authenticated = await requireAuthenticatedUser(req.headers?.authorization, res)
+  if (!authenticated) return
+  const body = req.body
+  if (!isRecord(body) || !Array.isArray(body.stops) || body.stops.length < 1 || body.stops.length > 30 ||
+    (body.transportSegments !== undefined && (!Array.isArray(body.transportSegments) || body.transportSegments.length > 29 || !body.transportSegments.every(isValidSegment))) ||
+    !['scooter', 'car', 'public_transit'].includes(String(body.transportMode)) ||
+    !isJsonWithinLimit(body, 32_000) || !body.stops.every(isValidStop)) {
+    res.status(400).json({ error: '行程站點或交通方式格式不正確，或資料超過限制。' })
     return
   }
+
+  const clientKey = getRequestClientKey(req)
+  const ipLimit = await consumeApiRateLimit(`routes:${clientKey}`, 20, 60_000)
+  if (ipLimit !== 'allowed') {
+    res.status(ipLimit === 'limited' ? 429 : 503).json({ error: ipLimit === 'limited' ? '路線重算請求過於頻繁，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
+    return
+  }
+  const userLimit = await consumeApiRateLimit(`routes:user:${authenticated.userId}`, 30, 60_000)
+  if (userLimit !== 'allowed') {
+    res.status(userLimit === 'limited' ? 429 : 503).json({ error: userLimit === 'limited' ? '路線重算已達使用上限，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
+    return
+  }
+
+  const { stops, transportMode } = body as {
+    stops: Stop[]
+    transportMode: TransportMode
+  }
+  const transportSegments = (body.transportSegments ?? []) as TransportSegment[]
 
   try {
     const { segments, routesFailed } = await repairTransportSegments(
@@ -54,4 +76,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.error('Failed to recompute routes:', error)
     res.status(500).json({ error: 'Internal server error' })
   }
+}
+
+function isValidStop(value: unknown): value is Stop {
+  if (!isRecord(value) || typeof value.id !== 'string' || value.id.length > 100 ||
+    typeof value.name !== 'string' || value.name.length > 300 ||
+    typeof value.duration !== 'number' || !Number.isFinite(value.duration) || value.duration < 0 || value.duration > 1440) return false
+  const hasLat = value.lat !== undefined
+  const hasLng = value.lng !== undefined
+  if (hasLat !== hasLng) return false
+  return !hasLat || (isFiniteCoordinate(value.lat, -90, 90) && isFiniteCoordinate(value.lng, -180, 180))
+}
+
+function isValidSegment(value: unknown): value is TransportSegment {
+  return isRecord(value) && typeof value.fromStopId === 'string' && value.fromStopId.length <= 100 &&
+    typeof value.toStopId === 'string' && value.toStopId.length <= 100 &&
+    ['scooter', 'car', 'public_transit'].includes(String(value.mode)) &&
+    typeof value.duration === 'number' && Number.isFinite(value.duration) && value.duration >= 0 && value.duration <= 1440 &&
+    typeof value.label === 'string' && value.label.length <= 500
 }

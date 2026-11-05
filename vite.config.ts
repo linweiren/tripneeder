@@ -6,7 +6,8 @@ type LocalApiRequest = {
   url?: string
   method?: string
   body?: unknown
-  headers?: { authorization?: string }
+  query?: { location?: string; lat?: string; lng?: string; city?: string }
+  headers?: { authorization?: string; 'x-real-ip'?: string; 'x-forwarded-for'?: string }
   signal?: AbortSignal
 }
 
@@ -35,12 +36,20 @@ export default defineConfig(({ mode }) => {
       env.GOOGLE_PLACES_API_KEY || env.VITE_GOOGLE_PLACES_API_KEY
   }
 
-  if (env.SUPABASE_URL) {
-    process.env.SUPABASE_URL = env.SUPABASE_URL
+  if (env.SUPABASE_URL || env.VITE_SUPABASE_URL) {
+    process.env.SUPABASE_URL = env.SUPABASE_URL || env.VITE_SUPABASE_URL
   }
 
-  if (env.SUPABASE_ANON_KEY) {
-    process.env.SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY
+  if (env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY) {
+    process.env.SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY
+  }
+
+  if (env.CWA_API_KEY) {
+    process.env.CWA_API_KEY = env.CWA_API_KEY
+  }
+
+  if (env.MOENV_API_KEY) {
+    process.env.MOENV_API_KEY = env.MOENV_API_KEY
   }
   if (env.SUPABASE_SERVICE_ROLE_KEY) process.env.SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY
 
@@ -79,6 +88,16 @@ function localApiPlugin(): Plugin {
 
       server.middlewares.use('/api/recompute-routes', async (req, res) => {
         const { default: handler } = await import('./api/recompute-routes')
+        await handleLocalApiRequest(req, res, handler)
+      })
+
+      server.middlewares.use('/api/weather', async (req, res) => {
+        const { default: handler } = await import('./api/weather')
+        await handleLocalApiRequest(req, res, handler)
+      })
+
+      server.middlewares.use('/api/current-weather', async (req, res) => {
+        const { default: handler } = await import('./api/current-weather')
         await handleLocalApiRequest(req, res, handler)
       })
     },
@@ -124,11 +143,19 @@ async function handleLocalApiRequest(
   })
   res.on('close', () => { if (!res.writableEnded) abortController.abort() })
 
+  const requestUrl = new URL(req.url ?? '/', 'http://localhost')
+
   await handler(
     {
       method: req.method,
       url: req.url,
       body,
+      query: {
+        location: requestUrl.searchParams.get('location') ?? undefined,
+        lat: requestUrl.searchParams.get('lat') ?? undefined,
+        lng: requestUrl.searchParams.get('lng') ?? undefined,
+        city: requestUrl.searchParams.get('city') ?? undefined,
+      },
       headers: {
         authorization: req.headers.authorization,
       },

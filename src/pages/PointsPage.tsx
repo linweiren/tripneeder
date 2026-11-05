@@ -61,9 +61,7 @@ export function PointsPage() {
     let isMounted = true
 
     async function loadPoints() {
-      if (!pointsSnapshot || pointsSnapshot.profile.id !== userId) {
-        setIsPointsLoading(true)
-      }
+      setIsPointsLoading(true)
       setPointsError('')
 
       try {

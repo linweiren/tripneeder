@@ -1,5 +1,6 @@
 import { getNearbyPlaceCandidates } from './_lib/google-places.js'
 import { handleApiOptions, requireAuthenticatedUser } from './_lib/authenticated-user.js'
+import { consumeApiRateLimit, getRequestClientKey, isFiniteCoordinate, isJsonWithinLimit, isRecord } from './_lib/request-guards.js'
 import type { GenerateTripPlansRequest } from '../src/services/ai/types.js'
 
 type VercelRequest = {
@@ -7,6 +8,8 @@ type VercelRequest = {
   body?: unknown
   headers?: {
     authorization?: string
+    'x-real-ip'?: string
+    'x-forwarded-for'?: string
   }
 }
 
@@ -24,16 +27,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  if (!await requireAuthenticatedUser(req.headers?.authorization, res)) return
-  const request = req.body as GenerateTripPlansRequest
+  const authenticated = await requireAuthenticatedUser(req.headers?.authorization, res)
+  if (!authenticated) return
+  const requestBody = req.body
+  if (!isRecord(requestBody) || !isRecord(requestBody.input) || !isRecord(requestBody.input.location) ||
+    !isJsonWithinLimit(requestBody, 32_000) ||
+    !isFiniteCoordinate(requestBody.input.location.lat, -90, 90) ||
+    !isFiniteCoordinate(requestBody.input.location.lng, -180, 180)) {
+    res.status(400).json({ error: 'Invalid or oversized candidate request' })
+    return
+  }
 
-  if (!request?.input?.location?.lat || !request?.input?.location?.lng) {
-    res.status(400).json({ error: 'Missing location coordinates' })
+  const clientKey = getRequestClientKey(req)
+  const ipLimit = await consumeApiRateLimit(`candidate:${clientKey}`, 12, 60_000)
+  if (ipLimit !== 'allowed') {
+    res.status(ipLimit === 'limited' ? 429 : 503).json({ error: ipLimit === 'limited' ? '請求過於頻繁，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
+    return
+  }
+
+  const userLimit = await consumeApiRateLimit(`candidate:user:${authenticated.userId}`, 20, 60_000)
+  if (userLimit !== 'allowed') {
+    res.status(userLimit === 'limited' ? 429 : 503).json({ error: userLimit === 'limited' ? '候選地點請求已達使用上限，請稍後再試。' : '服務保護機制暫時無法使用，請稍後再試。' })
     return
   }
 
   try {
-    const candidates = await getNearbyPlaceCandidates(request)
+    const candidates = await getNearbyPlaceCandidates(requestBody as unknown as GenerateTripPlansRequest)
     res.status(200).json(candidates)
   } catch (error) {
     console.error('Failed to get candidates:', error)

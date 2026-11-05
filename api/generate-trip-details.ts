@@ -27,12 +27,15 @@ import {
 import { repairTransportSegments } from './_lib/google-routes.js'
 import { isForbiddenStop, isForbiddenVisit } from './_lib/trip-demand-compliance.js'
 import { finalizePlanText, rememberPlanTextTransition } from './_lib/trip-plan-text-consistency.js'
+import { consumeApiRateLimit, getCoordinateBias, getRequestClientKey, hasValidCoordinatePair, isFiniteCoordinate, isJsonWithinLimit, isRecord, isValidTripLocation } from './_lib/request-guards.js'
 
 type VercelRequest = {
   method?: string
   body?: unknown
   headers?: {
     authorization?: string
+    'x-real-ip'?: string
+    'x-forwarded-for'?: string
   }
   signal?: AbortSignal
 }
@@ -79,10 +82,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const authenticated = await requireAuthenticatedUser(req.headers?.authorization, res)
   if (!authenticated) return
   const { accessToken, userId } = authenticated
-  const request = parseRequestBody(req.body)
+  const request = isValidTripDetailsBody(req.body) ? parseRequestBody(req.body) : null
 
   if (!request) {
     res.status(400).json({ error: '行程資料不完整，請回到結果頁重新選擇。' })
+    return
+  }
+
+  if (await consumeApiRateLimit(`trip-details:ip:${getRequestClientKey(req)}`, 6, 60_000) !== 'allowed' ||
+    await consumeApiRateLimit(`trip-details:user:${userId}`, 10, 60_000) !== 'allowed') {
+    res.status(429).json({ error: '細節補充請求過於頻繁，請稍後再試。' })
     return
   }
 
@@ -102,7 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 若缺乏座標但有地名（手動輸入起點），先進行解析以補齊座標，否則搜尋會缺乏地理偏好
     let locationWarning = ''
     if (
-      (!request.input.location.lat || !request.input.location.lng) &&
+      !hasValidCoordinatePair(request.input.location.lat, request.input.location.lng) &&
       request.input.location.name
     ) {
       const resolved = await resolveLocation(request.input.location.name)
@@ -237,9 +246,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
 
     // 同時對其餘景點（包含雨天備案）進行一次性的 Places 驗證
-    const bias = request.input.location.lat && request.input.location.lng
-      ? { lat: request.input.location.lat, lng: request.input.location.lng }
-      : undefined
+    const bias = getCoordinateBias(request.input.location.lat, request.input.location.lng)
     const stableDetailedPlan = rememberPlanTextTransition(request.plan,
       preserveMainStopIdentity(detailedPlan, request.plan), detailedPlan.stops, detailedPlan.rainBackup)
     const stablePlan = await validateRainBackupWithPlaces(
@@ -848,12 +855,8 @@ function createNodeHttpsFetch(): typeof fetch {
                 status: res.statusCode ?? 500,
                 statusText: res.statusMessage ?? '',
                 headers: new Headers(
-                  Object.entries(res.headers).flatMap(([key, value]) =>
-                    value === undefined
-                      ? []
-                      : Array.isArray(value)
-                        ? [[key, value.join(', ')]]
-                        : [[key, value]],
+                  Object.entries(res.headers).flatMap(([key, value]): [string, string][] =>
+                    value === undefined ? [] : [[key, Array.isArray(value) ? value.join(', ') : String(value)]],
                   ),
                 ),
               }),
@@ -962,6 +965,34 @@ function parseRequestBody(body: unknown): {
   return body as { input: TripInput; plan: TripPlan }
 }
 
+function isValidTripDetailsBody(body: unknown): body is { input: TripInput; plan: TripPlan } {
+  if (!isRecord(body) || !isRecord(body.input) || !isRecord(body.plan) || !isJsonWithinLimit(body, 128_000)) return false
+  const input = body.input
+  const location = input.location
+  const plan = body.plan
+  if (!isValidTripLocation(location) ||
+    typeof input.startTime !== 'string' || input.startTime.length > 10 ||
+    typeof input.endTime !== 'string' || input.endTime.length > 10 ||
+    !Array.isArray(input.tags) || input.tags.length > 10 ||
+    !input.tags.every((tag) => typeof tag === 'string' && tag.length <= 40) ||
+    !Array.isArray(plan.stops) || plan.stops.length < 1 || plan.stops.length > 30 ||
+    !plan.stops.every(isValidDetailStop) ||
+    (plan.rainBackup !== undefined && (!Array.isArray(plan.rainBackup) || plan.rainBackup.length > 20 || !plan.rainBackup.every(isValidDetailStop))) ||
+    typeof plan.id !== 'string' || plan.id.length > 100 || typeof plan.title !== 'string' || plan.title.length > 300) return false
+  if ((location.lat !== undefined && !isFiniteCoordinate(location.lat, -90, 90)) ||
+    (location.lng !== undefined && !isFiniteCoordinate(location.lng, -180, 180))) return false
+  return true
+}
+
+function isValidDetailStop(value: unknown): value is Stop {
+  return isRecord(value) && typeof value.id === 'string' && value.id.length <= 100 &&
+    typeof value.name === 'string' && value.name.length <= 300 &&
+    typeof value.duration === 'number' && Number.isFinite(value.duration) && value.duration >= 0 && value.duration <= 1440 &&
+    (value.lat === undefined || isFiniteCoordinate(value.lat, -90, 90)) &&
+    (value.lng === undefined || isFiniteCoordinate(value.lng, -180, 180)) &&
+    ((value.lat === undefined) === (value.lng === undefined))
+}
+
 async function buildOpenAiErrorMessage(response: Response) {
   const detail = await readOpenAiErrorDetail(response)
 
@@ -1000,10 +1031,6 @@ function extractOutputText(response: OpenAiResponse) {
     .map((content) => content.text ?? '')
     .join('')
     .trim()
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
 }
 
 type OpenAiResponse = {

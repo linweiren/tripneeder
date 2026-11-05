@@ -4,9 +4,12 @@ import { useAnalysisSession } from '../contexts/analysisSession'
 import type { TransportMode, TripPlan } from '../types/trip'
 import { loadGeneratedPlans } from '../utils/tripPlanStorage'
 import { getPlanActualDuration } from '../utils/tripTiming'
-import { compareTripPlanStyles, getTripPlanStyleLabel } from '../services/ai/tripPlanIdentity'
+import { compareTripPlanStyles } from '../services/ai/tripPlanIdentity'
+import { getTripPlanDisplayLabel, getTripPlanDisplayTitle, getTripPlanDisplayWarning } from '../utils/tripPlanDisplay'
 import mascotComplete from '../assets/mascot/mascot-complete.webp'
 import mascotError from '../assets/mascot/mascot-error.webp'
+import { loadLastTripInput } from '../utils/tripPlanStorage'
+import { ShareTripButton } from '../components/community/ShareTripButton'
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -18,6 +21,7 @@ export function ResultsPage() {
   const navigate = useNavigate()
   const { session, resetAnalysisFlow, setFlowRoute, requestPlanDetails } =
     useAnalysisSession()
+  const tripInput = loadLastTripInput()
   const plans = loadGeneratedPlans().sort(compareTripPlanStyles)
   const warnings = session?.status === 'success' ? (session.warnings ?? []) : []
 
@@ -71,7 +75,7 @@ export function ResultsPage() {
       {warnings.length > 0 ? (
         <div className="plan-warning-panel" role="status">
           {warnings.map((warning: string) => (
-            <p key={warning}>{warning}</p>
+            <p key={warning}>{getTripPlanDisplayWarning(warning, plans)}</p>
           ))}
         </div>
       ) : null}
@@ -80,7 +84,8 @@ export function ResultsPage() {
           <PlanCard
             key={plan.id}
             plan={plan}
-            label={getTripPlanStyleLabel(plan.type) ?? `方案${toChineseNumber(index + 1)}`}
+            input={tripInput}
+            label={getTripPlanDisplayLabel(index)}
             onSelect={(route) => {
               setFlowRoute(route)
               requestPlanDetails(plan.id, { source: 'generated' })
@@ -95,10 +100,12 @@ export function ResultsPage() {
 
 function PlanCard({
   plan,
+  input,
   label,
   onSelect,
 }: {
   plan: TripPlan
+  input: ReturnType<typeof loadLastTripInput>
   label: string
   onSelect: (route: string) => void
 }) {
@@ -145,7 +152,7 @@ function PlanCard({
         <div className="plan-main">
           <div className="plan-card-header">
             <p className="plan-type">{label}</p>
-            <h2>{plan.title}</h2>
+            <h2>{getTripPlanDisplayTitle(plan.title, label)}</h2>
           </div>
 
           <div className="stop-preview">
@@ -177,14 +184,11 @@ function PlanCard({
             ))}
           </dl>
           {plan.budgetEstimateNote ? <small style={{ display: 'block' }}>{plan.budgetEstimateNote}</small> : null}
+          <ShareTripButton plan={plan} input={input} className="community-result-share" />
         </div>
       </div>
     </article>
   )
-}
-
-function toChineseNumber(value: number) {
-  return ['一', '二', '三'][value - 1] ?? String(value)
 }
 
 function formatMinutes(minutes: number) {

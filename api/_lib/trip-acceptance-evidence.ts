@@ -1,3 +1,4 @@
+import { readGitRevision } from './git-revision.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -274,13 +275,7 @@ export function captureAcceptanceDiagnostics(report: unknown) {
   return true
 }
 
-function revision() {
-  try {
-    const head = readFileSync('.git/HEAD', 'utf8').trim()
-    const value = head.startsWith('ref: refs/') ? readFileSync(join('.git', head.slice(5)), 'utf8').trim() : head
-    return /^[a-f0-9]{40}$/.test(value) ? value : 'unknown'
-  } catch { return 'unknown' }
-}
+function revision() { return readGitRevision() }
 function sourceHashes() {
   return Object.fromEntries(['api/generate-trip.ts', 'api/_lib/trip-acceptance-evidence.ts',
     'api/_lib/trip-intent-candidate-grounding.ts', 'src/services/ai/tripPlanPrompt.ts'].map(file => {

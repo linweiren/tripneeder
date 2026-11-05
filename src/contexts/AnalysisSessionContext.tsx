@@ -1,3 +1,4 @@
+import { getPlanDetailStateKey } from '../utils/detailIdentity'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { tripPlanner } from '../services/ai'
@@ -27,7 +28,6 @@ import {
   AnalysisSessionContext,
   type AnalysisSession,
   type PlanDetailRequestOptions,
-  type PlanDetailSource,
   type PlanDetailState,
 } from './analysisSession'
 
@@ -238,7 +238,7 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
     const source = options?.source ?? 'generated'
     const stateKey = getPlanDetailStateKey(planId, source, options?.recordId)
     const generatedPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
-    const detailPlan = loadPlanForDetail(planId)
+    const detailPlan = loadPlanForDetail(planId, source === 'shared' ? options?.recordId ?? undefined : undefined)
     const currentPlan = source === 'generated' ? generatedPlan : detailPlan
 
     if (!currentPlan) {
@@ -261,6 +261,10 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
       })
       return
     }
+
+    // Shared content has no private generation input. It must never invoke paid
+    // detail completion or update a favorite/history record belonging to the viewer.
+    if (source === 'shared') return
 
     const lastInput = loadLastTripInput()
     const detailInput = loadInputForDetail()
@@ -473,15 +477,6 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
   )
 }
 
-function getPlanDetailStateKey(
-  planId: string,
-  source: PlanDetailSource,
-  recordId?: string | null,
-) {
-  return source === 'generated'
-    ? `generated:${planId}`
-    : `${source}:${recordId ?? planId}`
-}
 
 async function getSessionAuth() {
   if (!supabase) {

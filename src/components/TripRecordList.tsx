@@ -2,11 +2,13 @@ import { useNavigate } from 'react-router-dom'
 import { useDialog } from '../contexts/dialog'
 import type { TransportMode } from '../types/trip'
 import { getPlanActualDuration } from '../utils/tripTiming'
+import { getTripPlanDisplayTitle } from '../utils/tripPlanDisplay'
 import {
   savePlanForDetail,
   type StoredTripRecord,
 } from '../utils/tripPlanStorage'
 import mascotEmptyState from '../assets/mascot/mascot-empty-state.webp'
+import { ShareTripButton } from './community/ShareTripButton'
 
 const transportLabels: Record<TransportMode, string> = {
   scooter: '機車',
@@ -19,6 +21,7 @@ type TripRecordListProps = {
   emptyTitle: string
   source: 'favorites' | 'recent'
   onRemove?: (recordId: string) => void
+  onShare?: boolean
 }
 
 export function TripRecordList({
@@ -26,6 +29,7 @@ export function TripRecordList({
   emptyTitle,
   source,
   onRemove,
+  onShare,
 }: TripRecordListProps) {
   const navigate = useNavigate()
   const dialog = useDialog()
@@ -76,6 +80,10 @@ export function TripRecordList({
         >
           <div className="history-card-head">
             <span className="plan-type history-card-tag">行程方案</span>
+            <div className="history-card-actions">
+            {onShare ? (
+              <ShareTripButton plan={record.plan} input={record.input} />
+            ) : null}
             {onRemove ? (
               <button
                 className="remove-record-button history-remove-button"
@@ -98,15 +106,16 @@ export function TripRecordList({
               >
                 移除收藏
               </button>
-            ) : (
+            ) : !onShare ? (
               <span className="history-view-link" aria-hidden="true">
                 查看行程
               </span>
-            )}
+            ) : null}
+            </div>
           </div>
 
           <div className="stored-trip-main history-card-main">
-            <h2>{record.plan.title}</h2>
+            <h2>{getTripPlanDisplayTitle(record.plan.title)}</h2>
           </div>
 
           <dl className="stored-trip-metrics history-info-grid">
