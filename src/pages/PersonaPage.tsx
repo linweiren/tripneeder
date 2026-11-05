@@ -87,12 +87,16 @@ export function PersonaPage() {
   const [transportMode, setTransportMode] = useState<TransportMode | ''>(cachedProfile?.persona_transport_mode || '')
   const [people, setPeople] = useState<number | ''>(cachedProfile?.persona_people ?? DEFAULT_PERSONA_FORM.people)
   const [diet, setDiet] = useState(cachedProfile?.persona_diet || '')
+  const [lineUserId, setLineUserId] = useState<string | null>(null)
+  const [isUnbindingLine, setIsUnbindingLine] = useState(false)
 
   useEffect(() => {
     if (!user) {
       navigate('/login')
       return
     }
+
+    const currentUserId = user.id
 
     async function loadPersona() {
       if (!supabase) {
@@ -110,6 +114,16 @@ export function PersonaPage() {
         setTransportMode(profile.persona_transport_mode || '')
         setPeople(profile.persona_people ?? DEFAULT_PERSONA_FORM.people)
         setDiet(profile.persona_diet || '')
+
+        const { data: lineData } = await supabase
+          .from('profiles')
+          .select('line_user_id')
+          .eq('id', currentUserId)
+          .maybeSingle()
+
+        if (lineData && (lineData as { line_user_id?: string | null }).line_user_id) {
+          setLineUserId((lineData as { line_user_id: string }).line_user_id)
+        }
       } catch (error) {
         console.error('載入人設背景更新失敗:', error)
       } finally {
@@ -119,6 +133,35 @@ export function PersonaPage() {
 
     void loadPersona()
   }, [user, navigate])
+
+  async function handleUnbindLine() {
+    if (!user || !supabase) return
+    setIsUnbindingLine(true)
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (token) {
+        const res = await fetch('/api/bind-line', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ action: 'unbind' }),
+        })
+        if (res.ok) {
+          setLineUserId(null)
+          setSaveStatus({ type: 'success', message: '已成功解除 LINE 帳號綁定' })
+        } else {
+          setSaveStatus({ type: 'error', message: '解除綁定失敗，請確認資料庫狀態' })
+        }
+      }
+    } catch {
+      setSaveStatus({ type: 'error', message: '解除綁定失敗，請稍後再試' })
+    } finally {
+      setIsUnbindingLine(false)
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -341,6 +384,38 @@ export function PersonaPage() {
             <div className={`save-status-msg ${saveStatus.type}`}>
               {saveStatus.message}
             </div>
+          )}
+        </div>
+
+        <div className="persona-line-binding-box" style={{
+          marginTop: '2rem',
+          padding: '1.25rem',
+          backgroundColor: '#F8FAFC',
+          borderRadius: '12px',
+          border: '1px solid #E2E8F0',
+        }}>
+          <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#1E293B', marginBottom: '0.5rem' }}>
+            LINE 官方帳號綁定狀態
+          </h3>
+          {lineUserId ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <p style={{ margin: 0, fontSize: '0.875rem', color: '#059669', fontWeight: 500 }}>
+                已綁定 LINE 帳號
+              </p>
+              <button
+                type="button"
+                className="secondary-button"
+                style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+                disabled={isUnbindingLine}
+                onClick={() => void handleUnbindLine()}
+              >
+                {isUnbindingLine ? '解綁中...' : '解除 LINE 綁定'}
+              </button>
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748B' }}>
+              尚未綁定 LINE 官方帳號。若要綁定，請在 LINE 聊天室發送「你好」取得專屬綁定連結。
+            </p>
           )}
         </div>
       </form>

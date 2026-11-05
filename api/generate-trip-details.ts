@@ -819,13 +819,16 @@ function getRequiredCoverageRatio(allowedMinutes: number) {
 }
 
 function createUserScopedSupabaseClient(accessToken: string) {
-  const supabaseUrl =
-    process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
+  const ACTIVE_SUPABASE_URL = 'https://jaxlqqctnnbfritxkkpy.supabase.co'
+  const ACTIVE_SUPABASE_ANON_KEY = 'sb_publishable_4iJp5JFnksDVX7STPw05nA_aNNFVznK'
+  const rawUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || ''
+  const isLegacyDeadProject = rawUrl.includes('hscnfrjtjdifhnadnlye') || rawUrl.includes('your-project-ref')
+
+  const supabaseUrl = !rawUrl.trim() || isLegacyDeadProject ? ACTIVE_SUPABASE_URL : rawUrl
   const supabaseServerKey =
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    ''
+    (!isLegacyDeadProject && (process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY)) ||
+    ACTIVE_SUPABASE_ANON_KEY
 
   if (!supabaseUrl || !supabaseServerKey) {
     throw new Error('尚未設定 Supabase server-side 環境變數。')

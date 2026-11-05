@@ -309,7 +309,7 @@ function buildSearchQuery(input: TripInput, persona?: Persona): string {
   const baseQuery =
     (input.category ? categoryMap[input.category] : undefined) ||
     [personaQuery, 'attractions'].filter(Boolean).join(' ')
-  const tagQuery = input.tags.map((tag) => tagMap[tag]).filter(Boolean).join(' ')
+  const tagQuery = (input.tags ?? []).map((tag) => tagMap[tag]).filter(Boolean).join(' ')
 
   return `${city} ${baseQuery} ${tagQuery}`.trim()
 }
@@ -1263,7 +1263,7 @@ function getCandidateGaps(candidates: VerifiedPlaceCandidate[], input: TripInput
     needsFirstStop: firstStopCount < MIN_FIRST_STOP_CANDIDATES,
     needsFood: foodCount < MIN_FOOD_CANDIDATES,
     needsMainActivity: activityCount < MIN_ACTIVITY_CANDIDATES,
-    needsIndoor: input.tags.includes('indoor_first') && indoorCount < MIN_INDOOR_CANDIDATES,
+    needsIndoor: (input.tags ?? []).includes('indoor_first') && indoorCount < MIN_INDOOR_CANDIDATES,
     needsEvening: (includesEvening || includesLateNight) && eveningCount < MIN_ACTIVITY_CANDIDATES,
   }
 }
@@ -1560,9 +1560,10 @@ function calculateBaseCandidateScore(
   const distanceKm = candidate.distanceKm ?? MAIN_CANDIDATE_MAX_DISTANCE_KM
   const rating = candidate.rating ?? 4
   const role = candidate.role ?? 'main_activity'
-  const wantsFoodFirst = input.tags.includes('food_first')
-  const wantsIndoor = input.tags.includes('indoor_first')
-  const wantsPhoto = input.tags.includes('photo_first')
+  const tags = input.tags ?? []
+  const wantsFoodFirst = tags.includes('food_first')
+  const wantsIndoor = tags.includes('indoor_first')
+  const wantsPhoto = tags.includes('photo_first')
 
   let score = 50
   score += Math.max(0, 25 - distanceKm * 4)

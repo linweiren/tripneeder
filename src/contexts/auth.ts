@@ -5,7 +5,7 @@ export type AuthContextValue = {
   user: User | null
   isAuthLoading: boolean
   isSupabaseReady: boolean
-  signInWithGoogle: () => Promise<void>
+  signInWithGoogle: (customRedirectUrl?: string) => Promise<void>
   signOut: () => Promise<void>
 }
 

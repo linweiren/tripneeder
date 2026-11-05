@@ -49,6 +49,7 @@ import type {
   StopType,
   TransportMode,
   TransportSegment,
+  TripInput,
   TripPlan,
   VerifiedPlaceCandidate,
 } from '../types/trip'
@@ -57,6 +58,8 @@ import {
   loadGeneratedPlans,
   loadLastTripInput,
   loadPlanForDetail,
+  saveGeneratedPlans,
+  savePlanForDetail,
   updateDetailPlan,
   updateGeneratedPlan,
 } from '../utils/tripPlanStorage'
@@ -171,16 +174,85 @@ export function DetailPage() {
   const hasLocalDetailPlan = isStoredSource || isCommunityShared
   const detailSource: PlanDetailSource = isCommunityShared ? 'shared' : sourcePage ?? 'generated'
   const detailRecordId = isCommunityShared ? communityShareId : isStoredSource ? getDetailRecordId(location.state, location.search) : null
+  const planFromQuery = useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    const raw = params.get('plan')
+    if (!raw) return null
+    let parsed: TripPlan | null = null
+    try {
+      const binaryStr = atob(raw)
+      const bytes = Uint8Array.from(binaryStr, (c) => c.charCodeAt(0))
+      const jsonStr = new TextDecoder().decode(bytes)
+      parsed = JSON.parse(jsonStr) as TripPlan
+    } catch {
+      try {
+        const jsonStr = decodeURIComponent(escape(atob(raw)))
+        parsed = JSON.parse(jsonStr) as TripPlan
+      } catch {
+        try {
+          parsed = JSON.parse(decodeURIComponent(raw)) as TripPlan
+        } catch {
+          parsed = null
+        }
+      }
+    }
+
+    if (parsed) {
+      const fallbackInput: TripInput = {
+        startTime: parsed.scheduleStartTime || '09:00',
+        endTime: '12:00',
+        tags: [],
+        category: 'explore',
+        location: {
+          name: parsed.stops[0]?.name || '起點',
+          lat: parsed.stops[0]?.lat,
+          lng: parsed.stops[0]?.lng,
+        },
+        transportMode: parsed.transportMode || 'car',
+      }
+      savePlanForDetail(parsed, fallbackInput)
+      const currentGenerated = loadGeneratedPlans()
+      const existingIdx = currentGenerated.findIndex((p) => p.id === parsed!.id)
+      if (existingIdx >= 0) {
+        currentGenerated[existingIdx] = parsed
+      } else {
+        currentGenerated.push(parsed)
+      }
+      saveGeneratedPlans(currentGenerated, fallbackInput)
+    }
+
+    return parsed
+  }, [location.search])
+
   const storedDetailPlan = loadPlanForDetail(planId, communityShareId ?? undefined)
   const generatedPlan = plans.find((plan) => plan.id === planId)
-  const initialSelectedPlan = hasLocalDetailPlan ? storedDetailPlan : generatedPlan
+  const initialSelectedPlan =
+    planFromQuery ||
+    (hasLocalDetailPlan ? storedDetailPlan : (generatedPlan || storedDetailPlan))
   // Memoize with stable deps to prevent a new object reference on every render.
   // A new reference would cause the detail-completion useEffect to abort its own fetch
   // each time setDetailCompletionStatus triggers a re-render.
-  const lastInput = useMemo(() => {
-    return hasLocalDetailPlan ? loadInputForDetail(communityShareId ?? undefined) : loadLastTripInput()
+  const lastInput = useMemo((): TripInput | null => {
+    const stored = hasLocalDetailPlan ? loadInputForDetail(communityShareId ?? undefined) : loadLastTripInput()
+    if (stored) return stored
+    if (initialSelectedPlan && initialSelectedPlan.stops && initialSelectedPlan.stops.length > 0) {
+      const fallbackInput: TripInput = {
+        startTime: '09:00',
+        endTime: '12:00',
+        tags: [],
+        category: 'explore',
+        location: {
+          name: initialSelectedPlan.stops[0]?.name || '起點',
+          lat: initialSelectedPlan.stops[0]?.lat,
+          lng: initialSelectedPlan.stops[0]?.lng,
+        },
+        transportMode: 'car',
+      }
+      return fallbackInput
+    }
+    return null
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [communityShareId, detailRecordId, hasLocalDetailPlan, planId])
+  }, [communityShareId, detailRecordId, hasLocalDetailPlan, planId, initialSelectedPlan])
   const [selectedPlan, setSelectedPlan] = useState(initialSelectedPlan)
   const selectedPlanIdentityRef = useRef(`${detailSource}:${detailRecordId ?? planId ?? ''}:${planId ?? ''}`)
   const weatherLocation = getWeatherCity(
@@ -521,7 +593,9 @@ export function DetailPage() {
   useEffect(() => {
     const nextStoredDetailPlan = loadPlanForDetail(planId, communityShareId ?? undefined)
     const nextGeneratedPlan = loadGeneratedPlans().find((plan) => plan.id === planId)
-    const nextSelectedPlan = hasLocalDetailPlan ? nextStoredDetailPlan : nextGeneratedPlan
+    const nextSelectedPlan = hasLocalDetailPlan
+      ? nextStoredDetailPlan
+      : (nextGeneratedPlan || nextStoredDetailPlan)
     const nextIdentity = `${detailSource}:${detailRecordId ?? planId ?? ''}:${planId ?? ''}`
     const identityChanged = selectedPlanIdentityRef.current !== nextIdentity
     if (identityChanged) {
@@ -539,7 +613,7 @@ export function DetailPage() {
     // on mount and abort its own fetch before the response arrives.
     setSelectedPlan((prev) => {
       if (identityChanged) return nextSelectedPlan
-      if (!nextSelectedPlan) return nextSelectedPlan
+      if (!nextSelectedPlan) return prev || null
       if (!prev) return nextSelectedPlan
       if (
         prev.id === nextSelectedPlan.id &&

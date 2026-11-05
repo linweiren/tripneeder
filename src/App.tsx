@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   AnalysisSessionProvider,
 } from './contexts/AnalysisSessionContext'
@@ -24,22 +24,18 @@ function App() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setIsSplashVisible(false)
-    }, 2000)
+    }, 1500)
 
     return () => {
       window.clearTimeout(timer)
     }
   }, [])
 
-  if (isSplashVisible) {
-    return <SplashScreen />
-  }
-
   return (
     <AuthProvider>
       <AnalysisSessionProvider>
         <DialogProvider>
-          <AppLayout />
+          {isSplashVisible ? <SplashScreen /> : <AppLayout />}
         </DialogProvider>
       </AnalysisSessionProvider>
     </AuthProvider>
@@ -70,12 +66,73 @@ function SplashScreen() {
   )
 }
 
+function getPendingLineBind(): { line_user_id: string; ts: string | number; sig: string } | null {
+  try {
+    const urlParams = new URLSearchParams(window.location.search)
+    const lineUserId = urlParams.get('line_user_id')
+    const ts = urlParams.get('ts')
+    const sig = urlParams.get('sig')
+    if (lineUserId && ts && sig) {
+      return { line_user_id: lineUserId, ts, sig }
+    }
+  } catch {
+    // ignore URL parse error
+  }
+
+  try {
+    const raw = localStorage.getItem('tripneeder.pendingLineBind')
+    if (raw) {
+      const parsed = JSON.parse(raw) as { line_user_id?: string; ts?: string | number; sig?: string }
+      if (parsed?.line_user_id) return { line_user_id: parsed.line_user_id, ts: parsed.ts || '', sig: parsed.sig || '' }
+    }
+  } catch {
+    // ignore storage access error
+  }
+
+  try {
+    const match = document.cookie.match(/(?:^|;\s*)tripneeder_pending_line=([^;]+)/)
+    if (match?.[1]) {
+      const decoded = decodeURIComponent(match[1])
+      const parsed = JSON.parse(decoded) as { line_user_id?: string; ts?: string | number; sig?: string }
+      if (parsed?.line_user_id) return { line_user_id: parsed.line_user_id, ts: parsed.ts || '', sig: parsed.sig || '' }
+    }
+  } catch {
+    // ignore cookie parse error
+  }
+
+  return null
+}
+
 function AppLayout() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const menuAreaRef = useRef<HTMLDivElement | null>(null)
   const { plannerPath } = useAnalysisSession()
   const { user, isAuthLoading, signOut } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // 1. Intercept LINE binding parameters and save to localStorage + Cookie
+  useEffect(() => {
+    const pending = getPendingLineBind()
+    if (pending) {
+      const payload = JSON.stringify(pending)
+      try {
+        localStorage.setItem('tripneeder.pendingLineBind', payload)
+        document.cookie = `tripneeder_pending_line=${encodeURIComponent(payload)}; path=/; max-age=900; SameSite=Lax`
+      } catch {
+        // ignore storage write error
+      }
+    }
+  }, [location.search])
+
+  // 2. If on root route '/' (or any route other than /login) but has pending LINE bind, navigate to /login
+  useEffect(() => {
+    if (location.pathname === '/login') return
+    const pending = getPendingLineBind()
+    if (pending?.line_user_id) {
+      navigate('/login', { replace: true })
+    }
+  }, [location.pathname, navigate])
 
   async function handleSignOut() {
     await signOut()
@@ -177,6 +234,7 @@ function AppLayout() {
       <main className="app-main">
         <Outlet />
       </main>
+
     </div>
   )
 }

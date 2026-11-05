@@ -57,11 +57,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void prepareTripRecordsForUser(user.id).catch(() => {})
   }, [user])
 
-  const signInWithGoogle = useCallback(async () => {
+  const signInWithGoogle = useCallback(async (customRedirectUrl?: string) => {
     if (!supabase) throw new Error('尚未設定 Supabase')
+    const redirectTarget = customRedirectUrl || window.location.origin
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo: redirectTarget },
     })
     if (error) throw error
   }, [])
