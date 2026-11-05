@@ -5817,9 +5817,11 @@
   animation: slideDown 0.3s ease-out;
 }
 
+/* Keep these auto-height grid items free of percentage min-heights in both
+   states. WebKit can otherwise retain the expanded row height after collapse. */
 .home-page--advanced {
   height: auto;
-  min-height: 100%;
+  min-height: 0;
   align-self: flex-start;
 }
 
@@ -5827,7 +5829,7 @@
   grid-template-rows: auto auto;
   gap: clamp(20px, 3vw, 28px);
   height: auto;
-  min-height: 100%;
+  min-height: 0;
 }
 
 .home-page--advanced .home-top-panel {
@@ -5864,7 +5866,7 @@
 .home-page:not(.home-page--advanced),
 .home-page:not(.home-page--advanced) .home-trip-form {
   height: auto;
-  min-height: 100%;
+  min-height: 0;
 }
 
 .home-page:not(.home-page--advanced) .home-trip-form {
