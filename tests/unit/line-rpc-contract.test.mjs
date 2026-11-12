@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { PGlite } from '@electric-sql/pglite'
-const fixture=readFileSync(new URL('../fixtures/line-rpc-contract.sql',import.meta.url),'utf8')
+// Git normalizes SQL text to LF; hash that canonical text on every platform.
+const fixture=readFileSync(new URL('../fixtures/line-rpc-contract.sql',import.meta.url),'utf8').replace(/\r\n/g,'\n')
 const contract=JSON.parse(readFileSync(new URL('../../docs/security/line-rpc-contract-20261104.json',import.meta.url),'utf8'))
 const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222'
 const line='U'+'a'.repeat(32)

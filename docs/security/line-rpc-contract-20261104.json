@@ -1,6 +1,7 @@
 {
   "sourceTime": "2026-11-04T12:06:54.326Z",
-  "fixtureSha256": "4bb4dfab2f791aaffa695dbc2a0769ca752520f4a1fac3b6ef8fac69d62957f2",
+  "fixtureSha256": "824a912976fd5f0d8290224502212de797e64b3a3f1bdfbc4001101618c5193c",
+  "fixtureCanonicalization": "UTF-8 text with LF line endings",
   "columns": [
     {
       "nspname": "public",
