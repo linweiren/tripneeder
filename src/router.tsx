@@ -4,6 +4,8 @@ import { lazy } from 'react'
 import { createBrowserRouter } from 'react-router-dom'
 import App from './App.tsx'
 
+const LineConnectPage = lazy(() => import('./pages/LineConnectPage.tsx').then(m => ({ default: m.LineConnectPage })))
+const LineTripPage = lazy(() => import('./pages/LineTripPage.tsx').then(m => ({ default: m.LineTripPage })))
 const DetailPage = lazy(() => import('./pages/DetailPage.tsx').then((module) => ({ default: module.DetailPage })))
 const CommunityPage = lazy(() => import('./pages/CommunityPage.tsx').then((module) => ({ default: module.CommunityPage })))
 const CommunityMySharesPage = lazy(() => import('./pages/CommunityPage.tsx').then((module) => ({ default: module.CommunityMySharesPage })))
@@ -29,6 +31,8 @@ export const router = createBrowserRouter([
       { path: 'community/mine', element: <CommunityMySharesPage /> },
       { path: 'community/:tripId', element: <CommunitySharedTripRedirectPage /> },
       { path: 'recent', element: <RecentPage /> },
+      { path: 'line-connect', element: <LineConnectPage /> },
+      { path: 'line-trip/:generationId', element: <LineTripPage /> },
       { path: 'login', element: <LoginPage /> },
       { path: 'points', element: <PointsPage /> },
       { path: 'persona', element: <PersonaPage /> },
