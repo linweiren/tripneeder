@@ -2,6 +2,7 @@
 import { recordAiDurations, traceDurationPlan, traceDurationStops, recordCoverageShadow } from './_lib/trip-coverage-v2.js'
 
 import https from 'node:https'
+import { getLineProfile, lineConfig } from './_lib/line-security.js'
 import { requireAuthenticatedUser, handleApiOptions } from './_lib/authenticated-user.js'
 import { claimGeneration, createGenerationStore, generationInput, isGenerationId, readGeneration } from './_lib/trip-generations.js'
 import { appendFileSync } from 'node:fs'
@@ -201,7 +202,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   return withAcceptanceEvidence(req.body, res, sink => generateTrip(req, sink))
 }
 
-async function generateTrip(req: VercelRequest, res: VercelResponse) {
+// Callable only by server modules. The public default handler never supplies lineId.
+export async function generateTripForLine(req: VercelRequest, res: VercelResponse, lineId: string, expectedOwner?: string) {
+  return withAcceptanceEvidence(req.body, res, sink => generateTrip(req, sink, lineId, expectedOwner))
+}
+
+async function generateTrip(req: VercelRequest, res: VercelResponse, lineId?: string, expectedOwner?: string) {
   res.setHeader('Cache-Control', 'no-store')
   if (handleApiOptions(req.method, res)) return
   if (req.method !== 'POST') {
@@ -209,7 +215,14 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  const auth = await observeEvidenceCall('supabase', () => requireAuthenticatedUser(req.headers?.authorization, res))
+  let lineProfile: Awaited<ReturnType<typeof getLineProfile>> = null
+  if (lineId) {
+    try { lineConfig(); lineProfile = await getLineProfile(lineId) } catch { res.status(503).json({ error: 'LINE 帳號驗證暫時無法使用。' }); return }
+    if (!lineProfile) { res.status(401).json({ error: '請先連接帳號。' }); return }
+    if (expectedOwner && lineProfile.id !== expectedOwner) { res.status(409).json({ error: '帳號連接已變更，請重新確認行程。' }); return }
+  }
+  const auth = lineProfile ? { userId: lineProfile.id, accessToken: process.env.SUPABASE_SERVICE_ROLE_KEY! }
+    : await observeEvidenceCall('supabase', () => requireAuthenticatedUser(req.headers?.authorization, res))
   if (!auth) return
   const body = parseRequestBody(req.body)
   const input = generationInput(body?.input)
@@ -261,7 +274,7 @@ async function generateTrip(req: VercelRequest, res: VercelResponse) {
     const apiKey = process.env.OPENAI_API_KEY
     if (!apiKey) { res.status(500).json({ error: '行程生成服務設定不完整。' }); return }
     const supabase = createUserScopedSupabaseClient(auth.accessToken)
-    const balance = await getAvailablePoints(supabase)
+    const balance = lineProfile ? lineProfile.points_balance : await getAvailablePoints(supabase)
     if (balance < ANALYSIS_COST) {
       res.status(402).json({ error: `點數不足。每次分析需要 ${ANALYSIS_COST} 點，目前剩餘 ${balance} 點。` })
       return

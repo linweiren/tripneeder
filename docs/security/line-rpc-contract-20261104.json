@@ -1,0 +1,130 @@
+{
+  "sourceTime": "2026-11-04T12:06:54.326Z",
+  "fixtureSha256": "824a912976fd5f0d8290224502212de797e64b3a3f1bdfbc4001101618c5193c",
+  "fixtureCanonicalization": "UTF-8 text with LF line endings",
+  "columns": [
+    {
+      "nspname": "public",
+      "relname": "profiles",
+      "attname": "line_user_id",
+      "type": "text",
+      "attnotnull": false,
+      "attidentity": "",
+      "attgenerated": "",
+      "default_expr": null,
+      "attacl": null
+    }
+  ],
+  "indexes": [
+    {
+      "schemaname": "public",
+      "tablename": "profiles",
+      "indexname": "profiles_line_user_id_key",
+      "indexdef": "CREATE UNIQUE INDEX profiles_line_user_id_key ON public.profiles USING btree (line_user_id)"
+    }
+  ],
+  "functions": [
+    {
+      "nspname": "public",
+      "proname": "bind_line_user",
+      "args": "p_user_id uuid, p_line_user_id text",
+      "result": "jsonb",
+      "owner": "postgres",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres,service_role=X/postgres}",
+      "lanname": "plpgsql",
+      "bodyHash": "de708e31b0f943984daff7318ab1dd409cdc874b6ccecd1f812f40da57271599"
+    },
+    {
+      "nspname": "public",
+      "proname": "consume_points_for_line_user",
+      "args": "p_line_user_id text, p_reason text",
+      "result": "jsonb",
+      "owner": "postgres",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres,service_role=X/postgres}",
+      "lanname": "plpgsql",
+      "bodyHash": "5baa5e5f28f2990caf747d2bf7acc0a74ee5da788fb55bc411bc313a65f329df"
+    },
+    {
+      "nspname": "public",
+      "proname": "get_line_user_profile",
+      "args": "p_line_user_id text",
+      "result": "jsonb",
+      "owner": "postgres",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres,service_role=X/postgres}",
+      "lanname": "plpgsql",
+      "bodyHash": "9b838b50ed20d44d9ed53ee7944ffdd9ebdd7bdab0506009d009809a7f0a5a17"
+    },
+    {
+      "nspname": "public",
+      "proname": "unbind_line_user",
+      "args": "p_user_id uuid",
+      "result": "jsonb",
+      "owner": "postgres",
+      "prosecdef": true,
+      "provolatile": "v",
+      "proisstrict": false,
+      "proparallel": "u",
+      "proconfig": [
+        "search_path=\"\""
+      ],
+      "proacl": "{postgres=X/postgres,service_role=X/postgres}",
+      "lanname": "plpgsql",
+      "bodyHash": "36b431606f33bcadf576e65e6319f308e4f6b26800240b33c893a40c6e94ffd6"
+    }
+  ],
+  "lineChecks": [
+    {
+      "signature": "bind_line_user(uuid,text)",
+      "definition_md5": "6ff7747a5f68dbb82b067e49c5d96885",
+      "owner": "postgres",
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "signature": "consume_points_for_line_user(text,text)",
+      "definition_md5": "d9a1b4b552f8b7a9ee5010cf8c710da2",
+      "owner": "postgres",
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "signature": "get_line_user_profile(text)",
+      "definition_md5": "83554e4866ce08dde0f0677c9a97e411",
+      "owner": "postgres",
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "signature": "unbind_line_user(uuid)",
+      "definition_md5": "a80f44c71e9daa5675791fdceacd5f85",
+      "owner": "postgres",
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    }
+  ]
+}

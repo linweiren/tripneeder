@@ -6,6 +6,9 @@
     },
     "api/generate-trip-details.ts": {
       "maxDuration": 300
+    },
+    "api/line-webhook.ts": {
+      "maxDuration": 300
     }
   },
   "rewrites": [

@@ -1,3 +1,4 @@
+import { LineAccountPanel } from '../components/LineAccountPanel'
 import { useEffect, useState } from 'react'
 import {
   CarFront,
@@ -343,7 +344,7 @@ export function PersonaPage() {
             </div>
           )}
         </div>
-      </form>
+      </form><LineAccountPanel />
     </div>
   )
 }
